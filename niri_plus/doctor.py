@@ -22,6 +22,7 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
                   f"Launcher Command+Space → Fuzzel: {report['launcher']}",
                   f"Fuzzel executable: {report['launcher_binary']}",
                   f"Niri Wayland readiness gate: {report['wayland_readiness']}",
+                  f"Niri Wayland clients runtime: {report['wayland_clients_runtime'][0]}",
                   f"PolicyKit systemd user unit: {report['polkit_unit']}",
                   f"GTK portal backend: {report['portal_backend']}",
                   f"Install state: {report['install_state']}", f"Rollback: {report['rollback']} / backups: {report['rollback_state']}",
@@ -35,6 +36,8 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
     kde_state, kde_units = report["kde_isolation"]
     lines.extend(["\nKDE/Plasma isolation", f"  State: {kde_state}",
                   f"  Active KDE units/processes: {', '.join(kde_units) if kde_units else 'none detected'}"])
+    runtime_state, runtime_issues = report["wayland_clients_runtime"]
+    lines.append("  Wayland/client startup: " + (", ".join(runtime_issues) if runtime_issues else runtime_state))
     qs = {**report["quickshell"], **quickshell.doctor_report(root, runner)}
     lines.extend(["\nQuickshell integration", f"  Binary/version: {qs['version_status']} ({qs['version']})",
                   f"  RPM engine: {qs['package_status']} ({qs['package_version']}, expected {qs['package_expected']})",

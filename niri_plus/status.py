@@ -22,6 +22,7 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
         ("Packaged session", report["session_package"]), ("Launcher (Command+Space)", report["launcher"]),
         ("Fuzzel executable", report["launcher_binary"]),
         ("Wayland readiness", report.get("wayland_readiness", host.NOT_CONFIGURED)),
+        ("Wayland/client runtime", report.get("wayland_clients_runtime", ("UNAVAILABLE", []))[0]),
         *report["core"].items()))
     lines.append("\nSystem")
     lines.extend(f"  {name:22} {value}" for name, value in report["system"].items())
@@ -71,6 +72,8 @@ def overall_state(report: dict, niri_active: bool = False) -> str:
                 *report["core"].values(), *report["system"].values()]
     required.extend(report["managed_file_checksums"].values())
     required.extend(report.get("managed_links", {}).values())
+    if niri_active:
+        required.append(report["wayland_clients_runtime"][0])
     qs_process_count = report["quickshell"]["processes"]["count"]
     if niri_active:
         managed_count = report["quickshell"]["processes"].get("managed_count")

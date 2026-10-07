@@ -4,13 +4,14 @@ import json
 import pathlib
 import runpy
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status
+from niri_plus import benchmark, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status, wayland_ready
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -56,7 +57,7 @@ class NiriPlusCliTests(unittest.TestCase):
             "source_checkout": {"status": "OK"}, "quickshell": {"status": "OK", "processes": {"count": 1, "managed_count": 1}},
             "core": {"all": "OK"}, "system": {"all": "OK"},
             "managed_file_checksums": {}, "kde_isolation": ("OK", []),
-            "wayland_readiness": host.OK,
+            "wayland_readiness": host.OK, "wayland_clients_runtime": ("OK", []),
         }
         self.assertEqual(status.overall_state(report, niri_active=True), "M1_REQUIRED")
         report["configuration_validation"] = host.WARNING
@@ -146,6 +147,29 @@ class NiriPlusCliTests(unittest.TestCase):
                 self.assertEqual(host.kde_isolation_status(root, runner, proc), (host.OK, []))
             with mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "KDE"}, clear=True):
                 self.assertEqual(host.kde_isolation_status(root, runner, proc), ("NOT_APPLICABLE", []))
+
+    def test_wayland_runtime_doctor_detects_first_start_restarts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = pathlib.Path(temp)
+            socket_path = runtime / "wayland-0"
+            wayland_socket = socket.socket(socket.AF_UNIX)
+            wayland_socket.bind(str(socket_path))
+            def runner(args, **kwargs):
+                unit = next((item for item in args if item.endswith((".target", ".service"))), "")
+                if unit == "graphical-session.target":
+                    output = "ActiveState=active\n"
+                else:
+                    restarts = "1" if unit == "asahi-quickshell.service" else "0"
+                    substate = "exited" if unit == "asahi-niri-wayland-ready.service" else "running"
+                    output = f"ActiveState=active\nSubState={substate}\nResult=success\nNRestarts={restarts}\n"
+                return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+            with mock.patch.object(host, "niri_session_active", return_value=True), \
+                 mock.patch.object(wayland_ready, "_handshake", return_value=True), \
+                 mock.patch.dict("os.environ", {"XDG_RUNTIME_DIR": str(runtime), "WAYLAND_DISPLAY": "wayland-0"}):
+                state, problems = host.wayland_clients_runtime_status(runner)
+            wayland_socket.close()
+            self.assertEqual(state, host.WARNING)
+            self.assertEqual(problems, ["asahi-quickshell.service restarted 1 times"])
 
     def test_quickshell_process_diagnostic_detects_unmanaged_duplicate_invocations(self):
         with tempfile.TemporaryDirectory() as temp:

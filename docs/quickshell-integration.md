@@ -115,9 +115,12 @@ unit, are conditioned on `XDG_CURRENT_DESKTOP=niri`, and are `PartOf=`
 `graphical-session.target`. Their first start therefore waits for compositor
 readiness and they stop with the session. Quickshell retains one systemd-owned
 instance, bounded restart-on-failure, and journal logs (`journalctl --user -u
-asahi-quickshell.service`). `niri+ doctor` checks readiness wiring, unit state,
-restart count, logs and duplicate processes. No Niri `spawn-at-startup` is
-added to either repository.
+asahi-quickshell.service`). `niri+ status` and `doctor` check the live socket
+with a Wayland sync handshake, `graphical-session.target`, the readiness,
+Quickshell and PolicyKit unit results, restart counts, logs and duplicate
+processes. Any first-start restart or unavailable display is reported as a
+warning rather than healthy. No Niri `spawn-at-startup` is added to either
+repository.
 
 The service does not start during install. It becomes eligible with the next
 Niri graphical-session lifecycle. A user unit reload is requested without

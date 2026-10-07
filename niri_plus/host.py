@@ -299,6 +299,46 @@ def wayland_readiness_status(root: pathlib.Path) -> str:
     return OK if all(requirements) else WARNING
 
 
+def wayland_clients_runtime_status(runner: Runner) -> tuple[str, list[str]]:
+    """Check the live display and first-start outcome without changing state."""
+    if not niri_session_active():
+        return "NOT_APPLICABLE", []
+    from . import wayland_ready
+
+    issues = []
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    display = os.environ.get("WAYLAND_DISPLAY")
+    if not runtime_dir or not display:
+        issues.append("Wayland environment is incomplete")
+    else:
+        display_path = pathlib.Path(display)
+        socket_path = display_path if display_path.is_absolute() else pathlib.Path(runtime_dir) / display_path
+        if not socket_path.is_socket() or not wayland_ready._handshake(socket_path, timeout=0.75):
+            issues.append(f"Wayland display is not responsive: {display}")
+
+    target = run(["systemctl", "--user", "show", "graphical-session.target", "--no-pager",
+                  "--property=ActiveState"], runner)
+    if not target or target.returncode != 0:
+        return UNAVAILABLE, [*issues, "graphical-session.target state unavailable"]
+    target_values = dict(line.split("=", 1) for line in (target.stdout or "").splitlines() if "=" in line)
+    if target_values.get("ActiveState") != "active":
+        issues.append("graphical-session.target is not active")
+
+    for unit in ("asahi-niri-wayland-ready.service", "asahi-quickshell.service",
+                 "asahi-niri-polkit-agent.service"):
+        result = run(["systemctl", "--user", "show", unit, "--no-pager",
+                      "--property=ActiveState", "--property=SubState", "--property=Result",
+                      "--property=NRestarts"], runner)
+        if not result or result.returncode != 0:
+            return UNAVAILABLE, [*issues, f"{unit} state unavailable"]
+        values = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+        if values.get("ActiveState") != "active" or values.get("Result") != "success":
+            issues.append(f"{unit} is not active/successful")
+        if values.get("NRestarts") != "0":
+            issues.append(f"{unit} restarted {values.get('NRestarts', 'an unknown number of')} times")
+    return (WARNING if issues else OK), issues
+
+
 def installation_state(root: pathlib.Path) -> tuple[str, dict]:
     path = root / "var/lib/asahi-system/niri-performance/state.json"
     if path.is_symlink():
@@ -414,6 +454,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         "managed_links": managed_links,
         "polkit_unit": OK if installed_file(root, "/usr/lib/systemd/user/asahi-niri-polkit-agent.service") else NOT_INSTALLED,
         "wayland_readiness": wayland_readiness_status(root),
+        "wayland_clients_runtime": wayland_clients_runtime_status(runner),
         "portal_backend": OK if installed_file(root, "/usr/libexec/xdg-desktop-portal-gtk") else NOT_INSTALLED,
         "install_state": state_status,
         "known_good": state.get("verified_good_version", NOT_CONFIGURED),
@@ -464,6 +505,8 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         report["warnings"].append("Unexpected KDE/Plasma units or background processes are active in the Niri session.")
     if report["wayland_readiness"] != OK:
         report["warnings"].append("Niri graphical clients lack a verified Wayland readiness gate.")
+    if report["wayland_clients_runtime"][0] == WARNING:
+        report["warnings"].append("Wayland readiness, graphical-session target or Niri client startup needs attention.")
     if report["launcher"] != OK:
         report["warnings"].append("Command+Space does not resolve to the Fuzzel launcher in the installed Niri config.")
     if report["configuration_validation"] == WARNING:
