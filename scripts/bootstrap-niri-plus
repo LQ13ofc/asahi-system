@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
 import sys
 import tempfile
@@ -24,6 +25,21 @@ LIB = pathlib.Path("/usr/local/lib/niri-plus")
 DATA = pathlib.Path("/usr/local/share/niri-plus")
 BIN = pathlib.Path("/usr/local/bin/niri+")
 STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
+
+
+def normalize_repository(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"^git@github\.com:", "https://github.com/", value)
+    value = re.sub(r"^ssh://git@github\.com/", "https://github.com/", value)
+    return value.rstrip("/").removesuffix(".git")
+
+
+def check_no_symlink_parents(path: pathlib.Path) -> None:
+    current = pathlib.Path("/")
+    for part in path.absolute().parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError(f"managed path has a symlinked parent: {current}")
 
 
 def launcher() -> str:
@@ -57,20 +73,55 @@ def validate_quickshell_source() -> tuple[str, dict]:
         raise RuntimeError("initialize the private Quickshell submodule with authenticated Git access before bootstrap") from exc
     if commit != lock.get("commit"):
         raise RuntimeError(f"Quickshell submodule is not at its locked commit ({commit}; expected {lock.get('commit')})")
-    normalize = lambda value: value.rstrip("/").removesuffix(".git").lower()
-    if normalize(remote) != normalize(lock.get("repository", "")):
+    if normalize_repository(remote) != normalize_repository(lock.get("repository", "")):
         raise RuntimeError("Quickshell submodule origin does not match the repository in the lock file")
     if dirty:
         raise RuntimeError("Quickshell submodule has local modifications; bootstrap requires the exact clean pinned commit")
     return commit, lock
 
 
+def validate_system_source() -> tuple[str, str]:
+    if not (ROOT / ".git").exists():
+        raise RuntimeError("bootstrap requires a Git checkout of LQ13ofc/asahi-system main")
+    git = ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT)]
+    try:
+        origin = subprocess.run([*git, "remote", "get-url", "origin"], check=True,
+                                text=True, capture_output=True).stdout.strip()
+        branch = subprocess.run([*git, "branch", "--show-current"], check=True,
+                                text=True, capture_output=True).stdout.strip()
+        dirty = subprocess.run([*git, "status", "--porcelain", "--untracked-files=all"],
+                               check=True, text=True, capture_output=True).stdout
+        head = subprocess.run([*git, "rev-parse", "HEAD"], check=True,
+                              text=True, capture_output=True).stdout.strip()
+        upstream = subprocess.run([*git, "rev-parse", "refs/remotes/origin/main"], check=True,
+                                  text=True, capture_output=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("could not verify the system source checkout and cached origin/main") from exc
+    if normalize_repository(origin) != "https://github.com/lq13ofc/asahi-system":
+        raise RuntimeError(f"unexpected asahi-system origin: {origin}")
+    if branch != "main":
+        raise RuntimeError(f"bootstrap requires branch main, found {branch or 'detached HEAD'}")
+    if dirty:
+        raise RuntimeError("asahi-system checkout has local changes; bootstrap requires a clean tree")
+    if not head or head != upstream:
+        raise RuntimeError("asahi-system HEAD must equal cached origin/main before bootstrap")
+    return head, branch
+
+
 def install() -> None:
     if os.geteuid() != 0:
         raise RuntimeError("bootstrap --apply requires root; use sudo ./scripts/bootstrap-niri-plus --apply")
+    system_commit, system_branch = validate_system_source()
     quickshell_commit, quickshell_lock = validate_quickshell_source()
+    for path in (STATE.parent, LIB.parent, DATA.parent, BIN.parent,
+                 pathlib.Path("/var/lib/niri-plus/bootstrap-backups")):
+        check_no_symlink_parents(path)
     if STATE.is_symlink():
         raise RuntimeError("bootstrap ownership state is a symlink; refusing to follow it")
+    if STATE.exists():
+        metadata = STATE.stat()
+        if not STATE.is_file() or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise RuntimeError("bootstrap ownership state has unsafe type, owner, or permissions")
     existing = any(path.exists() for path in (LIB, DATA, BIN))
     state = {}
     if STATE.exists():
@@ -83,8 +134,34 @@ def install() -> None:
     if any(path.is_symlink() for path in (LIB, DATA, BIN)):
         raise RuntimeError("a managed bootstrap destination is a symlink; refusing to replace it")
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ") + f"-{os.getpid()}"
     backup_root = pathlib.Path("/var/lib/niri-plus/bootstrap-backups") / stamp
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    state_content = json.dumps({
+        "schema_version": 1,
+        "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+        "backup": str(backup_root) if existing else None,
+        "managed": [str(LIB), str(DATA), str(BIN)],
+        "source_root": str(ROOT.resolve()),
+        "source_repository": "https://github.com/LQ13ofc/asahi-system.git",
+        "source_branch": system_branch,
+        "source_commit": system_commit,
+        "quickshell_repository": quickshell_lock["repository"],
+        "quickshell_expected_commit": quickshell_commit,
+        "quickshell_source": str(QUICKSHELL_SOURCE.resolve()),
+    }, indent=2) + "\n"
+    fd, temporary_state = tempfile.mkstemp(prefix=".bootstrap-state-", dir=STATE.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(state_content)
+            output.flush()
+            os.fsync(output.fileno())
+            os.fchmod(output.fileno(), 0o644)
+    except Exception:
+        if os.path.exists(temporary_state):
+            os.unlink(temporary_state)
+        raise
+
     replaced = []
     if existing:
         backup_root.mkdir(parents=True, exist_ok=False)
@@ -135,6 +212,7 @@ def install() -> None:
             BIN.unlink()
         BIN.parent.mkdir(parents=True, exist_ok=True)
         os.replace(bin_stage, BIN)
+        os.replace(temporary_state, STATE)
     except Exception:
         for path, label in ((LIB, "lib"), (DATA, "share"), (BIN, "bin")):
             saved = backup_root / label
@@ -150,23 +228,8 @@ def install() -> None:
         raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    state_content = json.dumps({
-        "schema_version": 1,
-        "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
-        "backup": str(backup_root) if replaced else None,
-        "managed": [str(LIB), str(DATA), str(BIN)],
-        "source_root": str(ROOT.resolve()),
-        "source_repository": "https://github.com/LQ13ofc/asahi-system.git",
-        "source_branch": "main",
-        "quickshell_repository": quickshell_lock["repository"],
-        "quickshell_expected_commit": quickshell_commit,
-        "quickshell_source": str(QUICKSHELL_SOURCE.resolve()),
-    }, indent=2) + "\n"
-    state_tmp = STATE.with_suffix(".tmp")
-    state_tmp.write_text(state_content, encoding="utf-8")
-    os.replace(state_tmp, STATE)
+        if os.path.exists(temporary_state):
+            os.unlink(temporary_state)
     print(f"Installed Niri+ CLI { (ROOT / 'VERSION').read_text(encoding='utf-8').strip() } at {BIN}")
     print("No Niri packages or graphical session files were installed.")
     if replaced:
@@ -182,6 +245,8 @@ def main() -> int:
         print(f"Version: {(ROOT / 'VERSION').read_text(encoding='utf-8').strip()}")
         print(f"Destinations: {LIB}, {DATA}, {BIN}")
         try:
+            system_commit, _ = validate_system_source()
+            print(f"asahi-system main: {system_commit}")
             commit, _ = validate_quickshell_source()
             print(f"Quickshell submodule pin: {commit}")
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:

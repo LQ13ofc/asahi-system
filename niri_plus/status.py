@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pathlib
-import platform
 import subprocess
+from . import host
 from .host import host_report
 
 
@@ -18,6 +18,9 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
     lines.append(f"  {'Niri':22} {niri['status']} {niri['version']}")
     lines.extend(f"  {name:22} {value}" for name, value in (
         ("Session", report["session"]), ("Configuration", report["configuration"]),
+        ("Niri config validator", report["configuration_validation"]),
+        ("Packaged session", report["session_package"]), ("Launcher (Command+Space)", report["launcher"]),
+        ("Fuzzel executable", report["launcher_binary"]),
         *report["core"].items()))
     lines.append("\nSystem")
     lines.extend(f"  {name:22} {value}" for name, value in report["system"].items())
@@ -31,21 +34,51 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
                   f"  {'Expected repository':22} {qs['repository']}",
                   f"  {'Installed commit':22} {qs['installed_commit']}",
                   f"  {'Expected commit':22} {qs['expected_commit']}",
+                  f"  {'Installed state pin':22} {qs['state_pin_status']} ({qs['state_expected_commit']})",
                   f"  {'Known-good commit':22} {qs['known_good_commit']}",
-                  f"  {'Dirty checkout':22} {'WARNING' if qs['dirty'] else 'clean'}",
+                  f"  {'Dirty checkout':22} {'clean' if qs['dirty'] is False else 'WARNING' if qs['dirty'] is True else 'UNAVAILABLE'}",
+                  f"  {'Runtime symlink':22} {qs['runtime_link_status']}",
                   f"  {'Lifecycle':22} {qs['lifecycle']} ({qs['lifecycle_detail']})",
                   f"  {'Engine compatibility':22} {qs['compatibility']}"])
     lines.extend([f"  {'Asahi runtime checks':22} {report['m1_checks']}",
-                  f"\nKnown-good: {report['known_good']}", f"Rollback: {report['rollback']}"])
+                  f"\nApplied Niri+ version: {report['applied_version']}",
+                  f"Known-good version: {report['known_good']}", f"Rollback: {report['rollback']}",
+                  f"Source checkout: {report['source_checkout']['status']} "
+                  f"({report['source_checkout']['branch']} @ {report['source_checkout']['head']})",
+                  f"KDE/Plasma isolation: {report['kde_isolation'][0]}"])
+    process_info = qs["processes"]
+    process_count = process_info["count"] if process_info["count"] is not None else process_info["status"]
+    managed_count = process_info.get("managed_count")
+    if managed_count is not None:
+        process_count = f"{process_count} ({managed_count} managed)"
+    lines.append(f"Quickshell processes: {process_count}")
     if report["warnings"]:
         lines.append("Warnings:")
         lines.extend(f"  - {warning}" for warning in report["warnings"])
-    required = (report["session"], report["configuration"], report["quickshell"]["status"])
-    if all(state == "OK" for state in required):
-        overall = "HEALTHY"
-    elif any(state in ("WARNING", "UNAVAILABLE") for state in required):
-        overall = "WARNING"
-    else:
-        overall = "NOT_CONFIGURED"
+    overall = overall_state(report, host.niri_session_active())
     lines.append(f"\nOverall: {overall}")
     return "\n".join(lines)
+
+
+def overall_state(report: dict, niri_active: bool = False) -> str:
+    required = [report["fedora_asahi"], "OK" if report["architecture"] == "aarch64" else "WARNING",
+                "OK" if report["fedora_version"] == "44" else "WARNING", report["niri"]["status"], report["session"],
+                report["session_package"], report["configuration"], report["launcher"],
+                report["configuration_validation"], report["launcher_binary"],
+                report["install_state"], report["rollback_state"], report["source_checkout"]["status"], report["quickshell"]["status"],
+                *report["core"].values(), *report["system"].values()]
+    required.extend(report["managed_file_checksums"].values())
+    required.extend(report.get("managed_links", {}).values())
+    qs_process_count = report["quickshell"]["processes"]["count"]
+    if niri_active:
+        managed_count = report["quickshell"]["processes"].get("managed_count")
+        required.append("OK" if qs_process_count == managed_count == 1 else "WARNING")
+    elif qs_process_count not in (0, None):
+        required.append("WARNING")
+    if all(state == "OK" for state in required) and report["kde_isolation"][0] in ("OK", "NOT_APPLICABLE"):
+        # Static checks cannot certify audio, input, networking, suspend/resume
+        # or GPU behavior on the Apple hardware.
+        return "M1_REQUIRED"
+    if any(state in ("WARNING", "UNAVAILABLE") for state in required) or report["kde_isolation"][0] == "WARNING":
+        return "WARNING"
+    return "NOT_CONFIGURED"

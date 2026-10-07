@@ -8,7 +8,9 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
+import stat
 import subprocess
 from typing import Callable
 
@@ -58,8 +60,9 @@ def command_version(name: str, runner: Runner = subprocess.run,
         return NOT_INSTALLED, None
     result = run([path, "--version"], runner)
     if result and result.returncode == 0:
-        return OK, (result.stdout or result.stderr).strip().splitlines()[0]
-    return OK, None
+        lines = (result.stdout or result.stderr).strip().splitlines()
+        return (OK, lines[0]) if lines else (WARNING, None)
+    return WARNING, None
 
 
 def package_status(package: str, runner: Runner = subprocess.run,
@@ -94,9 +97,29 @@ def installed_file(root: pathlib.Path, absolute: str) -> bool:
 
 def session_status(root: pathlib.Path) -> str:
     packaged = root / "usr/share/wayland-sessions/niri.desktop"
-    legacy_duplicate = root / "usr/share/wayland-sessions/niri-performance.desktop"
-    if legacy_duplicate.is_file():
-        return WARNING
+    entries = []
+    for directory in (root / "usr/share/wayland-sessions", root / "usr/local/share/wayland-sessions"):
+        if not directory.is_dir():
+            continue
+        for candidate in directory.glob("*.desktop"):
+            parser = configparser.ConfigParser(interpolation=None)
+            try:
+                parser.read(candidate, encoding="utf-8")
+                if not parser.has_section("Desktop Entry"):
+                    continue
+                desktop = parser["Desktop Entry"]
+                identity = " ".join((
+                    candidate.stem,
+                    desktop.get("Name", ""),
+                    desktop.get("Exec", ""),
+                    desktop.get("TryExec", ""),
+                )).lower()
+                if "niri" in identity:
+                    entries.append(candidate)
+            except (configparser.Error, OSError):
+                continue
+    if len(entries) != 1 or entries[0] != packaged:
+        return WARNING if entries else NOT_INSTALLED
     if not packaged.is_file():
         return NOT_INSTALLED
     parser = configparser.ConfigParser(interpolation=None)
@@ -107,14 +130,149 @@ def session_status(root: pathlib.Path) -> str:
         return WARNING
 
 
+def configuration_status(root: pathlib.Path, environment: dict[str, str] | None = None) -> str:
+    config = root / "etc/niri/config.kdl"
+    try:
+        source = config.read_text(encoding="utf-8")
+    except OSError:
+        return NOT_CONFIGURED
+    includes = re.findall(r'^\s*include\s+"([^"\n]+)"', source, flags=re.MULTILINE)
+    required = {"keybinds.kdl", "outputs.kdl", "rules.kdl", "autostart.kdl"}
+    if len(includes) != len(required) or set(includes) != required:
+        return WARNING
+    for included in includes:
+        path = pathlib.PurePosixPath(included)
+        if path.is_absolute() or ".." in path.parts or not (config.parent / included).is_file():
+            return WARNING
+    if root == pathlib.Path("/") or environment is not None:
+        environment = environment if environment is not None else os.environ
+        configured = environment.get("NIRI_CONFIG")
+        user_config_dir = pathlib.Path(environment.get("XDG_CONFIG_HOME", pathlib.Path.home() / ".config"))
+        user_config = user_config_dir / "niri/config.kdl"
+        if configured and pathlib.Path(configured).resolve() != config.resolve():
+            return WARNING
+        if user_config.is_file():
+            return WARNING
+    return OK
+
+
+def configuration_validation(root: pathlib.Path, runner: Runner) -> str:
+    if root != pathlib.Path("/"):
+        return UNAVAILABLE
+    niri = find_binary(root, "niri")
+    if not niri:
+        return NOT_INSTALLED
+    result = run([niri, "validate", "--config", "/etc/niri/config.kdl"], runner)
+    if result and result.returncode == 0:
+        return OK
+    return WARNING if result else UNAVAILABLE
+
+
+def launcher_status(root: pathlib.Path) -> str:
+    keybinds = root / "etc/niri/keybinds.kdl"
+    try:
+        source = keybinds.read_text(encoding="utf-8")
+    except OSError:
+        return NOT_CONFIGURED
+    match = re.search(r'^\s*Mod\+Space\s*\{\s*spawn\s+"fuzzel"\s*;?\s*\}', source, re.MULTILINE)
+    return OK if match else WARNING
+
+
+def niri_session_active() -> bool:
+    desktops = {item.strip().lower() for item in os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")}
+    return bool(os.environ.get("NIRI_SOCKET")) or "niri" in desktops
+
+
+KDE_BACKGROUND_PROCESSES = (
+    "plasmashell", "kwin_wayland", "kded6", "ksmserver", "kalendarac",
+    "discovernotifier", "kdeconnectd", "akonadi_control", "akonadiserver",
+    "baloo_file", "powerdevil", "xwaylandvideobridge",
+)
+
+
+def kde_processes(proc_root: pathlib.Path = pathlib.Path("/proc")) -> list[str]:
+    processes = []
+    try:
+        for entry in proc_root.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                args = (entry / "cmdline").read_bytes().decode(errors="replace").lower()
+                comm = (entry / "comm").read_text(encoding="utf-8").strip().lower()
+                executable = str((entry / "exe").resolve()).lower()
+            except OSError:
+                continue
+            match = next((name for name in KDE_BACKGROUND_PROCESSES
+                          if name in args or name in comm or executable.endswith("/" + name)), None)
+            if match:
+                processes.append(f"process:{match}")
+    except OSError:
+        pass
+    return processes
+
+
+def kde_isolation_status(root: pathlib.Path, runner: Runner,
+                         proc_root: pathlib.Path = pathlib.Path("/proc")) -> tuple[str, list[str]]:
+    if not niri_session_active():
+        return "NOT_APPLICABLE", []
+    result = run(["systemctl", "--user", "list-units", "--all", "--no-legend", "--no-pager"], runner)
+    if not result or result.returncode != 0:
+        return UNAVAILABLE, []
+    active = []
+    for line in (result.stdout or "").splitlines():
+        fields = line.split()
+        if len(fields) < 3 or fields[2] != "active":
+            continue
+        unit = fields[0]
+        if (unit.startswith("plasma-") or unit.startswith("app-org.kde.")
+                or unit in {"akonadi_control.service", "kde-baloo.service", "kunifiedpush-distributor.service"}):
+            active.append(unit)
+    processes = kde_processes(proc_root)
+    active.extend(processes)
+    filter_units = (
+        "app-org.kde.discover.notifier@autostart.service",
+        "app-org.kde.kalendarac@autostart.service",
+        "app-org.kde.kdeconnect.daemon@autostart.service",
+        "app-org.kde.xwaylandvideobridge@autostart.service",
+    )
+    missing_filters = []
+    for unit in filter_units:
+        dropin = root / f"usr/lib/systemd/user/{unit}.d/10-niri-session.conf"
+        try:
+            valid = "ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE" in dropin.read_text(encoding="utf-8")
+        except OSError:
+            valid = False
+        if not valid:
+            missing_filters.append(unit)
+    bridge = "app-org.kde.xwaylandvideobridge@autostart.service"
+    if missing_filters or bridge in active or "process:xwaylandvideobridge" in processes:
+        active.extend(f"missing KDE-only filter:{unit}" for unit in missing_filters)
+        return WARNING, active
+    return (WARNING if active else OK), active
+
+
 def installation_state(root: pathlib.Path) -> tuple[str, dict]:
     path = root / "var/lib/asahi-system/niri-performance/state.json"
+    if path.is_symlink():
+        return WARNING, {}
     if not path.exists():
         return NOT_CONFIGURED, {}
     try:
+        if not path.is_file():
+            return WARNING, {}
+        mode = stat.S_IMODE(path.stat().st_mode)
+        if mode & 0o022 or mode & 0o044 != 0o044:
+            return WARNING, {}
+        if root == pathlib.Path("/") and path.stat().st_uid != 0:
+            return WARNING, {}
         state = json.loads(path.read_text(encoding="utf-8"))
         if state.get("schema_version") != 1 or not isinstance(state.get("entries"), dict):
             return WARNING, {}
+        # Older installers called the applied version "known good" without
+        # any runtime health check. Keep reads non-mutating and ask install to
+        # migrate the field rather than repeating that false claim.
+        if state.get("known_good_version") and not state.get("applied_version"):
+            return WARNING, state
         return OK, state
     except (OSError, ValueError, json.JSONDecodeError):
         return WARNING, {}
@@ -123,25 +281,71 @@ def installation_state(root: pathlib.Path) -> tuple[str, dict]:
 def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = None,
                 runner: Runner = subprocess.run) -> dict:
     from . import quickshell
+    from . import install
 
     machine = machine or platform.machine()
     release = read_os_release(root)
     host = release.get("PRETTY_NAME") or "Unknown Linux"
     arch = machine
     state_status, state = installation_state(root)
+    if state_status in (OK, WARNING) and state:
+        try:
+            state = install.load_state(root)
+        except install.InstallError:
+            state_status, state = WARNING, {}
     managed_files = {}
-    for absolute, entry in state.get("entries", {}).items():
+    entries = state.get("entries", {})
+    installed_version = state.get("applied_version")
+    for absolute in install.MANAGED_FILES if installed_version else entries:
+        entry = entries.get(absolute, {})
         expected = entry.get("installed_sha256")
         if not expected:
+            if installed_version:
+                managed_files[absolute] = WARNING
+            continue
+        target = root / absolute.lstrip("/")
+        if target.is_symlink():
+            managed_files[absolute] = WARNING
             continue
         try:
-            actual = hashlib.sha256((root / absolute.lstrip("/")).read_bytes()).hexdigest()
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
             managed_files[absolute] = OK if actual == expected else WARNING
         except OSError:
             managed_files[absolute] = NOT_INSTALLED
+    managed_links = {}
+    for absolute, link_target in install.MANAGED_LINKS.items():
+        if not installed_version:
+            continue
+        target = root / absolute.lstrip("/")
+        try:
+            managed_links[absolute] = OK if target.is_symlink() and os.readlink(target) == link_target else WARNING
+        except OSError:
+            managed_links[absolute] = NOT_INSTALLED
     niri_state, niri_version = command_version("niri", runner, root)
+    from . import source_update
+    cli_version_path = root / "usr/local/share/niri-plus/VERSION"
+    try:
+        cli_version = cli_version_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        cli_version = None
+    source_checkout = source_update.inspect_source(root, runner, installed_version=cli_version)
     quickshell_info = quickshell.report(root, runner)
-    quickshell_info["known_good_commit"] = state.get("quickshell", {}).get("known_good_commit") or NOT_CONFIGURED
+    quickshell_state = state.get("quickshell", {})
+    quickshell_info["known_good_commit"] = quickshell_state.get("known_good_commit") or NOT_CONFIGURED
+    quickshell_info["state_expected_commit"] = quickshell_state.get("expected_commit") or NOT_CONFIGURED
+    if installed_version:
+        state_pin = quickshell_state.get("expected_commit")
+        if state_pin != quickshell_info["expected_commit"]:
+            quickshell_info["state_pin_status"] = WARNING
+            quickshell_info["status"] = WARNING
+            quickshell_info["warnings"].append(
+                "Install state Quickshell pin differs from the repository lock; rerun sudo niri+ install to apply the reviewed pin."
+            )
+        else:
+            quickshell_info["state_pin_status"] = OK
+    else:
+        quickshell_info["state_pin_status"] = NOT_CONFIGURED
+    quickshell_info["processes"] = quickshell.process_diagnostics()
     gamescope = OK if find_binary(root, "gamescope") else UNAVAILABLE
     steam = OK if find_binary(root, "steam") else NOT_INSTALLED
     report = {
@@ -151,17 +355,28 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         "fedora_version": release.get("VERSION_ID", "Unknown"),
         "niri": {"status": niri_state, "version": niri_version or "version unavailable"},
         "session": session_status(root),
-        "configuration": OK if installed_file(root, "/etc/niri/config.kdl") else NOT_CONFIGURED,
+        "session_package": packaged_session_status(root, runner),
+        "configuration": configuration_status(root),
+        "configuration_validation": configuration_validation(root, runner),
+        "launcher": launcher_status(root),
+        "launcher_binary": command_version("fuzzel", runner, root)[0],
+        "rollback_state": rollback_state_status(root, state),
+        "kde_isolation": kde_isolation_status(root, runner),
         "managed_file_checksums": managed_files,
+        "managed_links": managed_links,
         "polkit_unit": OK if installed_file(root, "/usr/lib/systemd/user/asahi-niri-polkit-agent.service") else NOT_INSTALLED,
         "portal_backend": OK if installed_file(root, "/usr/libexec/xdg-desktop-portal-gtk") else NOT_INSTALLED,
         "install_state": state_status,
-        "known_good": state.get("known_good_version", NOT_CONFIGURED),
+        "known_good": state.get("verified_good_version", NOT_CONFIGURED),
+        "applied_version": state.get("applied_version", "unknown"),
         "rollback": OK if state.get("entries") else NOT_CONFIGURED,
         "core": {
             "foot": package_status("foot", runner, root),
             "fuzzel": package_status("fuzzel", runner, root),
             "PolicyKit agent": package_status("lxqt-policykit", runner, root),
+            "Python runtime": package_status("python3", runner, root),
+            "Python D-Bus": package_status("python3-dbus", runner, root),
+            "Python GObject": package_status("python3-gobject", runner, root),
         },
         "system": {
             "PipeWire": service_status("pipewire.service", runner, user=True, root=root),
@@ -174,6 +389,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
             "Steam": steam,
         },
         "quickshell": quickshell_info,
+        "source_checkout": source_checkout,
         "m1_checks": M1_REQUIRED,
         "warnings": _warnings(release, machine, state_status, gamescope),
     }
@@ -184,15 +400,61 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
     for absolute, status in managed_files.items():
         if status != OK:
             report["warnings"].append(f"Managed file check failed for {absolute}: {status}.")
+    for absolute, status in managed_links.items():
+        if status != OK:
+            report["warnings"].append(f"Managed symlink check failed for {absolute}: {status}.")
+    if "known_good_version" in state and not state.get("applied_version"):
+        report["warnings"].append(
+            "Install state uses the legacy known_good_version field without health verification; run sudo niri+ install to migrate it."
+        )
     report["warnings"].append("Real input, audio, Wi-Fi, suspend/resume and graphics behavior require M1_REQUIRED validation.")
     report["warnings"].extend(quickshell_info["warnings"])
+    if source_checkout["status"] not in (OK, "UNAVAILABLE"):
+        report["warnings"].append(f"Niri+ source checkout health is {source_checkout['status']}.")
+    if report["kde_isolation"][0] == WARNING:
+        report["warnings"].append("KDE/Plasma user units are active in the Niri session; inspect before changing anything.")
+    if report["launcher"] != OK:
+        report["warnings"].append("Command+Space does not resolve to the Fuzzel launcher in the installed Niri config.")
+    if report["configuration_validation"] == WARNING:
+        report["warnings"].append("The installed Niri rejected /etc/niri/config.kdl during read-only validation.")
+    elif report["configuration_validation"] == UNAVAILABLE:
+        report["warnings"].append("The Niri config validator could not run on this host.")
+    if report["launcher_binary"] not in (OK,):
+        report["warnings"].append("Fuzzel executable is missing or did not return a version successfully.")
     return report
+
+
+def packaged_session_status(root: pathlib.Path, runner: Runner) -> str:
+    if root != pathlib.Path("/"):
+        return UNAVAILABLE
+    if not shutil.which("rpm"):
+        return UNAVAILABLE
+    result = run(["rpm", "-qf", "--qf", "%{NAME}", "/usr/share/wayland-sessions/niri.desktop"], runner)
+    if not result:
+        return UNAVAILABLE
+    return OK if result.returncode == 0 and (result.stdout or "").strip() == "niri" else WARNING
+
+
+def rollback_state_status(root: pathlib.Path, state: dict) -> str:
+    entries = state.get("entries", {})
+    for relative, entry in entries.items():
+        if entry.get("kind") != "file":
+            continue
+        backup_value = entry.get("backup")
+        if not backup_value or backup_value != f"/var/lib/asahi-system/niri-performance/backups{relative}":
+            return WARNING
+        backup = root / backup_value.lstrip("/")
+        if backup.is_symlink() or not backup.is_file():
+            return WARNING
+    return OK if entries else NOT_CONFIGURED
 
 
 def _warnings(release: dict[str, str], machine: str, state_status: str, gamescope: str) -> list[str]:
     warnings = []
     if release.get("ID") != "fedora-asahi-remix":
         warnings.append("This host is not Fedora Asahi Remix; install is restricted to that target.")
+    if release.get("VERSION_ID") != "44":
+        warnings.append(f"Fedora {release.get('VERSION_ID', 'unknown')} is not the declared Fedora Asahi 44 target.")
     if machine != "aarch64":
         warnings.append(f"Architecture {machine} is not the target aarch64 hardware.")
     if state_status == WARNING:
