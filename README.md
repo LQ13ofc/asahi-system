@@ -6,7 +6,11 @@ Este repositório é a fonte principal do sistema. A interface Quickshell/Niri e
 
 ## Estado atual
 
-O conteúdo atual é a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/). Ainda não há configuração declarativa de sessões nem implementação das sessões Niri Performance e Gaming. Plasma permanece instalado como recuperação.
+O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/) e infraestrutura de benchmark read-only. Ainda não há configuração executável da sessão Niri Performance ou de Gaming Mode. Niri é o objetivo da sessão otimizada; Gaming Mode exige Gamescope ativo dentro do Niri. Plasma permanece apenas como recovery/fallback e não é alvo de otimização.
+
+## Benchmark read-only
+
+O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md); a classificação observacional dos serviços do snapshot está em [`docs/service-classification.md`](docs/service-classification.md). O coletor `scripts/collect-performance-baseline` produz JSON parcial com status por métrica e não altera serviços, sysctls ou arquivos do sistema. Para uma captura comparável, siga o protocolo; nenhuma captura Cloud x86_64 substitui teste no M1.
 
 ## Validação no Cloud
 
@@ -18,4 +22,3 @@ python3 -m unittest discover -s tests -v
 ```
 
 O GitHub Actions executa as mesmas verificações em PRs e em atualizações de `main`. Elas conferem estrutura e consistência do snapshot; não substituem testes no Fedora Asahi real.
-

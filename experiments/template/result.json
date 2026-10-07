@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "decision": "INCONCLUSIVE",
+  "before": [],
+  "after": [],
+  "comparison": {},
+  "notes": "Substitua pelo resumo das capturas e preserve os JSONs completos nas pastas before/ e after/."
+}
