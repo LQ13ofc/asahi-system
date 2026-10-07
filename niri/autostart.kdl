@@ -1,2 +1,3 @@
-// B1 has no exec-once collection. Niri's packaged systemd session starts and
-// stops the one optional session agent through graphical-session.target.
+// Niri+ starts session agents through systemd --user and
+// graphical-session.target. Keep Quickshell out of compositor autostart so it
+// has one owner and cannot start twice.

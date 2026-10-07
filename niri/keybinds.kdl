@@ -1,6 +1,9 @@
-// Keep only the two tools used to operate this bare session and an exit key.
+// Atalhos principais da sessão Niri. Mod representa Super; no teclado do Mac,
+// Command é mapeado para Super pelo compositor. Command+Space é o launcher.
 binds {
     Mod+Return { spawn "foot"; }
+    Mod+Space { spawn "fuzzel"; }
+    // Alias secundário mantido para quem já usava o atalho de desenvolvimento.
     Mod+D { spawn "fuzzel"; }
     Mod+Shift+E { quit; }
 }
