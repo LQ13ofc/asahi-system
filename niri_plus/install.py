@@ -27,15 +27,22 @@ REPO = pathlib.Path(os.environ.get(
 ))
 PACKAGES = ("niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit")
 BASE_SERVICES = ("pipewire", "pipewire-pulseaudio", "wireplumber", "NetworkManager")
+LEGACY_MANAGED_PATHS = {
+    "/usr/share/wayland-sessions/niri-performance.desktop",
+    "/usr/local/bin/asahi-niri-session",
+    "/usr/local/share/asahi-system/niri/config.kdl",
+    "/usr/local/share/asahi-system/niri/keybinds.kdl",
+    "/usr/local/share/asahi-system/niri/outputs.kdl",
+    "/usr/local/share/asahi-system/niri/rules.kdl",
+    "/usr/local/share/asahi-system/niri/autostart.kdl",
+}
 MANAGED_FILES = {
-    "/usr/share/wayland-sessions/niri-performance.desktop": REPO / "sessions/niri.desktop",
-    "/usr/local/bin/asahi-niri-session": REPO / "sessions/launch/niri-session",
     "/usr/lib/systemd/user/asahi-niri-polkit-agent.service": REPO / "sessions/systemd/asahi-niri-polkit-agent.service",
-    "/usr/local/share/asahi-system/niri/config.kdl": REPO / "niri/config.kdl",
-    "/usr/local/share/asahi-system/niri/keybinds.kdl": REPO / "niri/keybinds.kdl",
-    "/usr/local/share/asahi-system/niri/outputs.kdl": REPO / "niri/outputs.kdl",
-    "/usr/local/share/asahi-system/niri/rules.kdl": REPO / "niri/rules.kdl",
-    "/usr/local/share/asahi-system/niri/autostart.kdl": REPO / "niri/autostart.kdl",
+    "/etc/niri/config.kdl": REPO / "niri/config.kdl",
+    "/etc/niri/keybinds.kdl": REPO / "niri/keybinds.kdl",
+    "/etc/niri/outputs.kdl": REPO / "niri/outputs.kdl",
+    "/etc/niri/rules.kdl": REPO / "niri/rules.kdl",
+    "/etc/niri/autostart.kdl": REPO / "niri/autostart.kdl",
 }
 MANAGED_LINKS = {
     "/usr/lib/systemd/user/graphical-session.target.wants/asahi-niri-polkit-agent.service": "../asahi-niri-polkit-agent.service",
@@ -72,11 +79,7 @@ def parse_os_release(path: pathlib.Path = pathlib.Path("/etc/os-release")) -> di
 
 
 def content_for(source: pathlib.Path) -> bytes:
-    data = source.read_bytes()
-    if source == REPO / "sessions/niri.desktop":
-        # The installer marker lets a later run distinguish its own file.
-        return b"# Managed by LQ13ofc/asahi-system; local edits are backed up on update.\n" + data
-    return data
+    return source.read_bytes()
 
 
 def prefixed(root: pathlib.Path, absolute: str) -> pathlib.Path:
@@ -127,7 +130,7 @@ def load_state(root: pathlib.Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("schema_version") != 1 or not isinstance(data.get("entries"), dict):
             raise ValueError("unknown state schema")
-        allowed = set(MANAGED_FILES) | set(MANAGED_LINKS)
+        allowed = set(MANAGED_FILES) | set(MANAGED_LINKS) | LEGACY_MANAGED_PATHS
         for relative, entry in data["entries"].items():
             if relative not in allowed or not isinstance(entry, dict):
                 raise ValueError(f"unknown managed path in state: {relative}")
@@ -148,6 +151,8 @@ def render_plan() -> None:
     for package in PACKAGES:
         print(f"  - {package}")
     print("Niri hard dependency resolved by DNF: xwayland-satellite >= 0.7 (on-demand Xwayland integration)")
+    print("Display-manager session: reuse Fedora's packaged Niri entry (no duplicate custom entry)")
+    print("System Niri defaults: /etc/niri/config.kdl")
     print("DNF option: --setopt=install_weak_deps=False")
     print("Existing baseline components checked, not installed or enabled:")
     for package in BASE_SERVICES:
@@ -177,10 +182,7 @@ def install_files(root: pathlib.Path) -> tuple[dict[str, Any], bool]:
             if target.is_symlink():
                 target.unlink()
             target.write_bytes(desired)
-            if relative.endswith("/asahi-niri-session"):
-                target.chmod(0o755)
-            else:
-                target.chmod(0o644)
+            target.chmod(0o644)
             state["entries"][relative]["installed_sha256"] = hashlib.sha256(desired).hexdigest()
             write_state(root, state)
             changed = True
@@ -266,6 +268,15 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
     if shutil.which("dnf") is None:
         raise InstallError("dnf was not found")
     state = load_state(root)
+    legacy_entries = set(state.get("entries", {})) & LEGACY_MANAGED_PATHS
+    if legacy_entries:
+        tracked_packages = state.get("packages_installed_by_us", [])
+        print("Migrating the legacy custom Niri session to Fedora's packaged Niri session.")
+        rollback_files(root)
+        state = load_state(root)
+        if tracked_packages:
+            state["packages_installed_by_us"] = tracked_packages
+            write_state(root, state)
     installed_before = installed_rpm_packages()
     state.setdefault("packages_installed_by_us", sorted(set(PACKAGES) - installed_before))
     write_state(root, state)

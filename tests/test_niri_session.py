@@ -22,23 +22,11 @@ class NiriSessionTests(unittest.TestCase):
                 document = kdl.parse(path.read_text(encoding="utf-8"))
                 self.assertIsNotNone(document)
 
-    def test_desktop_entry_is_parseable_and_preserves_plasma_choice(self):
-        parser = configparser.ConfigParser(interpolation=None)
-        parser.read(ROOT / "sessions/niri.desktop", encoding="utf-8")
-        entry = parser["Desktop Entry"]
-        self.assertEqual(entry["Type"], "Application")
-        self.assertEqual(entry["Exec"], "/usr/local/bin/asahi-niri-session")
-        self.assertEqual(entry["Name"], "Niri")
+    def test_reuses_fedora_packaged_session_and_preserves_plasma_choice(self):
+        self.assertNotIn("/usr/share/wayland-sessions/niri-performance.desktop", installer.MANAGED_FILES)
+        self.assertNotIn("/usr/local/bin/asahi-niri-session", installer.MANAGED_FILES)
         self.assertNotIn("/usr/share/wayland-sessions/plasma.desktop", installer.MANAGED_FILES)
-
-    def test_launcher_shell_syntax_and_delegates_lifecycle_to_niri(self):
-        launcher = ROOT / "sessions/launch/niri-session"
-        result = subprocess.run(["sh", "-n", str(launcher)], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        script = launcher.read_text(encoding="utf-8")
-        self.assertIn("exec /usr/bin/niri-session", script)
-        self.assertIn("NIRI_CONFIG=/usr/local/share/asahi-system/niri/config.kdl", script)
-        self.assertNotIn("systemctl --user start graphical-session.target", script)
+        self.assertEqual(installer.MANAGED_FILES["/etc/niri/config.kdl"], ROOT / "niri/config.kdl")
 
     def test_polkit_agent_is_bound_to_niri_graphical_lifecycle(self):
         unit = (ROOT / "sessions/systemd/asahi-niri-polkit-agent.service").read_text(encoding="utf-8")
@@ -82,37 +70,35 @@ class NiriSessionTests(unittest.TestCase):
     def test_install_is_idempotent_and_rollback_restores_backups(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            preexisting = installer.prefixed(root, "/usr/share/wayland-sessions/niri-performance.desktop")
+            preexisting = installer.prefixed(root, "/etc/niri/config.kdl")
             preexisting.parent.mkdir(parents=True)
-            preexisting.write_text("user session entry\n")
+            preexisting.write_text("user config\n")
 
             _, first_changed = installer.install_files(root)
             _, second_changed = installer.install_files(root)
             self.assertTrue(first_changed)
             self.assertFalse(second_changed)
-            installed_content = preexisting.read_text()
-            self.assertIn("Name=Niri", installed_content)
+            self.assertIn('include "keybinds.kdl"', preexisting.read_text())
 
             restored = installer.rollback_files(root)
-            self.assertEqual(preexisting.read_text(), "user session entry\n")
-            self.assertTrue(any("restored /usr/share/wayland-sessions/niri-performance.desktop" in item for item in restored))
-            self.assertFalse(installer.prefixed(root, "/usr/local/bin/asahi-niri-session").exists())
+            self.assertEqual(preexisting.read_text(), "user config\n")
+            self.assertTrue(any("restored /etc/niri/config.kdl" in item for item in restored))
 
     def test_rollback_saves_post_install_edits(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            launcher = installer.prefixed(root, "/usr/local/bin/asahi-niri-session")
+            config = installer.prefixed(root, "/etc/niri/config.kdl")
             installer.install_files(root)
-            launcher.write_text("local post-install edit\n")
+            config.write_text("local post-install edit\n")
             installer.rollback_files(root)
-            saved_edit = installer.prefixed(root, "/var/lib/asahi-system/niri-performance/rollback-edits/usr/local/bin/asahi-niri-session")
+            saved_edit = installer.prefixed(root, "/var/lib/asahi-system/niri-performance/rollback-edits/etc/niri/config.kdl")
             self.assertEqual(saved_edit.read_text(), "local post-install edit\n")
-            self.assertFalse(launcher.exists())
+            self.assertFalse(config.exists())
 
     def test_existing_identical_destination_is_preserved_by_rollback(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            relative = "/usr/share/wayland-sessions/niri-performance.desktop"
+            relative = "/etc/niri/config.kdl"
             target = installer.prefixed(root, relative)
             target.parent.mkdir(parents=True)
             target.write_bytes(installer.content_for(installer.MANAGED_FILES[relative]))

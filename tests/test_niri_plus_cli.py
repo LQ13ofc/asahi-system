@@ -69,23 +69,23 @@ class NiriPlusCliTests(unittest.TestCase):
     def test_install_files_are_idempotent_and_rollback_restores(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            target = install_command.install.prefixed(root, "/usr/share/wayland-sessions/niri-performance.desktop")
+            target = install_command.install.prefixed(root, "/etc/niri/config.kdl")
             target.parent.mkdir(parents=True)
-            target.write_text("previous entry\n")
+            target.write_text("previous config\n")
             _, first = install_command.install.install_files(root)
             state_path = install_command.install.prefixed(root, install_command.install.STATE_PATH)
             self.assertEqual(state_path.stat().st_mode & 0o777, 0o644)
             _, second = install_command.install.install_files(root)
             self.assertTrue(first)
             self.assertFalse(second)
-            self.assertIn("Name=Niri", target.read_text())
+            self.assertIn('include "keybinds.kdl"', target.read_text())
             install_command.install.rollback_files(root)
-            self.assertEqual(target.read_text(), "previous entry\n")
+            self.assertEqual(target.read_text(), "previous config\n")
 
     def test_rollback_command_restores_managed_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            target = install_command.install.prefixed(root, "/usr/local/bin/asahi-niri-session")
+            target = install_command.install.prefixed(root, "/etc/niri/config.kdl")
             install_command.install.install_files(root)
             self.assertTrue(target.exists())
             self.assertEqual(rollback.run_rollback(root=root, require_root=False), 0)
@@ -101,11 +101,16 @@ class NiriPlusCliTests(unittest.TestCase):
         self.assertEqual(calls, [[sys.executable, str(ROOT / "scripts/collect-performance-baseline"),
                                   "--runs", "5", "--output", "capture.json"]])
 
-    def test_desktop_display_name_is_exactly_niri(self):
-        from configparser import ConfigParser
-        parser = ConfigParser(interpolation=None)
-        parser.read(ROOT / "sessions/niri.desktop", encoding="utf-8")
-        self.assertEqual(parser["Desktop Entry"]["Name"], "Niri")
+    def test_session_status_accepts_packaged_niri_and_rejects_legacy_duplicate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            packaged = root / "usr/share/wayland-sessions/niri.desktop"
+            packaged.parent.mkdir(parents=True)
+            packaged.write_text("[Desktop Entry]\nName=Niri\nType=Application\n")
+            self.assertEqual(host.session_status(root), host.OK)
+            legacy = root / "usr/share/wayland-sessions/niri-performance.desktop"
+            legacy.write_text("[Desktop Entry]\nName=Niri\nType=Application\n")
+            self.assertEqual(host.session_status(root), host.WARNING)
 
 
 def missing_runner(args, **kwargs):
