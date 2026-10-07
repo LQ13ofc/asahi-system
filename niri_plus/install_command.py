@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
-from . import install
+from . import install, source_update
 
 
 def run_install(dry_run: bool = False) -> int:
@@ -19,8 +19,13 @@ def run_install(dry_run: bool = False) -> int:
         print("Install requires root; use: sudo niri+ install")
         return 2
     try:
+        if os.environ.get("NIRI_PLUS_SELF_UPDATED") != "1":
+            commit = source_update.refresh_and_bootstrap()
+            print(f"Niri+ source updated to {commit[:12]}; continuing with refreshed CLI.")
+            source_update.reexec_install()
+            raise RuntimeError("re-exec unexpectedly returned")
         install.apply_install()
-    except (install.InstallError, subprocess.CalledProcessError) as exc:
+    except (install.InstallError, source_update.SourceUpdateError, subprocess.CalledProcessError) as exc:
         print(f"Install failed: {exc}")
         return 2
     return 0
