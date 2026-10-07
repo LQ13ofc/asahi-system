@@ -73,6 +73,8 @@ class NiriPlusCliTests(unittest.TestCase):
             target.parent.mkdir(parents=True)
             target.write_text("previous entry\n")
             _, first = install_command.install.install_files(root)
+            state_path = install_command.install.prefixed(root, install_command.install.STATE_PATH)
+            self.assertEqual(state_path.stat().st_mode & 0o777, 0o644)
             _, second = install_command.install.install_files(root)
             self.assertTrue(first)
             self.assertFalse(second)

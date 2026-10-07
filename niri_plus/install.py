@@ -110,6 +110,10 @@ def write_state(root: pathlib.Path, state: dict[str, Any]) -> None:
             json.dump(state, output, indent=2, sort_keys=True)
             output.write("\n")
         os.replace(temp_name, path)
+        # status/doctor are intentionally usable without root. The state contains
+        # only package names, managed paths, hashes and version metadata; keep it
+        # world-readable while retaining root-only write access.
+        path.chmod(0o644)
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
