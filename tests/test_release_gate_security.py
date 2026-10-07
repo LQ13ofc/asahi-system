@@ -96,6 +96,19 @@ class GitSnapshotTests(unittest.TestCase):
             **kwargs,
         )
 
+    def test_temporary_bare_store_is_created_by_git_as_checkout_owner(self):
+        parent = self.root / "owner-temp"
+        parent.mkdir()
+        store = parent / "objects.git"
+
+        source_update._create_git_dir(self.checkout, store, subprocess.run)
+
+        self.assertTrue((store / "HEAD").is_file())
+        self.assertTrue((store / "objects").is_dir())
+
+        with self.assertRaisesRegex(source_update.SourceUpdateError, "already exists"):
+            source_update._create_git_dir(self.checkout, store, subprocess.run)
+
     def test_environment_cannot_enable_unapproved_local_git_sources(self):
         with mock.patch.dict(os.environ, {"NIRI_PLUS_TEST_GIT_SOURCES": "1"}):
             with self.assertRaisesRegex(source_update.SourceUpdateError, "test Git source override is disabled"):
