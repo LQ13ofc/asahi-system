@@ -418,6 +418,35 @@ class NiriPlusCliTests(unittest.TestCase):
             self.assertFalse(hook_marker.exists(), "source update must disable checkout Git hooks")
             self.assertFalse(fsmonitor_marker.exists(), "source update must disable repository-local fsmonitor")
 
+    def test_privileged_git_probe_runs_as_checkout_owner_with_clean_git_environment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            checkout = pathlib.Path(temp) / "checkout"
+            checkout.mkdir()
+            captured = {}
+
+            def runner(args, **kwargs):
+                captured.update(kwargs)
+                captured["args"] = args
+                return subprocess.CompletedProcess(args, 0, stdout="clean\n", stderr="")
+
+            with mock.patch.object(source_update.os, "geteuid", return_value=0), \
+                 mock.patch.dict(source_update.os.environ, {"GIT_TRACE": "/tmp/should-not-leak"}):
+                result = source_update._run_as_owner(
+                    checkout, ["git", "status"], runner, check=False, timeout=4
+                )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(captured["user"], checkout.stat().st_uid)
+            self.assertEqual(captured["env"]["GIT_CONFIG_NOSYSTEM"], "1")
+            self.assertEqual(captured["env"]["GIT_CONFIG_GLOBAL"], source_update.os.devnull)
+            self.assertNotIn("GIT_TRACE", captured["env"])
+
+            bootstrap = runpy.run_path(str(ROOT / "scripts/bootstrap-niri-plus"))
+            with mock.patch.object(bootstrap["os"], "geteuid", return_value=0), \
+                 mock.patch.object(bootstrap["subprocess"], "run",
+                                  return_value=subprocess.CompletedProcess([], 0, stdout="ok", stderr="")) as run:
+                bootstrap["git_as_checkout_owner"](checkout, "status")
+            self.assertEqual(run.call_args.kwargs["user"], checkout.stat().st_uid)
+
     def test_reexec_failure_is_reported_without_retrying(self):
         with mock.patch.object(source_update.os, "execve", side_effect=FileNotFoundError("missing CLI")):
             with self.assertRaisesRegex(source_update.SourceUpdateError, "could not be restarted"):

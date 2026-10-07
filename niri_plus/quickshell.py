@@ -39,12 +39,21 @@ def checkout_path(root: pathlib.Path, base: pathlib.Path) -> pathlib.Path:
 
 
 def git_value(path: pathlib.Path, args: list[str], runner: Runner) -> str | None:
-    # The checkout is deliberately owned by the user, while install may run as
-    # root. Trust only this exact path for the individual read-only Git probe.
-    result = run(["git", "-c", f"safe.directory={path}",
-                  "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                  "-C", str(path), *args], runner)
-    if not result or result.returncode != 0:
+    # Read-only probes must also run as the checkout owner. `safe.directory`
+    # alone would let root execute repository-configured filters during status.
+    from .source_update import SourceUpdateError, _run_as_owner
+    try:
+        result = _run_as_owner(
+            path,
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+             "-C", str(path), *args],
+            runner,
+            check=False,
+            timeout=4,
+        )
+    except SourceUpdateError:
+        return None
+    if result.returncode != 0:
         return None
     return (result.stdout or "").strip()
 

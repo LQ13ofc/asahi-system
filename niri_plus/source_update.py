@@ -88,11 +88,17 @@ def _run_as_owner(
     source_root: pathlib.Path,
     args: list[str],
     runner: Runner = subprocess.run,
+    *,
+    check: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     uid, gid, groups, env = _owner_identity(source_root)
     try:
         options = {"user": uid, "group": gid, "extra_groups": groups} if os.geteuid() != uid else {}
-        return runner(args, check=True, text=True, capture_output=True, env=env, **options)
+        kwargs = {"check": check, "text": True, "capture_output": True, "env": env, **options}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return runner(args, **kwargs)
     except (OSError, subprocess.SubprocessError) as exc:
         detail = ""
         if isinstance(exc, subprocess.CalledProcessError):
@@ -208,12 +214,16 @@ def inspect_source(
                 "dirty": "unavailable", "version": "unavailable"}
 
     def git(*args: str) -> str | None:
-        command = ["git", "-c", f"safe.directory={source_root}",
-                   "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                   "-C", str(source_root), *args]
         try:
-            result = runner(command, check=False, text=True, capture_output=True, timeout=4)
-        except (OSError, subprocess.SubprocessError):
+            result = _run_as_owner(
+                source_root,
+                ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                 "-C", str(source_root), *args],
+                runner,
+                check=False,
+                timeout=4,
+            )
+        except SourceUpdateError:
             return None
         if result.returncode:
             return None

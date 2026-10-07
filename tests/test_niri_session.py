@@ -1,6 +1,7 @@
 import contextlib
 import configparser
 import io
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -17,6 +18,10 @@ installer = install
 
 
 class NiriSessionTests(unittest.TestCase):
+    def test_bootstrap_entrypoint_is_executable(self):
+        bootstrap = ROOT / "scripts/bootstrap-niri-plus"
+        self.assertTrue(os.access(bootstrap, os.R_OK | os.X_OK))
+
     def test_all_kdl_files_parse(self):
         for path in sorted((ROOT / "niri").glob("*.kdl")):
             with self.subTest(path=path.name):

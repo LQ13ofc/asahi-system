@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import platform
+import pwd
 import re
 import shutil
 import sys
@@ -53,6 +54,27 @@ raise SystemExit(main())
 """
 
 
+def git_as_checkout_owner(path: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run Git probes without elevating repository config/hooks to root."""
+    try:
+        metadata = path.stat()
+        account = pwd.getpwuid(metadata.st_uid)
+        groups = os.getgrouplist(account.pw_name, account.pw_gid)
+    except (OSError, KeyError) as exc:
+        raise RuntimeError(f"cannot determine checkout owner: {path}") from exc
+    env = os.environ.copy()
+    for key in tuple(env):
+        if key.startswith("GIT_"):
+            env.pop(key, None)
+    env.update({"HOME": account.pw_dir, "USER": account.pw_name,
+                "LOGNAME": account.pw_name, "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"})
+    command = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+               "-C", str(path), *args]
+    options = {"user": account.pw_uid, "group": account.pw_gid, "extra_groups": groups} if os.geteuid() != account.pw_uid else {}
+    return subprocess.run(command, check=True, text=True, capture_output=True, env=env, **options)
+
+
 def copy_tree(source: pathlib.Path, destination: pathlib.Path) -> None:
     shutil.copytree(source, destination, symlinks=True)
 
@@ -62,15 +84,9 @@ def validate_quickshell_source() -> tuple[str, dict]:
     if lock.get("schema_version") != 1 or lock.get("checkout") != "external/quickshell":
         raise RuntimeError("Quickshell lock has an unknown schema or checkout path")
     try:
-        git = ["git", "-c", f"safe.directory={QUICKSHELL_SOURCE}",
-               "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-               "-C", str(QUICKSHELL_SOURCE)]
-        commit = subprocess.run([*git, "rev-parse", "--verify", "HEAD"],
-                                check=True, text=True, capture_output=True).stdout.strip()
-        remote = subprocess.run([*git, "remote", "get-url", "origin"],
-                                check=True, text=True, capture_output=True).stdout.strip()
-        dirty = subprocess.run([*git, "status", "--porcelain", "--untracked-files=all"],
-                               check=True, text=True, capture_output=True).stdout
+        commit = git_as_checkout_owner(QUICKSHELL_SOURCE, "rev-parse", "--verify", "HEAD").stdout.strip()
+        remote = git_as_checkout_owner(QUICKSHELL_SOURCE, "remote", "get-url", "origin").stdout.strip()
+        dirty = git_as_checkout_owner(QUICKSHELL_SOURCE, "status", "--porcelain", "--untracked-files=all").stdout
     except (OSError, subprocess.CalledProcessError) as exc:
         raise RuntimeError("initialize the private Quickshell submodule with authenticated Git access before bootstrap") from exc
     if commit != lock.get("commit"):
@@ -85,20 +101,12 @@ def validate_quickshell_source() -> tuple[str, dict]:
 def validate_system_source() -> tuple[str, str]:
     if not (ROOT / ".git").exists():
         raise RuntimeError("bootstrap requires a Git checkout of LQ13ofc/asahi-system main")
-    git = ["git", "-c", f"safe.directory={ROOT}",
-           "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-           "-C", str(ROOT)]
     try:
-        origin = subprocess.run([*git, "remote", "get-url", "origin"], check=True,
-                                text=True, capture_output=True).stdout.strip()
-        branch = subprocess.run([*git, "branch", "--show-current"], check=True,
-                                text=True, capture_output=True).stdout.strip()
-        dirty = subprocess.run([*git, "status", "--porcelain", "--untracked-files=all"],
-                               check=True, text=True, capture_output=True).stdout
-        head = subprocess.run([*git, "rev-parse", "HEAD"], check=True,
-                              text=True, capture_output=True).stdout.strip()
-        upstream = subprocess.run([*git, "rev-parse", "refs/remotes/origin/main"], check=True,
-                                  text=True, capture_output=True).stdout.strip()
+        origin = git_as_checkout_owner(ROOT, "remote", "get-url", "origin").stdout.strip()
+        branch = git_as_checkout_owner(ROOT, "branch", "--show-current").stdout.strip()
+        dirty = git_as_checkout_owner(ROOT, "status", "--porcelain", "--untracked-files=all").stdout
+        head = git_as_checkout_owner(ROOT, "rev-parse", "HEAD").stdout.strip()
+        upstream = git_as_checkout_owner(ROOT, "rev-parse", "refs/remotes/origin/main").stdout.strip()
     except (OSError, subprocess.CalledProcessError) as exc:
         raise RuntimeError("could not verify the system source checkout and cached origin/main") from exc
     if normalize_repository(origin) != "https://github.com/lq13ofc/asahi-system":
