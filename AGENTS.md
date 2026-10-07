@@ -3,7 +3,7 @@
 ## Escopo e repositórios
 
 - Este repositório, `LQ13ofc/asahi-system`, é a fonte principal da configuração do Fedora Asahi instalado no MacBook Air M1.
-- `LQ13ofc/quickshell-` é a interface Quickshell/Niri e permanece um repositório separado. Não copie seus arquivos para cá, não o transforme em submódulo e não faça commits cruzados. Se uma mudança de sistema depender da interface, registre a dependência e trabalhe em cada repositório na sua própria branch e PR.
+- `LQ13ofc/quickshell-` é a interface Quickshell/Niri e permanece um repositório separado. Não duplique seu código em `asahi-system`. A versão usada pelo sistema deverá poder ser fixada em um commit. O mecanismo de integração (lockfile, checkout externo, submodule ou equivalente) será escolhido posteriormente com base em simplicidade, rollback e reprodutibilidade; não implemente um mecanismo sem uma tarefa explícita. Mudanças nos dois repositórios devem ser feitas e revisadas no histórico, branch e PR de cada repositório.
 - O alvo é MacBook Air M1 2020, Apple M1, 8 GB de memória, `aarch64` e Fedora Asahi Remix 44.
 - As sessões Niri Performance e Gaming são objetivos futuros. Não trate componentes ainda não implementados como configuração já existente.
 

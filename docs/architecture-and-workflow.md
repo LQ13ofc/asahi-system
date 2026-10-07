@@ -29,5 +29,34 @@ Nenhuma otimização ou alteração do sistema físico faz parte deste workflow 
 
 ## Ferramentas de validação
 
-O validador do baseline e seus testes usam Python padrão, sem acesso ao M1 nem dependências externas. O harness de `quickshell-` também pode rodar fora do Wayland com stubs, mas requer PySide6; renderizar cenas também requer Pillow. Mesmo quando passa, esse harness cobre carga/renderização e estados simulados, não D-Bus, rede, compositor ou hardware real. Consulte o README e o `AGENTS.md` daquele repositório para os comandos e limitações atuais.
+O validador do baseline e seus testes usam Python padrão, sem acesso ao M1 nem dependências externas. O README e o `AGENTS.md` de `quickshell-` documentam PySide6 e Pillow para o harness offscreen. PySide6 fornece o runtime Qt Quick usado pelos testes e também inclui `pyside6-qmllint`; Pillow permanece instalado conforme a documentação do harness, embora os scripts atuais não o importem diretamente. Mesmo quando passa, o harness cobre carga/renderização e estados simulados, não D-Bus, rede, compositor ou hardware real. Consulte o README e o `AGENTS.md` daquele repositório para os comandos e limitações atuais.
 
+## Preparação do ambiente Codex Cloud
+
+O baseline pode ser validado com Python 3.12 ou mais recente; os comandos do repositório principal usam apenas a biblioteca padrão:
+
+```bash
+cd /workspace/repos/asahi-system
+python3 scripts/validate_baseline.py
+python3 -m unittest discover -s tests -v
+```
+
+Para o harness do repositório separado `quickshell-`, use um virtualenv fora dos checkouts e instale as versões que foram validadas neste ambiente Cloud:
+
+```bash
+python3.12 -m venv /workspace/.venvs/quickshell-tests
+/workspace/.venvs/quickshell-tests/bin/python -m pip install \
+  'PySide6==6.11.2' 'Pillow==12.3.0'
+
+cd /workspace/repos/quickshell-
+QT_QPA_PLATFORM=offscreen /workspace/.venvs/quickshell-tests/bin/python tests/run.py load
+QT_QPA_PLATFORM=offscreen /workspace/.venvs/quickshell-tests/bin/python tests/run.py render --all
+/workspace/.venvs/quickshell-tests/bin/python tests/test_agenda_lifecycle.py
+/workspace/.venvs/quickshell-tests/bin/python tests/test_bluetooth_lifecycle.py
+/workspace/.venvs/quickshell-tests/bin/python tests/test_netctl.py
+/workspace/.venvs/quickshell-tests/bin/python tests/test_notifications.py
+```
+
+O wheel de PySide6 inclui as ferramentas e módulos Qt necessários ao harness; não é preciso instalar um SDK Qt do sistema para esses comandos. Use `/workspace/.venvs/quickshell-tests/bin/pyside6-qmllint` para o lint Qt 6. Neste Cloud, `/usr/bin/qmllint` é um shim `qtchooser` que aponta para uma instalação Qt 5 ausente. O lint de QML é consultivo: mesmo com os caminhos de módulos gerados pelo harness, o linter reporta avisos porque não conhece todos os tipos Quickshell externos e os tipos registrados pelo harness Python. O comando de carga do harness é a validação QML executável disponível.
+
+Na sessão Cloud investigada, não havia hook persistente de instalação nem configuração de ambiente vinculada ao projeto. O virtualenv acima pode ser reutilizado enquanto o workspace permanecer disponível; em um workspace novo, repita a criação e instalação. A arquitetura Cloud x86_64 não substitui validações que dependem do Fedora Asahi, Apple M1, GPU, Niri/Wayland real ou medidas de desempenho.
