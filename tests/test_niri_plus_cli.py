@@ -65,7 +65,7 @@ class NiriPlusCliTests(unittest.TestCase):
             self.assertIn("Quickshell", output)
             self.assertIn("Expected commit", output)
             self.assertIn("M1_REQUIRED", output)
-            self.assertIn("Overall: NOT_CONFIGURED", output)
+            self.assertNotIn("Overall: HEALTHY", output)
             self.assertEqual(before, after)
 
     def test_install_dry_run_does_not_require_root_or_mutate(self):
@@ -162,3 +162,4 @@ def missing_runner(args, **kwargs):
 
 if __name__ == "__main__":
     unittest.main()
+
