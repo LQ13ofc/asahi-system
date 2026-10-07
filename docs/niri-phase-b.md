@@ -40,7 +40,9 @@ Package metadata is mutable. Before applying on the Mac, DNF's live Fedora Asahi
 
 ## Session and lifecycle
 
-The custom display-manager entry is named `Niri` and sits beside, without replacing, Fedora's packaged entry. Its launcher sets Wayland desktop environment variables and `NIRI_CONFIG`, then executes Fedora's `/usr/bin/niri-session`.
+Niri+ reuses Fedora's packaged `Niri` display-manager entry instead of adding a second session. The first M1 installation exposed why this matters: Fedora's RPM already registered Niri, while the initial Niri+ entry registered another session with the same display name, so SDDM rendered `Niri (1)` and `Niri (2)`.
+
+The Niri+ defaults are installed at `/etc/niri/config.kdl` (plus its included KDL files), which is the system fallback supported by Niri. This keeps Fedora's packaged `niri-session` lifecycle intact and avoids a custom display-manager launcher.
 
 The packaged session script already imports the login environment into `systemd --user`, updates D-Bus activation environment, starts and waits for `niri.service`, starts `niri-shutdown.target`, and unsets session variables. Fedora's Niri user service orders itself around `graphical-session-pre.target`, binds to `graphical-session.target`, and brings up `xdg-desktop-autostart.target`; the shutdown target conflicts with graphical session targets. B1 uses that upstream lifecycle rather than duplicating it.
 
