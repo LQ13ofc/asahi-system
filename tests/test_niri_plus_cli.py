@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, cli, doctor, host, install_command, rollback, status
+from niri_plus import benchmark, cli, doctor, host, install_command, quickshell, rollback, status
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -53,6 +53,20 @@ class NiriPlusCliTests(unittest.TestCase):
             self.assertIn("read-only", report)
             self.assertIn("M1_REQUIRED", report)
             self.assertEqual(before, list(root.rglob("*")))
+
+    def test_status_includes_quickshell_pin_and_lifecycle_without_mutations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            (root / "etc").mkdir()
+            (root / "etc/os-release").write_text('ID=fedora\nVERSION_ID="44"\nPRETTY_NAME="Fedora Cloud"\n')
+            before = sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
+            output = status.render_status("0.1.0", root=root, machine="x86_64", runner=missing_runner)
+            after = sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
+            self.assertIn("Quickshell", output)
+            self.assertIn("Expected commit", output)
+            self.assertIn("M1_REQUIRED", output)
+            self.assertNotIn("Overall: HEALTHY", output)
+            self.assertEqual(before, after)
 
     def test_install_dry_run_does_not_require_root_or_mutate(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -112,6 +126,35 @@ class NiriPlusCliTests(unittest.TestCase):
             legacy.write_text("[Desktop Entry]\nName=Niri\nType=Application\n")
             self.assertEqual(host.session_status(root), host.WARNING)
 
+    def test_quickshell_report_detects_pinned_and_diverged_checkouts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = pathlib.Path(temp) / "data"
+            checkout = pathlib.Path(temp) / "quickshell"
+            integration = base / "integration"
+            integration.mkdir(parents=True)
+            checkout.mkdir()
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            subprocess.run(["git", "-C", str(checkout), "config", "user.email", "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(checkout), "config", "user.name", "Test"], check=True)
+            (checkout / "shell.qml").write_text("// test shell\n")
+            subprocess.run(["git", "-C", str(checkout), "add", "shell.qml"], check=True)
+            subprocess.run(["git", "-C", str(checkout), "commit", "-qm", "test pin"], check=True)
+            commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
+            subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", "https://github.com/LQ13ofc/quickshell-.git"], check=True)
+            (integration / "quickshell.lock.json").write_text(json.dumps({"schema_version": 1, "repository": "https://github.com/LQ13ofc/quickshell-.git", "commit": commit, "engine": {"compatibility": "M1_REQUIRED"}}))
+            root = pathlib.Path(temp) / "host"
+            target = root / "usr/local/share/niri-plus/quickshell"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(checkout, target_is_directory=True)
+            info = quickshell.report(root=root, base=base)
+            self.assertEqual(info["checkout_status"], host.OK)
+            self.assertEqual(info["status"], host.NOT_INSTALLED)
+            lock_path = integration / "quickshell.lock.json"
+            lock = json.loads(lock_path.read_text())
+            lock["commit"] = "f" * 40
+            lock_path.write_text(json.dumps(lock))
+            self.assertEqual(quickshell.report(root=root, base=base)["checkout_status"], host.WARNING)
+
 
 def missing_runner(args, **kwargs):
     return subprocess.CompletedProcess(args, 1, stdout="", stderr="not present")
@@ -119,3 +162,4 @@ def missing_runner(args, **kwargs):
 
 if __name__ == "__main__":
     unittest.main()
+

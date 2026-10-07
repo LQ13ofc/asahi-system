@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/LQ13ofc/quickshell-.git",
+  "checkout": "external/quickshell",
+  "commit": "554718f01faa3f6b713cc0d58e30c4129d49e524",
+  "runtime_link": "/usr/local/share/niri-plus/quickshell",
+  "runtime_entrypoint": "shell.qml",
+  "engine": {
+    "package": "quickshell",
+    "nevra": "quickshell-0:0.3.1-2.fc44",
+    "repository": "https://download.copr.fedorainfracloud.org/results/errornointernet/quickshell/fedora-44-aarch64/",
+    "gpg_key": "https://download.copr.fedorainfracloud.org/results/errornointernet/quickshell/pubkey.gpg",
+    "architecture": "aarch64",
+    "compatibility": "M1_REQUIRED"
+  }
+}

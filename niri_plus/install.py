@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/rollback the reversible Fedora Asahi Niri B1 session.
+"""Install/rollback the reversible Fedora Asahi Niri session.
 
 No argument performs a dry-run. --apply is limited to Fedora Asahi Remix 44
 aarch64 and never edits Plasma, display-manager configuration, kernel, or boot.
@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import platform
+import pwd
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,7 @@ REPO = pathlib.Path(os.environ.get(
     _installed_data if (_installed_data / "VERSION").is_file() else pathlib.Path(__file__).resolve().parents[1],
 ))
 PACKAGES = ("niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit")
+QUICKSHELL_PACKAGE = "quickshell"
 BASE_SERVICES = ("pipewire", "pipewire-pulseaudio", "wireplumber", "NetworkManager")
 LEGACY_MANAGED_PATHS = {
     "/usr/share/wayland-sessions/niri-performance.desktop",
@@ -38,6 +40,8 @@ LEGACY_MANAGED_PATHS = {
 }
 MANAGED_FILES = {
     "/usr/lib/systemd/user/asahi-niri-polkit-agent.service": REPO / "sessions/systemd/asahi-niri-polkit-agent.service",
+    "/usr/lib/systemd/user/asahi-quickshell.service": REPO / "sessions/systemd/asahi-quickshell.service",
+    "/usr/lib/systemd/user/app-org.kde.xwaylandvideobridge@autostart.service.d/10-niri-session.conf": REPO / "sessions/systemd/autostart-filters/app-org.kde.xwaylandvideobridge@autostart.service.d/10-niri-session.conf",
     "/etc/niri/config.kdl": REPO / "niri/config.kdl",
     "/etc/niri/keybinds.kdl": REPO / "niri/keybinds.kdl",
     "/etc/niri/outputs.kdl": REPO / "niri/outputs.kdl",
@@ -46,6 +50,7 @@ MANAGED_FILES = {
 }
 MANAGED_LINKS = {
     "/usr/lib/systemd/user/graphical-session.target.wants/asahi-niri-polkit-agent.service": "../asahi-niri-polkit-agent.service",
+    "/usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service": "../asahi-quickshell.service",
 }
 STATE_PATH = "/var/lib/asahi-system/niri-performance/state.json"
 
@@ -150,6 +155,13 @@ def render_plan() -> None:
     print("Explicit packages:")
     for package in PACKAGES:
         print(f"  - {package}")
+    lock_path = REPO / "integration/quickshell.lock.json"
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        print(f"  - {lock['engine']['nevra']} (assinatura verificada, COPR temporário; aarch64)")
+        print(f"Quickshell visual pin: {lock['repository']} @ {lock['commit']}")
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        print("  - Quickshell runtime (pin ausente; install apply recusará este checkout)")
     print("Niri hard dependency resolved by DNF: xwayland-satellite >= 0.7 (on-demand Xwayland integration)")
     print("Display-manager session: reuse Fedora's packaged Niri entry (no duplicate custom entry)")
     print("System Niri defaults: /etc/niri/config.kdl")
@@ -161,6 +173,7 @@ def render_plan() -> None:
     for path in (*MANAGED_FILES, *MANAGED_LINKS):
         print(f"  - {path}")
     print("Plasma, SDDM configuration, global services, kernel, boot, and drivers are not changed.")
+    print("KDE XDG autostart filters apply only when XDG_CURRENT_DESKTOP=KDE; no process is killed and no component is globally disabled.")
 
 
 def install_files(root: pathlib.Path) -> tuple[dict[str, Any], bool]:
@@ -252,7 +265,7 @@ def rollback_files(root: pathlib.Path) -> list[str]:
 
 
 def installed_rpm_packages() -> set[str]:
-    return installed_rpm_packages_for(PACKAGES)
+    return installed_rpm_packages_for((*PACKAGES, QUICKSHELL_PACKAGE))
 
 
 def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, str] | None = None, machine: str | None = None) -> None:
@@ -267,6 +280,14 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
         raise InstallError("test roots are not accepted by the installer CLI")
     if shutil.which("dnf") is None:
         raise InstallError("dnf was not found")
+    from . import quickshell
+    qs = quickshell.report()
+    if qs["checkout_status"] != "OK":
+        raise InstallError(f"Quickshell checkout does not match the pinned commit ({qs['checkout_status']}; expected {qs['expected_commit']}, got {qs['installed_commit']}); initialize the pinned submodule and rerun bootstrap")
+    lock = quickshell.load_lock()
+    engine = lock.get("engine", {})
+    if not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key"):
+        raise InstallError("Quickshell engine package lock is incomplete")
     state = load_state(root)
     legacy_entries = set(state.get("entries", {})) & LEGACY_MANAGED_PATHS
     if legacy_entries:
@@ -278,24 +299,59 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
             state["packages_installed_by_us"] = tracked_packages
             write_state(root, state)
     installed_before = installed_rpm_packages()
-    state.setdefault("packages_installed_by_us", sorted(set(PACKAGES) - installed_before))
+    state["packages_installed_by_us"] = sorted(
+        set(state.get("packages_installed_by_us", [])) | (set((*PACKAGES, QUICKSHELL_PACKAGE)) - installed_before)
+    )
     write_state(root, state)
     _, changed = install_files(root)
     try:
-        subprocess.run(["dnf", "install", "-y", "--setopt=install_weak_deps=False", *PACKAGES], check=True)
+        repo_id = "niri-plus-quickshell"
+        subprocess.run([
+            "dnf", "install", "-y", "--setopt=install_weak_deps=False",
+            f"--repofrompath={repo_id},{engine['repository']}", f"--enablerepo={repo_id}",
+            f"--setopt={repo_id}.gpgcheck=1", f"--setopt={repo_id}.gpgkey={engine['gpg_key']}",
+            *PACKAGES, engine["nevra"],
+        ], check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
         rollback_files(root)
         raise InstallError(f"DNF installation failed; session files were rolled back: {exc}") from exc
     state = load_state(root)
     write_state(root, state)
     state["known_good_version"] = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    state.setdefault("quickshell", {})["expected_commit"] = lock["commit"]
+    state["quickshell"].setdefault("known_good_commit", None)
     write_state(root, state)
+    reload_invoking_user_manager()
     print("Installed the Niri session. Existing user services remain untouched.")
     if not changed:
         print("Session files were already current (idempotent run).")
     missing = set(BASE_SERVICES) - installed_rpm_packages_for(BASE_SERVICES)
     if missing:
         print("WARNING: baseline audio/network packages not found; no service or package changes were made for them: " + ", ".join(sorted(missing)), file=sys.stderr)
+    print("Quickshell runtime/API and visual behavior remain M1_REQUIRED until a Niri login passes health checks.")
+
+
+def reload_invoking_user_manager() -> None:
+    """Reload only the caller's user unit definitions; never start/stop a unit."""
+    uid = os.environ.get("SUDO_UID")
+    if not uid or uid == "0":
+        print("NOTE: user systemd manager was not reloaded; it will read the unit files at next login.")
+        return
+    runtime = pathlib.Path("/run/user") / uid
+    bus = runtime / "bus"
+    try:
+        account = pwd.getpwuid(int(uid))
+    except (KeyError, ValueError):
+        print("WARNING: could not identify invoking user; unit definitions reload at next login.", file=sys.stderr)
+        return
+    if not bus.exists():
+        print("NOTE: no invoking-user D-Bus session; unit definitions reload at next login.")
+        return
+    env = ["env", f"XDG_RUNTIME_DIR={runtime}", f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}", "systemctl", "--user", "daemon-reload"]
+    try:
+        subprocess.run(["runuser", "-u", account.pw_name, "--", *env], check=True, stdout=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        print("WARNING: could not reload the invoking user's systemd manager; unit definitions reload at next login.", file=sys.stderr)
 
 
 def installed_rpm_packages_for(names: tuple[str, ...]) -> set[str]:
@@ -316,7 +372,7 @@ def rollback(root: pathlib.Path = pathlib.Path("/"), remove_packages: bool = Fal
         print(message)
     if remove_packages:
         packages = state.get("packages_installed_by_us", [])
-        if not isinstance(packages, list) or any(package not in PACKAGES for package in packages):
+        if not isinstance(packages, list) or any(package not in (*PACKAGES, QUICKSHELL_PACKAGE) for package in packages):
             raise InstallError("install state contains an unexpected package name; refusing package removal")
         if packages:
             print("Removing only explicit packages recorded as absent before install; dependencies are retained.")

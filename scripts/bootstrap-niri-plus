@@ -15,9 +15,11 @@ import platform
 import shutil
 import sys
 import tempfile
+import subprocess
 from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+QUICKSHELL_SOURCE = ROOT / "external/quickshell"
 LIB = pathlib.Path("/usr/local/lib/niri-plus")
 DATA = pathlib.Path("/usr/local/share/niri-plus")
 BIN = pathlib.Path("/usr/local/bin/niri+")
@@ -39,9 +41,34 @@ def copy_tree(source: pathlib.Path, destination: pathlib.Path) -> None:
     shutil.copytree(source, destination, symlinks=True)
 
 
+def validate_quickshell_source() -> tuple[str, dict]:
+    lock = json.loads((ROOT / "integration/quickshell.lock.json").read_text(encoding="utf-8"))
+    if lock.get("schema_version") != 1 or lock.get("checkout") != "external/quickshell":
+        raise RuntimeError("Quickshell lock has an unknown schema or checkout path")
+    try:
+        git = ["git", "-c", f"safe.directory={QUICKSHELL_SOURCE}", "-C", str(QUICKSHELL_SOURCE)]
+        commit = subprocess.run([*git, "rev-parse", "--verify", "HEAD"],
+                                check=True, text=True, capture_output=True).stdout.strip()
+        remote = subprocess.run([*git, "remote", "get-url", "origin"],
+                                check=True, text=True, capture_output=True).stdout.strip()
+        dirty = subprocess.run([*git, "status", "--porcelain", "--untracked-files=all"],
+                               check=True, text=True, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("initialize the private Quickshell submodule with authenticated Git access before bootstrap") from exc
+    if commit != lock.get("commit"):
+        raise RuntimeError(f"Quickshell submodule is not at its locked commit ({commit}; expected {lock.get('commit')})")
+    normalize = lambda value: value.rstrip("/").removesuffix(".git").lower()
+    if normalize(remote) != normalize(lock.get("repository", "")):
+        raise RuntimeError("Quickshell submodule origin does not match the repository in the lock file")
+    if dirty:
+        raise RuntimeError("Quickshell submodule has local modifications; bootstrap requires the exact clean pinned commit")
+    return commit, lock
+
+
 def install() -> None:
     if os.geteuid() != 0:
         raise RuntimeError("bootstrap --apply requires root; use sudo ./scripts/bootstrap-niri-plus --apply")
+    quickshell_commit, quickshell_lock = validate_quickshell_source()
     if STATE.is_symlink():
         raise RuntimeError("bootstrap ownership state is a symlink; refusing to follow it")
     existing = any(path.exists() for path in (LIB, DATA, BIN))
@@ -83,6 +110,7 @@ def install() -> None:
         shutil.copy2(ROOT / "VERSION", data_stage / "VERSION")
         copy_tree(ROOT / "niri", data_stage / "niri")
         copy_tree(ROOT / "sessions", data_stage / "sessions")
+        copy_tree(ROOT / "integration", data_stage / "integration")
         (data_stage / "scripts").mkdir()
         shutil.copy2(ROOT / "scripts/collect-performance-baseline", data_stage / "scripts/collect-performance-baseline")
         data_stage.joinpath("scripts/collect-performance-baseline").chmod(0o755)
@@ -93,6 +121,13 @@ def install() -> None:
         DATA.parent.mkdir(parents=True, exist_ok=True)
         os.replace(lib_stage, LIB)
         os.replace(data_stage, DATA)
+        quickshell_link = DATA / "quickshell"
+        if quickshell_link.exists() or quickshell_link.is_symlink():
+            if quickshell_link.is_dir() and not quickshell_link.is_symlink():
+                shutil.rmtree(quickshell_link)
+            else:
+                quickshell_link.unlink()
+        quickshell_link.symlink_to(QUICKSHELL_SOURCE.resolve(), target_is_directory=True)
         bin_stage = staging / "niri+"
         bin_stage.write_text(launcher(), encoding="utf-8")
         bin_stage.chmod(0o755)
@@ -122,6 +157,9 @@ def install() -> None:
         "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
         "backup": str(backup_root) if replaced else None,
         "managed": [str(LIB), str(DATA), str(BIN)],
+        "quickshell_repository": quickshell_lock["repository"],
+        "quickshell_expected_commit": quickshell_commit,
+        "quickshell_source": str(QUICKSHELL_SOURCE.resolve()),
     }, indent=2) + "\n"
     state_tmp = STATE.with_suffix(".tmp")
     state_tmp.write_text(state_content, encoding="utf-8")
@@ -140,6 +178,11 @@ def main() -> int:
         print("Niri+ CLI bootstrap dry-run (no host changes)")
         print(f"Version: {(ROOT / 'VERSION').read_text(encoding='utf-8').strip()}")
         print(f"Destinations: {LIB}, {DATA}, {BIN}")
+        try:
+            commit, _ = validate_quickshell_source()
+            print(f"Quickshell submodule pin: {commit}")
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            print(f"Quickshell submodule: not ready ({exc})")
         print("To apply: sudo ./scripts/bootstrap-niri-plus --apply")
         return 0
     try:

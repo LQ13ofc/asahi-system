@@ -23,13 +23,29 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
     lines.extend(f"  {name:22} {value}" for name, value in report["system"].items())
     lines.append("\nOptional")
     lines.extend(f"  {name:22} {value}" for name, value in report["optional"].items())
+    qs = report["quickshell"]
+    lines.extend(["\nQuickshell", f"  {'Status':22} {qs['status']}",
+                  f"  {'Binary/version':22} {qs['version_status']} {qs['version']}",
+                  f"  {'RPM engine':22} {qs['package_status']} {qs['package_version']} (expected {qs['package_expected']})",
+                  f"  {'Installed repository':22} {qs['installed_repository']}",
+                  f"  {'Expected repository':22} {qs['repository']}",
+                  f"  {'Installed commit':22} {qs['installed_commit']}",
+                  f"  {'Expected commit':22} {qs['expected_commit']}",
+                  f"  {'Known-good commit':22} {qs['known_good_commit']}",
+                  f"  {'Dirty checkout':22} {'WARNING' if qs['dirty'] else 'clean'}",
+                  f"  {'Lifecycle':22} {qs['lifecycle']} ({qs['lifecycle_detail']})",
+                  f"  {'Engine compatibility':22} {qs['compatibility']}"])
     lines.extend([f"  {'Asahi runtime checks':22} {report['m1_checks']}",
                   f"\nKnown-good: {report['known_good']}", f"Rollback: {report['rollback']}"])
     if report["warnings"]:
         lines.append("Warnings:")
         lines.extend(f"  - {warning}" for warning in report["warnings"])
-    overall = "HEALTHY" if report["session"] == "OK" and report["configuration"] == "OK" else "NOT_CONFIGURED"
-    if report["warnings"] and overall == "HEALTHY":
+    required = (report["session"], report["configuration"], report["quickshell"]["status"])
+    if all(state == "OK" for state in required):
+        overall = "HEALTHY"
+    elif any(state in ("WARNING", "UNAVAILABLE") for state in required):
         overall = "WARNING"
+    else:
+        overall = "NOT_CONFIGURED"
     lines.append(f"\nOverall: {overall}")
     return "\n".join(lines)
