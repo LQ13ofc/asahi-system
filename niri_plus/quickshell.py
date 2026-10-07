@@ -107,7 +107,7 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
         checkout_status = NOT_INSTALLED
     elif not installed_commit:
         checkout_status = WARNING
-    elif installed_commit != expected or dirty or (remote and remote.rstrip("/").removesuffix(".git") != lock.get("repository", "").rstrip("/").removesuffix(".git")):
+    elif installed_commit != expected or dirty or not remote or remote.rstrip("/").removesuffix(".git") != lock.get("repository", "").rstrip("/").removesuffix(".git"):
         checkout_status = WARNING
     else:
         checkout_status = OK
@@ -130,6 +130,7 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
         "package_version": package_version,
         "package_expected": package_expected,
         "repository": lock.get("repository", "unknown"),
+        "installed_repository": remote or "unknown",
         "installed_commit": installed_commit or NOT_INSTALLED,
         "expected_commit": expected or "unknown",
         "dirty": dirty,
