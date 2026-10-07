@@ -6,7 +6,9 @@ Este repositório é a fonte principal do sistema. A interface Quickshell/Niri e
 
 ## Estado atual
 
-O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/) e infraestrutura de benchmark read-only. Ainda não há configuração executável da sessão Niri Performance ou de Gaming Mode. Niri é o objetivo da sessão otimizada; Gaming Mode exige Gamescope ativo dentro do Niri. Plasma permanece apenas como recovery/fallback e não é alvo de otimização.
+O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/), infraestrutura de benchmark read-only e a preparação revisável da sessão Niri mínima B1. A instalação ainda não foi executada. Quickshell fica para B2. Gaming Mode exige Gamescope ativo dentro do Niri; jogos no Niri sem Gamescope são uso normal, não Gaming Mode. Plasma permanece como recovery/fallback e não é alvo de otimização.
+
+O desenho e pesquisa de pacotes da sessão B1 estão em [`docs/niri-phase-b.md`](docs/niri-phase-b.md). A instalação é dry-run por padrão e tem rollback; não execute `--apply` antes da revisão do PR e do teste manual planejado.
 
 ## Benchmark read-only
 
@@ -14,11 +16,13 @@ O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-prot
 
 ## Validação no Cloud
 
-As verificações abaixo usam apenas Python padrão e não mudam o sistema:
+As verificações abaixo usam Python e o parser KDL isolado listado em `requirements-test.txt`; não mudam o sistema:
 
 ```bash
 python3 scripts/validate_baseline.py
 python3 -m unittest discover -s tests -v
 ```
+
+Instale a dependência de validação em um ambiente virtual antes de rodar os testes: `python3 -m pip install -r requirements-test.txt`.
 
 O GitHub Actions executa as mesmas verificações em PRs e em atualizações de `main`. Elas conferem estrutura e consistência do snapshot; não substituem testes no Fedora Asahi real.

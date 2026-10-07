@@ -1,6 +1,6 @@
 # Arquitetura planejada da sessão Niri
 
-Esta página descreve intenção futura; não declara configuração instalada nem altera o baseline.
+Esta página descreve o alvo completo e separa o que está preparado no B1 do que continua futuro. O B1 tem configuração revisável e instalador em PR; nada foi instalado nem altera o baseline.
 
 ```text
 Fedora Asahi
@@ -18,7 +18,11 @@ Fedora Asahi
         └── restauração reversível ao sair
 ```
 
-## Sessão normal
+## B1 — sessão mínima preparada
+
+B1 é Niri puro: Niri, foot, fuzzel, GTK portal e agente PolicyKit condicionado à sessão Niri. PipeWire/WirePlumber e NetworkManager permanecem os componentes já existentes no Fedora Asahi; o instalador não os habilita nem reconfigura. Quickshell, notificações, screenshot/clipboard helpers, wallpaper e ajustes de performance ficam fora do primeiro ensaio. Consulte [`docs/niri-phase-b.md`](niri-phase-b.md) para pacotes, lifecycle, instalação e validações.
+
+## Sessão normal desejada após B2
 
 Niri é a única sessão gráfica otimizada principal. No uso normal, Niri executa Quickshell e os componentes necessários (PipeWire, `pipewire-pulse`, WirePlumber, NetworkManager, agente polkit, portal necessário e serviços comprovadamente essenciais). Jogos e Steam podem rodar diretamente nessa sessão normal, sem serem chamados de Gaming Mode.
 

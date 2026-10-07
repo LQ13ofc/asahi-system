@@ -1,0 +1,6 @@
+// Keep only the two tools used to operate this bare session and an exit key.
+binds {
+    Mod+Return { spawn "foot"; }
+    Mod+D { spawn "fuzzel"; }
+    Mod+Shift+E { quit; }
+}

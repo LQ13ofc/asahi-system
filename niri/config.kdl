@@ -1,0 +1,14 @@
+// Minimal B1 configuration. Quickshell, gaming, wallpaper, notification,
+// screenshots, clipboard helpers, and optional effects are intentionally absent.
+include "keybinds.kdl"
+include "outputs.kdl"
+include "rules.kdl"
+include "autostart.kdl"
+
+hotkey-overlay {
+    skip-at-startup
+}
+
+layout {
+    gaps 6
+}

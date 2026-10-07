@@ -1,0 +1,13 @@
+[Unit]
+Description=PolicyKit authentication agent for the asahi-system Niri session
+ConditionEnvironment=XDG_CURRENT_DESKTOP=niri
+PartOf=graphical-session.target
+After=graphical-session-pre.target
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/lxqt-policykit-agent
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

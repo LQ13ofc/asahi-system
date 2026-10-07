@@ -4,7 +4,7 @@
 
 | Repositório | Responsabilidade | Estado observado |
 |---|---|---|
-| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline e futura configuração reproduzível do sistema. | Baseline do MacBook, validação estática, coletor read-only e protocolo de experimento; ainda não aplica nem declara pacotes/sessões. |
+| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline e futura configuração reproduzível do sistema. | Baseline, coletor read-only, protocolo A/B e sessão Niri mínima B1 preparada em PR; nada foi instalado no M1. |
 | [`quickshell-`](https://github.com/LQ13ofc/quickshell-) | Interface da barra e painéis Quickshell usados com Niri. | Mantém QML, serviços, `niri/barra.kdl`, documentação e harness de teste no próprio repositório. |
 
 A integração entre eles é uma dependência de runtime: o sistema deverá fornecer os programas, bibliotecas e serviços que a barra usa; a configuração e o código da barra continuam pertencendo a `quickshell-`. O README da interface documenta Quickshell 0.2.1, Niri 26.04, `qs -c barra` e dependências como NetworkManager, PipeWire, BlueZ, UPower, Python D-Bus/GObject e `curl` (`cava` é opcional). Ao alterar essa interface, atualize e revise cada repositório separadamente.
@@ -43,7 +43,7 @@ python3 scripts/validate_baseline.py
 python3 -m unittest discover -s tests -v
 ```
 
-Para o harness do repositório separado `quickshell-`, use um virtualenv fora dos checkouts e instale as versões que foram validadas neste ambiente Cloud:
+Os testes de `asahi-system` usam `kdl-py` fixado em `requirements-test.txt` para parsear KDL; o workflow CI instala essa dependência. Para o harness do repositório separado `quickshell-`, use um virtualenv fora dos checkouts e instale as versões que foram validadas neste ambiente Cloud:
 
 ```bash
 python3.12 -m venv /workspace/.venvs/quickshell-tests
