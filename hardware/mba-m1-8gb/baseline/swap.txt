@@ -1,0 +1,2 @@
+NAME               TYPE SIZE USED PRIO
+/var/swap/swapfile file   8G   0B   -1

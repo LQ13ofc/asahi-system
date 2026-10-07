@@ -1,0 +1,51 @@
+  UNIT                                         LOAD   ACTIVE SUB     DESCRIPTION
+  abrt-journal-core.service                    loaded active running ABRT coredumpctl message creator
+  abrt-oops.service                            loaded active running ABRT kernel log watcher
+  abrt-xorg.service                            loaded active running ABRT Xorg log watcher
+  abrtd.service                                loaded active running ABRT Daemon
+  accounts-daemon.service                      loaded active running Accounts Service
+  alsa-state.service                           loaded active running Manage Sound Card State (restore and store)
+  atd.service                                  loaded active running Deferred execution scheduler
+  auditd.service                               loaded active running Security Audit Logging Service
+  avahi-daemon.service                         loaded active running Avahi mDNS/DNS-SD Stack
+  bluetooth.service                            loaded active running Bluetooth service
+  chronyd.service                              loaded active running NTP client/server
+  crond.service                                loaded active running Command Scheduler
+  cups.service                                 loaded active running CUPS Scheduler
+  dbus-:1.3-org.freedesktop.problems@0.service loaded active running dbus-:1.3-org.freedesktop.problems@0.service
+  dbus-broker.service                          loaded active running D-Bus System Message Bus
+  firewalld.service                            loaded active running firewalld - dynamic firewall daemon
+  gssproxy.service                             loaded active running GSSAPI Proxy Daemon
+  iio-sensor-proxy.service                     loaded active running IIO Sensor Proxy service
+  irqbalance.service                           loaded active running irqbalance daemon
+  ModemManager.service                         loaded active running Modem Manager
+  NetworkManager.service                       loaded active running Network Manager
+  packagekit.service                           loaded active running PackageKit Daemon
+  pcscd.service                                loaded active running PC/SC Smart Card Daemon
+  plasmalogin.service                          loaded active running Plasma Login Manager
+  polkit.service                               loaded active running Authorization Manager
+  rsyslog.service                              loaded active running System Logging Service
+  rtkit-daemon.service                         loaded active running RealtimeKit Scheduling Policy Service
+  smartd.service                               loaded active running Self Monitoring and Reporting Technology (SMART) Daemon
+  speakersafetyd.service                       loaded active running Speaker Protection Daemon
+  switcheroo-control.service                   loaded active running Switcheroo Control Proxy service
+  systemd-homed.service                        loaded active running Home Area Manager
+  systemd-journald.service                     loaded active running Journal Service
+  systemd-logind.service                       loaded active running User Login Management
+  systemd-oomd.service                         loaded active running Userspace Out-Of-Memory (OOM) Killer
+  systemd-resolved.service                     loaded active running Network Name Resolution
+  systemd-udevd.service                        loaded active running Rule-based Manager for Device Events and Files
+  systemd-userdbd.service                      loaded active running User Database Manager
+  tuned-ppd.service                            loaded active running PPD-to-TuneD API Translation Daemon
+  tuned.service                                loaded active running Dynamic System Tuning Daemon
+  udisks2.service                              loaded active running Disk Manager
+  upower.service                               loaded active running Daemon for power management
+  uresourced.service                           loaded active running User resource assignment daemon
+  user@1000.service                            loaded active running User Manager for UID 1000
+  wpa_supplicant.service                       loaded active running WPA supplicant
+
+Legend: LOAD   → Reflects whether the unit definition was properly loaded.
+        ACTIVE → The high-level unit activation state, i.e. generalization of SUB.
+        SUB    → The low-level unit activation state, values depend on unit type.
+
+44 loaded units listed.

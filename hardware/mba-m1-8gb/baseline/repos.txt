@@ -1,0 +1,12 @@
+repo id                                                          repo name
+brave-browser                                                    Brave Browser
+copr:copr.fedorainfracloud.org:group_asahi:fedora-remix-branding Copr repo for fedora-remix-branding owned by @asahi
+copr:copr.fedorainfracloud.org:group_asahi:fedora-remix-scripts  Copr repo for fedora-remix-scripts owned by @asahi
+copr:copr.fedorainfracloud.org:group_asahi:kernel                Copr repo for kernel owned by @asahi
+copr:copr.fedorainfracloud.org:group_asahi:mesa                  Copr repo for mesa owned by @asahi
+copr:copr.fedorainfracloud.org:group_asahi:steam                 Copr repo for steam owned by @asahi
+copr:copr.fedorainfracloud.org:group_asahi:u-boot                Copr repo for u-boot owned by @asahi
+fedora                                                           Fedora 44 - aarch64
+fedora-asahi-remix-hotfixes                                      Fedora Asahi Remix Hotfixes
+fedora-cisco-openh264                                            Fedora 44 openh264 (From Cisco) - aarch64
+updates                                                          Fedora 44 - aarch64 - Updates

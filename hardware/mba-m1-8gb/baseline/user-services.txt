@@ -1,0 +1,46 @@
+  UNIT                                                          LOAD   ACTIVE SUB     DESCRIPTION
+  akonadi_control.service                                       loaded active running Akonadi Control
+  app-brave\x2dbrowser@fbb689c67a01443fa831687c57953a5f.service loaded active running Brave Web Browser - Navegador da Internet
+  app-geoclue\x2ddemo\x2dagent@autostart.service                loaded active running Geoclue Demo agent
+  app-org.freedesktop.problems.applet@autostart.service         loaded active running Problem Reporting
+  app-org.kde.discover.notifier@autostart.service               loaded active running Discover
+  app-org.kde.kalendarac@autostart.service                      loaded active running Calendar Reminders
+  app-org.kde.kdeconnect.daemon@autostart.service               loaded active running KDE Connect
+  app-org.kde.konsole@12774aacf1944060969ccd165124ec0c.service  loaded active running Konsole - Terminal
+  app-org.kde.xwaylandvideobridge@autostart.service             loaded active running Xwayland Video Bridge
+  app-sealertauto@autostart.service                             loaded active running SELinux Troubleshooter
+  at-spi-dbus-bus.service                                       loaded active running Accessibility services bus
+  dbus-:1.2-org.kde.kwalletd6@0.service                         loaded active running dbus-:1.2-org.kde.kwalletd6@0.service
+  dbus-:1.37-org.a11y.atspi.Registry@0.service                  loaded active running dbus-:1.37-org.a11y.atspi.Registry@0.service
+  dbus-broker.service                                           loaded active running D-Bus User Message Bus
+  dconf.service                                                 loaded active running User preferences database
+  kde-baloo.service                                             loaded active running Baloo File Indexer Daemon
+  kunifiedpush-distributor.service                              loaded active running KUnifiedPush Distributor
+  obex.service                                                  loaded active running Bluetooth OBEX service
+  pipewire-pulse.service                                        loaded active running PipeWire PulseAudio
+  pipewire.service                                              loaded active running PipeWire Multimedia Service
+  plasma-gmenudbusmenuproxy.service                             loaded active running Proxies GTK DBus menus to a Plasma readable format
+  plasma-kaccess.service                                        loaded active running KAccess
+  plasma-kactivitymanagerd.service                              loaded active running KActivityManager Activity manager Service
+  plasma-kded6.service                                          loaded active running KDE Daemon 6
+  plasma-ksmserver.service                                      loaded active running KDE Session Management Server
+  plasma-kwin_wayland.service                                   loaded active running KDE Wayland Compositor
+  plasma-plasmashell.service                                    loaded active running KDE Plasma Workspace
+  plasma-polkit-agent.service                                   loaded active running KDE PolicyKit Authentication Agent
+  plasma-powerdevil.service                                     loaded active running Powerdevil
+  plasma-xdg-desktop-portal-kde.service                         loaded active running Xdg Desktop Portal For KDE
+  plasma-xembedsniproxy.service                                 loaded active running Handle legacy xembed system tray icons
+  run-p2179-i28968.service                                      loaded active running [systemd-run] /usr/libexec/imsettings-daemon --replace
+  ssh-agent.service                                             loaded active running OpenSSH key agent
+  uresourced.service                                            loaded active running User resource assignment daemon
+  wireplumber.service                                           loaded active running Multimedia Service Session Manager
+  xdg-desktop-portal-gtk.service                                loaded active running Portal service (GTK/GNOME implementation)
+  xdg-desktop-portal.service                                    loaded active running Portal service
+  xdg-document-portal.service                                   loaded active running flatpak document portal service
+  xdg-permission-store.service                                  loaded active running sandboxed app permission store
+
+Legend: LOAD   → Reflects whether the unit definition was properly loaded.
+        ACTIVE → The high-level unit activation state, i.e. generalization of SUB.
+        SUB    → The low-level unit activation state, values depend on unit type.
+
+39 loaded units listed.

@@ -1,0 +1,1 @@
+Linux asahi-lucas 7.1.13-402.asahi.fc44.aarch64+16k #1 SMP PREEMPT_DYNAMIC Tue Sep  8 22:03:08 UTC 2026 aarch64 GNU/Linux

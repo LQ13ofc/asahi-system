@@ -1,0 +1,8 @@
+enabled:
+Y
+
+compressor:
+lzo
+
+max_pool_percent:
+50

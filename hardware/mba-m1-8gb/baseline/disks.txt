@@ -1,0 +1,12 @@
+NAME          SIZE FSTYPE MOUNTPOINTS
+nvme0n1     233,8G        
+├─nvme0n1p1   500M apfs   
+├─nvme0n1p2 158,3G apfs   
+├─nvme0n1p3   2,3G apfs   
+├─nvme0n1p4   500M vfat   /boot/efi
+├─nvme0n1p5     1G ext4   /boot
+├─nvme0n1p6  66,1G btrfs  /home
+│                         /
+└─nvme0n1p7     5G apfs   
+nvme0n2         3M        
+nvme0n3       128M        

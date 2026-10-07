@@ -1,0 +1,241 @@
+3.837s NetworkManager-wait-online.service
+2.076s dev-nvme0n1p1.device
+2.076s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartlabel-iBootSystemContainer.device
+2.076s dev-disk-by\x2dpartlabel-iBootSystemContainer.device
+2.076s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-8103194b\x2d436b\x2d4831\x2d82c5\x2d6fe92cec93a7.device
+2.076s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart1.device
+2.076s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart1.device
+2.076s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart1.device
+2.076s dev-disk-by\x2ddiskseq-1\x2dpart1.device
+2.076s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p1.device
+2.076s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-b7d2e862\x2da9d2\x2d4c2d\x2d98e2\x2de8c0efbdefed.device
+2.076s dev-disk-by\x2dpartuuid-b7d2e862\x2da9d2\x2d4c2d\x2d98e2\x2de8c0efbdefed.device
+2.076s dev-disk-by\x2duuid-8103194b\x2d436b\x2d4831\x2d82c5\x2d6fe92cec93a7.device
+2.076s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart1.device
+2.076s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-1.device
+2.071s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000002.device
+2.071s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_2.device
+2.071s dev-nvme0n2.device
+2.071s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n2.device
+2.071s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d2.device
+2.071s dev-disk-by\x2ddiskseq-2.device
+2.070s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000003.device
+2.070s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d3.device
+2.070s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n3.device
+2.070s dev-nvme0n3.device
+2.070s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_3.device
+2.070s dev-disk-by\x2ddiskseq-3.device
+2.063s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001.device
+2.063s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1.device
+2.063s dev-nvme0n1.device
+2.063s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1.device
+2.063s dev-disk-by\x2ddiskseq-1.device
+2.063s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1.device
+2.063s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b.device
+2.057s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart5.device
+2.057s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dlabel-BOOT.device
+2.057s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-9b158144\x2d594a\x2d4847\x2d97d9\x2d9abc0f54e758.device
+2.057s dev-disk-by\x2duuid-975ed9cd\x2d1915\x2d4e3f\x2dacc0\x2de2fbdd048e20.device
+2.057s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart5.device
+2.057s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p5.device
+2.057s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-5.device
+2.057s dev-disk-by\x2ddiskseq-1\x2dpart5.device
+2.057s dev-nvme0n1p5.device
+2.057s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-975ed9cd\x2d1915\x2d4e3f\x2dacc0\x2de2fbdd048e20.device
+2.057s dev-disk-by\x2dlabel-BOOT.device
+2.057s dev-disk-by\x2dpartuuid-9b158144\x2d594a\x2d4847\x2d97d9\x2d9abc0f54e758.device
+2.057s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart5.device
+2.057s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart5.device
+2.046s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-79fecaea\x2d40cf\x2d4f01\x2d8153\x2d978366366f89.device
+2.046s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-7.device
+2.046s dev-disk-by\x2ddiskseq-1\x2dpart7.device
+2.046s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart7.device
+2.046s dev-nvme0n1p7.device
+2.046s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-531054b2\x2d15aa\x2d492e\x2d9a47\x2d7b4d7d80d074.device
+2.046s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p7.device
+2.046s dev-disk-by\x2dpartlabel-RecoveryOSContainer.device
+2.046s dev-disk-by\x2duuid-79fecaea\x2d40cf\x2d4f01\x2d8153\x2d978366366f89.device
+2.046s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartlabel-RecoveryOSContainer.device
+2.046s dev-disk-by\x2dpartuuid-531054b2\x2d15aa\x2d492e\x2d9a47\x2d7b4d7d80d074.device
+2.045s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart7.device
+2.045s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart7.device
+2.045s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart7.device
+2.044s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart3.device
+2.044s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-f37dbe10\x2d7292\x2d4c57\x2dbf40\x2df057f50a6370.device
+2.044s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-3.device
+2.044s dev-disk-by\x2dpartuuid-f37dbe10\x2d7292\x2d4c57\x2dbf40\x2df057f50a6370.device
+2.044s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart3.device
+2.044s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart3.device
+2.044s dev-disk-by\x2duuid-7b9765e9\x2d3dfe\x2d4dfc\x2dbb98\x2d62eeda226b71.device
+2.044s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart3.device
+2.044s dev-disk-by\x2ddiskseq-1\x2dpart3.device
+2.044s dev-nvme0n1p3.device
+2.044s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p3.device
+2.044s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-7b9765e9\x2d3dfe\x2d4dfc\x2dbb98\x2d62eeda226b71.device
+2.039s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart4.device
+2.039s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p4.device
+2.039s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart4.device
+2.039s dev-nvme0n1p4.device
+2.039s dev-disk-by\x2ddiskseq-1\x2dpart4.device
+2.039s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart4.device
+2.039s dev-disk-by\x2ddesignator-esp.device
+2.039s dev-disk-by\x2dpartuuid-e02293e9\x2d814d\x2d4639\x2db1d3\x2dfa3500f711cf.device
+2.039s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dlabel-EFI\x5cx20\x2d\x5cx20ASAHI.device
+2.039s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-264E\x2d2B13.device
+2.039s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-e02293e9\x2d814d\x2d4639\x2db1d3\x2dfa3500f711cf.device
+2.039s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-4.device
+2.039s dev-disk-by\x2dlabel-EFI\x5cx20\x2d\x5cx20ASAHI.device
+2.039s dev-disk-by\x2duuid-264E\x2d2B13.device
+2.039s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart4.device
+2.033s dev-nvme0n1p2.device
+2.033s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart2.device
+2.033s dev-disk-by\x2ddiskseq-1\x2dpart2.device
+2.033s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p2.device
+2.033s dev-disk-by\x2dpartuuid-37df722a\x2d870b\x2d439b\x2dac7e\x2df551763d7ca1.device
+2.033s dev-disk-by\x2duuid-76d999e6\x2daa58\x2d4083\x2d933f\x2d678f4c8a51f8.device
+2.033s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart2.device
+2.033s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart2.device
+2.033s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartlabel-Container.device
+2.033s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-76d999e6\x2daa58\x2d4083\x2d933f\x2d678f4c8a51f8.device
+2.033s dev-disk-by\x2dpartlabel-Container.device
+2.033s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart2.device
+2.033s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-37df722a\x2d870b\x2d439b\x2dac7e\x2df551763d7ca1.device
+2.033s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-2.device
+2.032s sys-module-fuse.device
+2.031s dev-disk-by\x2duuid-391a13cb\x2dc57f\x2d44cb\x2db1fc\x2dab233af9d9b4.device
+2.031s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartuuid-b7c0380d\x2d70d6\x2d4a4f\x2d84c3\x2d0605d5c70737.device
+2.031s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dpartnum-6.device
+2.031s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2duuid-391a13cb\x2dc57f\x2d44cb\x2db1fc\x2dab233af9d9b4.device
+2.031s dev-nvme0n1p6.device
+2.031s dev-disk-by\x2did-nvme\x2dnvme.106b\x2d30626130313237623832393438653362\x2d4150504c45205353442041503032353651\x2d00000001\x2dpart6.device
+2.031s sys-devices-platform-soc-27bcc0000.nvme-nvme-nvme0-nvme0n1-nvme0n1p6.device
+2.031s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart6.device
+2.031s dev-disk-by\x2dpath-platform\x2d27bcc0000.nvme\x2dnvme\x2d1\x2dpart-by\x2dlabel-fedora.device
+2.031s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b_1\x2dpart6.device
+2.031s dev-disk-by\x2dlabel-fedora.device
+2.031s dev-disk-by\x2ddiskseq-1\x2dpart6.device
+2.031s dev-disk-by\x2did-nvme\x2dAPPLE_SSD_AP0256Q_0ba0127b82948e3b\x2dpart6.device
+2.031s dev-disk-by\x2dpartuuid-b7c0380d\x2d70d6\x2d4a4f\x2d84c3\x2d0605d5c70737.device
+1.874s sys-devices-platform-soc-235200000.serial-235200000.serial:0-235200000.serial:0.0-tty-ttySAC0.device
+1.874s dev-ttySAC0.device
+1.862s dev-ttySAC2.device
+1.862s sys-devices-platform-soc-235208000.serial-235208000.serial:0-235208000.serial:0.0-tty-ttySAC2.device
+1.814s sys-module-configfs.device
+1.740s sys-devices-platform-soc-231c00000.dcp-backlight-apple\x2dpanel\x2dbl.device
+ 986ms systemd-binfmt.service
+ 865ms initrd-switch-root.service
+ 626ms NetworkManager.service
+ 467ms packagekit.service
+ 450ms systemd-journal-flush.service
+ 247ms systemd-udev-trigger.service
+ 245ms dracut-pre-udev.service
+ 196ms systemd-tmpfiles-setup.service
+ 154ms upower.service
+ 149ms udisks2.service
+ 134ms user@1000.service
+ 134ms abrtd.service
+ 119ms tuned.service
+ 115ms systemd-resolved.service
+ 112ms systemd-oomd.service
+ 112ms tuned-ppd.service
+ 110ms systemd-tmpfiles-setup-dev-early.service
+ 101ms systemd-tmpfiles-setup-dev.service
+  96ms ModemManager.service
+  88ms iio-sensor-proxy.service
+  84ms polkit.service
+  81ms systemd-backlight@backlight:apple-panel-bl.service
+  65ms accounts-daemon.service
+  59ms systemd-udevd.service
+  59ms chronyd.service
+  58ms plymouth-quit-wait.service
+  57ms plymouth-quit.service
+  54ms var-lib-nfs-rpc_pipefs.mount
+  53ms systemd-logind.service
+  51ms switcheroo-control.service
+  48ms avahi-daemon.service
+  44ms systemd-journald.service
+  41ms systemd-userdbd.service
+  40ms rtkit-daemon.service
+  40ms systemd-hostnamed.service
+  40ms bluetooth.service
+  38ms dbus-broker.service
+  38ms systemd-tmpfiles-clean.service
+  37ms systemd-sysctl.service
+  37ms var-swap-swapfile.swap
+  37ms systemd-random-seed.service
+  35ms smartd.service
+  34ms plymouth-read-write.service
+  34ms dracut-pre-pivot.service
+  33ms lm_sensors.service
+  30ms rsyslog.service
+  27ms authselect-apply-changes.service
+  27ms plymouth-switch-root.service
+  26ms plymouth-start.service
+  24ms systemd-fsck-root.service
+  23ms dracut-cmdline.service
+  23ms systemd-userdb-load-credentials.service
+  23ms dracut-shutdown.service
+  22ms cups.service
+  22ms gssproxy.service
+  22ms systemd-homed.service
+  21ms audit-rules.service
+  20ms dev-hugepages.mount
+  20ms initrd-cleanup.service
+  20ms dev-mqueue.mount
+  20ms sys-kernel-debug.mount
+  19ms auditd.service
+  19ms sys-kernel-tracing.mount
+  18ms boot.mount
+  17ms systemd-backlight@leds:kbd_backlight.service
+  17ms plasmalogin.service
+  17ms pcscd.socket
+  17ms proc-sys-fs-binfmt_misc.mount
+  16ms systemd-modules-load.service
+  15ms uresourced.service
+  15ms dracut-initqueue.service
+  14ms home.mount
+  14ms systemd-growfs-root.service
+  14ms user-runtime-dir@1000.service
+  13ms systemd-remount-fs.service
+  12ms tmp.mount
+  12ms systemd-udev-load-credentials.service
+  11ms systemd-rfkill.service
+  11ms wpa_supplicant.service
+  11ms kmod-static-nodes.service
+  10ms sys-fs-fuse-connections.mount
+  10ms systemd-user-sessions.service
+  10ms systemd-network-generator.service
+   9ms boot-efi.mount
+   8ms rpc-statd-notify.service
+   8ms sshd-unix-local.socket
+   7ms systemd-vconsole-setup.service
+   6ms initrd-udevadm-cleanup-db.service
+   5ms initrd-parse-etc.service
+   4ms systemd-update-utmp.service
+   4ms systemd-growfs@home.service
+   2ms systemd-coredump.socket
+   1ms systemd-bootctl.socket
+   1ms systemd-ask-password.socket
+ 965us systemd-sysext.socket
+ 940us cups.socket
+ 932us systemd-mute-console.socket
+ 914us systemd-factory-reset.socket
+ 714us avahi-daemon.socket
+ 708us sssd-kcm.socket
+ 693us systemd-repart.socket
+ 665us systemd-creds.socket
+ 528us dbus.socket
+ 526us systemd-homed-activate.service
+ 488us systemd-udevd-control.socket
+ 354us systemd-oomd.socket
+ 348us systemd-hostnamed.socket
+ 261us systemd-userdbd.socket
+ 195us systemd-logind-varlink.socket
+ 168us systemd-resolved-monitor.socket
+ 141us systemd-udevd-varlink.socket
+  90us systemd-journald-audit.socket
+  53us systemd-resolved-varlink.socket
+  39us systemd-journald-dev-log.socket
+  28us systemd-journald.socket
+  16us systemd-rfkill.socket
+   9us systemd-udevd-kernel.socket
