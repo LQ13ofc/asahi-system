@@ -101,11 +101,16 @@ class NiriPlusCliTests(unittest.TestCase):
         self.assertEqual(calls, [[sys.executable, str(ROOT / "scripts/collect-performance-baseline"),
                                   "--runs", "5", "--output", "capture.json"]])
 
-    def test_desktop_display_name_is_exactly_niri(self):
-        from configparser import ConfigParser
-        parser = ConfigParser(interpolation=None)
-        parser.read(ROOT / "sessions/niri.desktop", encoding="utf-8")
-        self.assertEqual(parser["Desktop Entry"]["Name"], "Niri")
+    def test_session_status_accepts_packaged_niri_and_rejects_legacy_duplicate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            packaged = root / "usr/share/wayland-sessions/niri.desktop"
+            packaged.parent.mkdir(parents=True)
+            packaged.write_text("[Desktop Entry]\nName=Niri\nType=Application\n")
+            self.assertEqual(host.session_status(root), host.OK)
+            legacy = root / "usr/share/wayland-sessions/niri-performance.desktop"
+            legacy.write_text("[Desktop Entry]\nName=Niri\nType=Application\n")
+            self.assertEqual(host.session_status(root), host.WARNING)
 
 
 def missing_runner(args, **kwargs):
