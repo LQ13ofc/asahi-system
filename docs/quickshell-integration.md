@@ -23,17 +23,19 @@ The generic `qs` autostart was removed; Niri+ owns process lifecycle.
 
 `.gitmodules` declares `external/quickshell`; the gitlink and
 `integration/quickshell.lock.json` both pin
-`554718f01faa3f6b713cc0d58e30c4129d49e524`, the reviewed head of Quickshell
-PR #2 that removes its startup snippet. The fork is private, so cloning
-`asahi-system` needs GitHub access that can read both repositories. Initialize
-the submodule recursively before running the single bootstrap, for example:
-`git clone --recurse-submodules https://github.com/LQ13ofc/asahi-system.git`.
-Bootstrap
-checks the origin and exact commit and creates a symlink from
-`/usr/local/share/niri-plus/quickshell` to that external checkout. It copies
-the lock metadata, never visual source. `niri+ status` and `doctor` compare the
-installed git HEAD with the lock. A changed or absent checkout is reported,
-not silently repaired.
+`55e92880d0aff75d235f283c839ec0990eaa9e17`, the reviewed head of Quickshell
+PR #3 with the NetworkManager-backed Wi-Fi indicator. It includes PR #2's
+session-owned lifecycle and no visual startup snippet. The fork is private, so cloning
+`asahi-system` needs GitHub access that can read both repositories. The
+submodule may be initialized for development; installation does not trust its
+working tree. `sudo niri+ install` checks both Git URLs, resolves exact commit
+objects, and materializes a hash-verified snapshot from those objects. It
+installs that visual snapshot at `/usr/local/share/niri-plus/quickshell`, with a
+manifest recording repository, commit and blob hashes. This is outside the
+`asahi-system` source tree; no QML is copied into the system repository.
+`niri+ status` and `doctor` compare the installed snapshot manifest, files and
+commit with the lock. Missing, changed or divergent content is reported, not
+silently repaired.
 
 The current lock keeps the expected visual commit separate from the Niri+
 version and reserves `known_good_commit` in install state. `niri+ update` stays
@@ -53,11 +55,12 @@ COPR repo. No x86 package or emulation is involved.
 
 Sources: [COPR project](https://copr.fedorainfracloud.org/coprs/errornointernet/quickshell/), [Fedora 44 aarch64 COPR metadata](https://download.copr.fedorainfracloud.org/results/errornointernet/quickshell/fedora-44-aarch64/repodata/repomd.xml), and [build 11085751](https://copr.fedorainfracloud.org/api_3/build/11085751). The runtime package version is locked independently of the Quickshell repository commit. If the COPR no longer serves the exact NEVRA, installation fails safely pending a reviewed package-lock update.
 
-The QML harness and project notes are based on Quickshell 0.2.1. The package
-metadata proves availability and architecture, not that every QML component
-works with 0.3.1 or Fedora Asahi's Wayland stack. `niri+ doctor` and status
-mark this as `M1_REQUIRED`; the first session login must verify the bar, D-Bus
-features, restart behavior and logs before treating this commit as known-good.
+The UI was originally developed against Quickshell 0.2.1. The package metadata
+proves availability and architecture, not that every QML component works with
+0.3.1 or Fedora Asahi's Wayland stack. On the first M1 Niri login the bar
+appeared and was usable. Audio/network panels, restart behavior, log health,
+and full device integration remain `M1_REQUIRED`; appearance alone does not
+mark either repository commit known-good.
 
 ## Dependency inventory
 
@@ -65,9 +68,10 @@ features, restart behavior and logs before treating this commit as known-good.
 |---|---|---|
 | Quickshell ARM64 engine | REQUIRED | Niri+ install, exact NEVRA and GPG-checked temporary COPR. |
 | PipeWire | REQUIRED | System-owned; Quickshell audio integration. Keep existing services. |
-| NetworkManager | REQUIRED for network controls | System-owned; Wi-Fi state and mutation API. |
+| NetworkManager | REQUIRED for network controls and Wi-Fi indicator | System-owned; Quickshell 0.3.1 `Quickshell.Networking` reads indicator state directly; the open panel uses the existing D-Bus helper for controls. |
 | D-Bus session/system buses | REQUIRED | Session/system integration for audio, Wi-Fi, Bluetooth, notification and tray features. |
-| Python 3 | REQUIRED for helpers | `agenda.py` and `netctl.py`; spawned for a request/panel, not a permanent daemon. |
+| Python 3 | REQUIRED | `agenda.py` and `netctl.py`; spawned for a request/panel, not a permanent daemon. |
+| `python3-dbus`, `python3-gobject` | REQUIRED for network controls | Used by the on-demand NetworkManager control helper while the panel is open. |
 | BlueZ | OPTIONAL | Bluetooth panel reports unavailable if no daemon/device. |
 | UPower | OPTIONAL | Battery UI enhancement; status may be absent. |
 | MPRIS | LAZY/ON_DEMAND | Quickshell service observes available players; no separate service is added. |
@@ -82,23 +86,41 @@ features, restart behavior and logs before treating this commit as known-good.
 | PySide6, Pillow, `pyside6-qmllint`, test harness | DEVELOPMENT_ONLY | Cloud validation only; not installed on the M1 as a runtime dependency. |
 
 This table classifies features; it is not a blanket package installation list.
-`iwd`, `gdbus` and `busctl` are used only where present for auxiliary
-read-only data or helper operations. Larger QML performance changes remain
-for a separately measured A/B phase.
+The Wi-Fi indicator reads NetworkManager through Quickshell's native
+networking module; it does not start a monitor/helper process. The panel's
+control helper uses NetworkManager and consults iwd only for auxiliary signal
+metrics when available. The baseline has NetworkManager and `wpa_supplicant`,
+but no iwd package, so the indicator no longer depends on iwd. Larger QML
+performance changes remain for a separately measured A/B phase.
+
+Fedora's package catalog lists `python3-dbus` 1.4.0-9.fc44 and
+`python3-gobject` 3.56.3-1.fc44 for Fedora 44. These packages supply the D-Bus
+and GLib bindings imported by the on-demand Wi-Fi control helper; they are now
+declared in the explicit Niri+ package set. References:
+[python3-dbus Fedora 44](https://packages.fedoraproject.org/pkgs/dbus-python/python3-dbus/fedora-44.html)
+and [python3-gobject Fedora 44](https://packages.fedoraproject.org/pkgs/pygobject3/python3-gobject/fedora-44-updates.html).
 
 ## Session lifecycle
 
 The Fedora-packaged `niri-session`/`niri.service` remains the display-manager
-entry and session owner. `asahi-quickshell.service` is wanted by
-`graphical-session.target`, ordered after `graphical-session-pre.target`,
-`PartOf=graphical-session.target`, and conditioned on
-`XDG_CURRENT_DESKTOP=niri`. It executes the pinned external checkout through
-`qs --path`; systemd provides one unit instance, bounded restart-on-failure,
-stop on session exit, and journal logs (`journalctl --user -u
-asahi-quickshell.service`). `niri+ doctor` checks unit state, restart count,
-recent log availability and duplicate processes. No process starts from Plasma because
-its desktop environment fails the Niri condition. No Niri `spawn-at-startup`
-is added to either repository.
+entry and session owner. M1 logs showed `graphical-session-pre.target` can be
+reached while `niri.service` is still creating its Wayland display. Starting
+clients at that point caused Quickshell and LXQt PolicyKit to abort with no
+`wl_display`; both worked after manual restart. `asahi-niri-wayland-ready.service`
+now gates the session clients: it waits for the real socket and verifies a
+Wayland `wl_display.sync` response, imports the selected display name into the
+user manager/D-Bus environment, and exits. It has no fixed sleep or persistent
+poller. Quickshell and PolicyKit both `Requires=` and `After=` this readiness
+unit, are conditioned on `XDG_CURRENT_DESKTOP=niri`, and are `PartOf=`
+`graphical-session.target`. Their first start therefore waits for compositor
+readiness and they stop with the session. Quickshell retains one systemd-owned
+instance, bounded restart-on-failure, and journal logs (`journalctl --user -u
+asahi-quickshell.service`). `niri+ status` and `doctor` check the live socket
+with a Wayland sync handshake, `graphical-session.target`, the readiness,
+Quickshell and PolicyKit unit results, restart counts, logs and duplicate
+processes. Any first-start restart or unavailable display is reported as a
+warning rather than healthy. No Niri `spawn-at-startup` is added to either
+repository.
 
 The service does not start during install. It becomes eligible with the next
 Niri graphical-session lifecycle. A user unit reload is requested without
@@ -118,19 +140,50 @@ fields to an `ExecCondition` for `$XDG_CURRENT_DESKTOP`, so with no desktop
 restriction it generates a unit eligible in Niri as well as Plasma. This is
 why a KDE-purpose component appeared in the first Niri run.
 
-Niri+ installs a drop-in only for that generated unit with
-`ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE`. It is skipped before execution
-in Niri and remains eligible in Plasma. The package, desktop file, Plasma
-services and autostart files are untouched. The process is not killed after
-launch. The additional baseline KDE autostarts remain unmodified pending
-Niri-specific evidence about whether each belongs there.
+Follow-up M1 logs confirmed the Video Bridge filter worked, but also found
+`kdeconnectd`, `kalendarac`, `akonadi_control` and multiple Akonadi agents
+resident in Niri. The Plasma baseline also records `plasma-keyboard`,
+`org_kde_powerdevil`, the KDE PolicyKit agent, the KWin Wayland wrapper and
+`startplasma-wayland`; the read-only doctor detects these process names even if
+their parent unit is no longer active. The parent causes were the baseline's
+KDE user services and generated XDG autostart units being eligible in any
+desktop: these generated entries had no KDE-only restriction, and direct user
+units had no session-specific condition. Niri+ now applies
+`ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE` to the four baseline XDG units
+(Discover notifier, Kalendar, KDE Connect and XWayland Video Bridge) and to
+direct background units in the baseline: Akonadi Control, Baloo,
+KUnifiedPush, and Plasma's menu proxy, accessibility, activity manager, kded,
+session manager, KWin, shell, PolicyKit, Powerdevil, KDE portal and XEmbed proxy.
+`PartOf=graphical-session.target` makes those background units stop at session
+exit. Plasma satisfies the condition and keeps its normal services. Packages,
+desktop files and global service configuration remain untouched; nothing is
+globally disabled or masked. D-Bus-activated KDE Wallet is retained for
+applications that need stored credentials, and an explicitly opened Konsole
+is not counted as a session leak.
+
+`niri+ status` and `doctor` inspect active KDE autostart/services and
+characteristic background process names, including Akonadi agents. They warn
+in Niri for unexpected KDE activity or a missing session filter, but report
+`NOT_APPLICABLE` in Plasma. A normal Niri logout was observed in the same M1
+logs (`quitting after confirming exit dialog`); subsequent Wayland loss was
+therefore expected. DRM/EDID/HDR/gamma warnings did not prevent Niri startup.
 
 ## Validation boundary
 
-Cloud tests can verify lock consistency, source path, systemd unit and drop-in
-text, idempotent managed-file backup/rollback, CLI output and the absence of
-Niri `spawn-at-startup` duplication. The M1 is still required to validate
+Cloud tests verify lock consistency, snapshot object hashes, concurrent source
+edits, non-interactive Git, transaction rollback/idempotence, Wayland socket
+handshake and target ordering, KDE filters and diagnostics, CLI output and the
+absence of Niri `spawn-at-startup` duplication. The M1 is still required to validate
 Quickshell 0.3.1 against this v0.2.1-oriented QML, Wayland surfaces, audio,
 network, Bluetooth, notifications, crash restart, process uniqueness, panel
 helpers and memory. First compare clean Niri-only idle against Niri+Quickshell
 with five runs each under the same login/settle conditions.
+
+The audit found that the Wi-Fi bar indicator had depended on iwd even though
+the captured target uses NetworkManager with `wpa_supplicant` and has no iwd.
+It now reads device and SSID state through Quickshell 0.3.1's native
+`Quickshell.Networking` API. The Wi-Fi control panel remains NetworkManager
+based and only starts its Python helper while open. No permanent network helper
+or second shell startup was added. The indicator and panels load/render in the
+Cloud harness, but live NetworkManager behavior and the pinned engine's exact
+API behavior remain M1_REQUIRED.

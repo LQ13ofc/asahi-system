@@ -7,6 +7,8 @@ foot
 fuzzel
 xdg-desktop-portal-gtk
 lxqt-policykit
+python3-dbus
+python3-gobject
 # Version and signed Fedora 44 aarch64 COPR source are pinned separately in
 # integration/quickshell.lock.json. This is the ARM64-native visual engine.
 quickshell

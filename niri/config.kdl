@@ -1,5 +1,4 @@
-// Minimal B1 configuration. Quickshell, gaming, wallpaper, notification,
-// screenshots, clipboard helpers, and optional effects are intentionally absent.
+// Configuração base do Niri+; includes são instalados lado a lado em /etc/niri.
 include "keybinds.kdl"
 include "outputs.kdl"
 include "rules.kdl"

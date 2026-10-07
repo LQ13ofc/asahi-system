@@ -19,13 +19,15 @@ def run_install(dry_run: bool = False) -> int:
         print("Install requires root; use: sudo niri+ install")
         return 2
     try:
-        if os.environ.get("NIRI_PLUS_SELF_UPDATED") != "1":
-            commit = source_update.refresh_and_bootstrap()
-            print(f"Niri+ source updated to {commit[:12]}; continuing with refreshed CLI.")
-            source_update.reexec_install()
-            raise RuntimeError("re-exec unexpectedly returned")
-        install.apply_install()
-    except (install.InstallError, source_update.SourceUpdateError, subprocess.CalledProcessError) as exc:
+        errors = install.target_mismatches(install.parse_os_release(), platform.machine())
+        if errors:
+            print("Install refused before updating Niri+: incompatible host: " + "; ".join(errors))
+            return 2
+        source_root = source_update.discover_source_root()
+        with source_update.resolved_snapshot(source_root) as snapshot:
+            print(f"Resolved Niri+ {snapshot.system_commit[:12]} and Quickshell {snapshot.quickshell_commit[:12]}.")
+            source_update.install_from_snapshot(snapshot)
+    except (install.InstallError, source_update.SourceUpdateError, subprocess.CalledProcessError, OSError) as exc:
         print(f"Install failed: {exc}")
         return 2
     return 0

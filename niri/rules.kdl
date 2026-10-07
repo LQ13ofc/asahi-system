@@ -1,1 +1,2 @@
-// No application-specific rules in B1.
+// No application-specific rules yet. Keep the base compositor policy here;
+// visual-shell rules remain in the Quickshell repository.

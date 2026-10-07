@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+"""Snapshot-only privileged entrypoint; invoked internally by niri+ install."""
+
+from __future__ import annotations
+
+import os
+import pathlib
+import sys
+
+SNAPSHOT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SNAPSHOT_ROOT))
+os.environ["NIRI_PLUS_DATA_DIR"] = str(SNAPSHOT_ROOT)
+
+from niri_plus.snapshot_install import main
+
+raise SystemExit(main())

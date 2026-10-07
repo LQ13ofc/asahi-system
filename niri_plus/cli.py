@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import pathlib
-import subprocess
 
 from . import benchmark, doctor, install_command, rollback, status, uninstall, update
 

@@ -1,6 +1,6 @@
 # Arquitetura planejada da sessão Niri
 
-Esta página descreve o alvo completo e separa o que está preparado no B1 do que continua futuro. O B1 tem configuração revisável e instalador em PR; nada foi instalado nem altera o baseline.
+Esta página descreve a arquitetura atual até B2 e separa o que já está integrado do que continua futuro. Niri e a barra Quickshell iniciaram no M1. Logs posteriores confirmaram uma race em que clientes precediam o socket Wayland e processos KDE/PIM vazavam para Niri; os fixes Cloud estão no PR do release gate e ainda precisam de reteste no hardware.
 
 ```text
 Fedora Asahi
@@ -18,13 +18,13 @@ Fedora Asahi
         └── restauração reversível ao sair
 ```
 
-## B1 — sessão mínima preparada
+## B1 — compositor e ferramentas base
 
-B1 é Niri puro: Niri, foot, fuzzel, GTK portal e agente PolicyKit condicionado à sessão Niri. PipeWire/WirePlumber e NetworkManager permanecem os componentes já existentes no Fedora Asahi; o instalador não os habilita nem reconfigura. Quickshell, notificações, screenshot/clipboard helpers, wallpaper e ajustes de performance ficam fora do primeiro ensaio. Consulte [`docs/niri-phase-b.md`](niri-phase-b.md) para pacotes, lifecycle, instalação e validações.
+O conjunto base mantém Niri, foot, fuzzel, GTK portal e agente PolicyKit condicionado à sessão Niri. PipeWire/WirePlumber e NetworkManager permanecem componentes existentes do Fedora Asahi. Niri+ reutiliza a entrada de sessão empacotada pelo Fedora; não instala uma entrada custom duplicada. Consulte [`docs/niri-phase-b.md`](niri-phase-b.md) para pacotes, lifecycle e validações.
 
-## Sessão normal desejada após B2
+## B2 — Quickshell integrado
 
-Niri é a única sessão gráfica otimizada principal. No uso normal, Niri executa Quickshell e os componentes necessários (PipeWire, `pipewire-pulse`, WirePlumber, NetworkManager, agente polkit, portal necessário e serviços comprovadamente essenciais). Jogos e Steam podem rodar diretamente nessa sessão normal, sem serem chamados de Gaming Mode.
+Na sessão Niri, `graphical-session.target` é dono de `asahi-niri-wayland-ready.service`, `asahi-niri-polkit-agent.service` e `asahi-quickshell.service`. O helper confirma handshake no socket Wayland real antes dos clientes; Quickshell usa o snapshot imutável do commit pinado, fora do source tree de `asahi-system`. Não há segundo `spawn-at-startup`. Jogos e Steam podem rodar diretamente nessa sessão normal, sem serem chamados de Gaming Mode.
 
 Xwayland-satellite continua on-demand pelo mecanismo do Niri, não como processo permanente presumido. O ciclo de vida dos painéis, polling e serviços Quickshell deve ser medido antes de qualquer suspensão ou lazy loading.
 
@@ -68,4 +68,4 @@ Compare RAM/PSS, CPU, GPU, FPS médio, 1% low, frametime, swap, PSI, latency e e
 
 Plasma não é alvo de otimização. Fica instalado apenas como recovery/fallback durante o desenvolvimento. Use seu baseline para entender o estado atual, identificar processos KDE que não devem aparecer em Niri e medir ganhos da nova sessão; não desenhe tuning para KDE/Plasma.
 
-A integração/pinning de `quickshell-` será escolhida em tarefa futura, mantendo o repositório separado e fixando a versão usada em um commit. Nenhum pacote ou serviço é habilitado, removido ou desativado por esta documentação.
+O pin continua sendo o gitlink e `integration/quickshell.lock.json`, ambos no commit `55e92880d0aff75d235f283c839ec0990eaa9e17` (PR #3). O PR #8 implementa fetch pelo dono do checkout, snapshot dos commits exatos, aplicação transacional e os gates de Wayland/KDE; ainda não foi mergeado. `niri+ update` continua stub seguro. Nenhum pacote ou serviço global é removido ou desativado por esta documentação.
