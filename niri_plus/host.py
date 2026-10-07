@@ -93,12 +93,15 @@ def installed_file(root: pathlib.Path, absolute: str) -> bool:
 
 
 def session_status(root: pathlib.Path) -> str:
-    path = root / "usr/share/wayland-sessions/niri-performance.desktop"
-    if not path.is_file():
+    packaged = root / "usr/share/wayland-sessions/niri.desktop"
+    legacy_duplicate = root / "usr/share/wayland-sessions/niri-performance.desktop"
+    if legacy_duplicate.is_file():
+        return WARNING
+    if not packaged.is_file():
         return NOT_INSTALLED
     parser = configparser.ConfigParser(interpolation=None)
     try:
-        parser.read(path, encoding="utf-8")
+        parser.read(packaged, encoding="utf-8")
         return OK if parser.get("Desktop Entry", "Name", fallback="") == "Niri" else WARNING
     except (configparser.Error, OSError):
         return WARNING
@@ -145,7 +148,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         "fedora_version": release.get("VERSION_ID", "Unknown"),
         "niri": {"status": niri_state, "version": niri_version or "version unavailable"},
         "session": session_status(root),
-        "configuration": OK if installed_file(root, "/usr/local/share/asahi-system/niri/config.kdl") else NOT_CONFIGURED,
+        "configuration": OK if installed_file(root, "/etc/niri/config.kdl") else NOT_CONFIGURED,
         "managed_file_checksums": managed_files,
         "polkit_unit": OK if installed_file(root, "/usr/lib/systemd/user/asahi-niri-polkit-agent.service") else NOT_INSTALLED,
         "portal_backend": OK if installed_file(root, "/usr/libexec/xdg-desktop-portal-gtk") else NOT_INSTALLED,
