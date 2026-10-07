@@ -1,0 +1,15 @@
+[Unit]
+Description=Wait for a responsive Wayland display in the Niri session
+ConditionEnvironment=XDG_CURRENT_DESKTOP=niri
+After=graphical-session-pre.target
+Before=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=25s
+ExecStart=/usr/bin/python3 /usr/local/lib/niri-plus/niri_plus/wayland_ready.py --wait 20
+
+[Install]
+WantedBy=graphical-session.target

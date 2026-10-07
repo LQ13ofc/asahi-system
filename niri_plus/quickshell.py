@@ -55,7 +55,10 @@ def git_value(path: pathlib.Path, args: list[str], runner: Runner) -> str | None
         return None
     if result.returncode != 0:
         return None
-    return (result.stdout or "").strip()
+    value = result.stdout or ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return value.strip()
 
 
 def _qs_version(root: pathlib.Path, runner: Runner) -> tuple[str, str]:
@@ -89,7 +92,8 @@ def _unit_state(root: pathlib.Path, runner: Runner) -> tuple[str, str]:
         return WARNING, "unit unreadable"
     required = (
         "ConditionEnvironment=XDG_CURRENT_DESKTOP=niri",
-        "After=graphical-session-pre.target",
+        "Requires=asahi-niri-wayland-ready.service",
+        "After=asahi-niri-wayland-ready.service",
         "PartOf=graphical-session.target",
         "StartLimitIntervalSec=60",
         "StartLimitBurst=5",
@@ -147,10 +151,16 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
     package_expected = locked_nevra.removeprefix("quickshell-") + "." + engine.get("architecture", "aarch64") if locked_nevra else "unknown"
     checkout = checkout_path(root, base)
     checkout_present = checkout.is_dir()
-    installed_commit = git_value(checkout, ["rev-parse", "--verify", "HEAD"], runner) if checkout_present else None
-    remote = git_value(checkout, ["remote", "get-url", "origin"], runner) if checkout_present else None
-    dirty_output = git_value(checkout, ["status", "--porcelain", "--untracked-files=all"], runner) if checkout_present else None
-    dirty = None if dirty_output is None else bool(dirty_output)
+    runtime_manifest = _runtime_snapshot(root, base, expected) if checkout_present else None
+    if runtime_manifest:
+        installed_commit = runtime_manifest["commit"]
+        remote = runtime_manifest["repository"]
+        dirty = runtime_manifest["status"] != OK
+    else:
+        installed_commit = git_value(checkout, ["rev-parse", "--verify", "HEAD"], runner) if checkout_present else None
+        remote = git_value(checkout, ["remote", "get-url", "origin"], runner) if checkout_present else None
+        dirty_output = git_value(checkout, ["status", "--porcelain", "--untracked-files=all"], runner) if checkout_present else None
+        dirty = None if dirty_output is None else bool(dirty_output)
     version_status, version = _qs_version(root, runner)
     package_status, package_version = _rpm_version(root, runner)
     if package_status == OK and package_version != package_expected:
@@ -160,6 +170,8 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
         checkout_status = WARNING
     elif not checkout_present:
         checkout_status = NOT_INSTALLED
+    elif runtime_manifest:
+        checkout_status = runtime_manifest["status"]
     elif not installed_commit:
         checkout_status = WARNING
     elif (installed_commit != expected or dirty is not False or not remote
@@ -204,18 +216,75 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
 
 def _runtime_link_status(root: pathlib.Path) -> str:
     runtime = root / "usr/local/share/niri-plus/quickshell"
-    if not runtime.is_symlink():
-        return WARNING if runtime.exists() else NOT_INSTALLED
     state_path = root / "var/lib/niri-plus/bootstrap.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        expected = pathlib.Path(state["quickshell_source"]).resolve()
+        expected_commit = state.get("quickshell_expected_commit")
+        legacy_source = state.get("quickshell_source")
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return WARNING
+    if runtime.is_dir() and not runtime.is_symlink():
+        marker = root / "usr/local/share/niri-plus/quickshell.snapshot.json"
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            return OK if data.get("commit") == expected_commit and (runtime / "shell.qml").is_file() else WARNING
+        except (OSError, ValueError, json.JSONDecodeError):
+            return WARNING
+    if not runtime.is_symlink():
+        return WARNING if runtime.exists() else NOT_INSTALLED
     try:
+        if not expected_commit and legacy_source:
+            expected = pathlib.Path(legacy_source).resolve()
+        else:
+            expected = pathlib.Path(legacy_source or "").resolve()
         return OK if runtime.resolve(strict=True) == expected else WARNING
-    except OSError:
+    except (OSError, KeyError):
         return WARNING
+
+
+def _runtime_snapshot(root: pathlib.Path, base: pathlib.Path, expected: str | None) -> dict | None:
+    marker = root / "usr/local/share/niri-plus/quickshell.snapshot.json"
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    repository = data.get("repository", "")
+    commit = data.get("commit", "")
+    if not expected or commit != expected or repository.rstrip("/").removesuffix(".git").lower() != str(load_lock(base).get("repository", "")).rstrip("/").removesuffix(".git").lower():
+        return {"status": WARNING, "repository": repository, "commit": commit}
+    checkout = root / "usr/local/share/niri-plus/quickshell"
+    expected_paths: set[str] = set()
+    from .source_update import _git_hash
+    try:
+        for entry in data.get("files", []):
+            rel = pathlib.PurePosixPath(str(entry["path"]))
+            if rel.is_absolute() or not rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
+                raise ValueError("unsafe Quickshell snapshot path")
+            path = checkout.joinpath(*rel.parts)
+            key = rel.as_posix()
+            if key in expected_paths:
+                raise ValueError("duplicate Quickshell path")
+            expected_paths.add(key)
+            if entry["mode"] == 0o120000:
+                blob = os.readlink(path).encode("utf-8")
+            else:
+                blob = path.read_bytes()
+            if _git_hash(b"blob", blob) != entry["oid"]:
+                raise ValueError(f"Quickshell file differs from pin: {key}")
+            actual_mode = 0o120000 if path.is_symlink() else 0o100755 if path.stat().st_mode & 0o111 else 0o100644
+            if actual_mode != entry["mode"]:
+                raise ValueError(f"Quickshell mode differs from pin: {key}")
+        actual = set()
+        for base_path, dirs, files in os.walk(checkout, followlinks=False):
+            for name in dirs + files:
+                path = pathlib.Path(base_path) / name
+                if path.is_symlink() or path.is_file():
+                    actual.add(path.relative_to(checkout).as_posix())
+        if actual != expected_paths:
+            raise ValueError("Quickshell runtime contains missing or unpinned files")
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"status": WARNING, "repository": repository, "commit": commit}
+    return {"status": OK, "repository": repository, "commit": commit}
 
 
 def process_diagnostics(proc_root: pathlib.Path = pathlib.Path("/proc")) -> dict:

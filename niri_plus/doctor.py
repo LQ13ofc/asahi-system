@@ -21,6 +21,7 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
                   f"Niri config validator: {report['configuration_validation']}",
                   f"Launcher Command+Space → Fuzzel: {report['launcher']}",
                   f"Fuzzel executable: {report['launcher_binary']}",
+                  f"Niri Wayland readiness gate: {report['wayland_readiness']}",
                   f"PolicyKit systemd user unit: {report['polkit_unit']}",
                   f"GTK portal backend: {report['portal_backend']}",
                   f"Install state: {report['install_state']}", f"Rollback: {report['rollback']} / backups: {report['rollback_state']}",
@@ -39,7 +40,7 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
                   f"  RPM engine: {qs['package_status']} ({qs['package_version']}, expected {qs['package_expected']})",
                   f"  Checkout/config: {qs['checkout_status']} ({qs['installed_commit']} expected {qs['expected_commit']})",
                   f"  State pin: {qs['state_pin_status']} ({qs['state_expected_commit']})",
-                  f"  Runtime symlink: {qs['runtime_link_status']}",
+                  f"  Runtime snapshot: {qs['runtime_link_status']}",
                   f"  Known-good commit: {qs['known_good_commit']}; dirty: {qs['dirty']}",
                   f"  Repository: {qs['installed_repository']} (expected {qs['repository']})", f"  Lifecycle unit: {qs['lifecycle']} ({qs['lifecycle_detail']})",
                   f"  Processes: {qs['duplicate_processes']['count']} total, "

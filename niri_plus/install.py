@@ -42,6 +42,7 @@ LEGACY_MANAGED_PATHS = {
 }
 MANAGED_FILES = {
     "/usr/lib/systemd/user/asahi-niri-polkit-agent.service": REPO / "sessions/systemd/asahi-niri-polkit-agent.service",
+    "/usr/lib/systemd/user/asahi-niri-wayland-ready.service": REPO / "sessions/systemd/asahi-niri-wayland-ready.service",
     "/usr/lib/systemd/user/asahi-quickshell.service": REPO / "sessions/systemd/asahi-quickshell.service",
     "/usr/lib/systemd/user/app-org.kde.xwaylandvideobridge@autostart.service.d/10-niri-session.conf": REPO / "sessions/systemd/autostart-filters/app-org.kde.xwaylandvideobridge@autostart.service.d/10-niri-session.conf",
     "/usr/lib/systemd/user/app-org.kde.discover.notifier@autostart.service.d/10-niri-session.conf": REPO / "sessions/systemd/autostart-filters/app-org.kde.discover.notifier@autostart.service.d/10-niri-session.conf",
@@ -53,8 +54,33 @@ MANAGED_FILES = {
     "/etc/niri/rules.kdl": REPO / "niri/rules.kdl",
     "/etc/niri/autostart.kdl": REPO / "niri/autostart.kdl",
 }
+KDE_SESSION_ONLY_UNITS = (
+    "akonadi_control.service",
+    "kde-baloo.service",
+    "kunifiedpush-distributor.service",
+    "plasma-gmenudbusmenuproxy.service",
+    "plasma-kaccess.service",
+    "plasma-kactivitymanagerd.service",
+    "plasma-kded6.service",
+    "plasma-ksmserver.service",
+    "plasma-kwin_wayland.service",
+    "plasma-plasmashell.service",
+    "plasma-polkit-agent.service",
+    "plasma-powerdevil.service",
+    "plasma-xdg-desktop-portal-kde.service",
+    "plasma-xembedsniproxy.service",
+)
+KDE_AUTOSTART_UNITS = (
+    "app-org.kde.discover.notifier@autostart.service",
+    "app-org.kde.kalendarac@autostart.service",
+    "app-org.kde.kdeconnect.daemon@autostart.service",
+    "app-org.kde.xwaylandvideobridge@autostart.service",
+)
+for _kde_unit in (*KDE_SESSION_ONLY_UNITS, *KDE_AUTOSTART_UNITS):
+    MANAGED_FILES[f"/usr/lib/systemd/user/{_kde_unit}.d/10-niri-session.conf"] = REPO / "sessions/systemd/kde-session-only.conf"
 MANAGED_LINKS = {
     "/usr/lib/systemd/user/graphical-session.target.wants/asahi-niri-polkit-agent.service": "../asahi-niri-polkit-agent.service",
+    "/usr/lib/systemd/user/graphical-session.target.wants/asahi-niri-wayland-ready.service": "../asahi-niri-wayland-ready.service",
     "/usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service": "../asahi-quickshell.service",
 }
 STATE_PATH = "/var/lib/asahi-system/niri-performance/state.json"
@@ -367,7 +393,24 @@ def installed_rpm_packages() -> set[str]:
     return installed_rpm_packages_for((*PACKAGES, QUICKSHELL_PACKAGE))
 
 
-def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, str] | None = None, machine: str | None = None) -> None:
+def install_locked_packages(engine: dict[str, str]) -> None:
+    if shutil.which("dnf") is None:
+        raise InstallError("dnf was not found")
+    if not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key"):
+        raise InstallError("Quickshell engine package lock is incomplete")
+    try:
+        subprocess.run([
+            "dnf", "install", "-y", "--setopt=install_weak_deps=False",
+            f"--repofrompath=niri-plus-quickshell,{engine['repository']}", "--enablerepo=niri-plus-quickshell",
+            "--setopt=niri-plus-quickshell.gpgcheck=1", f"--setopt=niri-plus-quickshell.gpgkey={engine['gpg_key']}",
+            *PACKAGES, engine["nevra"],
+        ], check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise InstallError(f"DNF package transaction failed: {exc}") from exc
+
+
+def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, str] | None = None,
+                  machine: str | None = None, *, defer_packages: bool = False) -> None:
     release = os_release if os_release is not None else parse_os_release()
     arch = machine if machine is not None else platform.machine()
     errors = target_mismatches(release, arch)
@@ -403,20 +446,15 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
     )
     write_state(root, state)
     _, changed = install_files(root)
-    try:
-        repo_id = "niri-plus-quickshell"
-        subprocess.run([
-            "dnf", "install", "-y", "--setopt=install_weak_deps=False",
-            f"--repofrompath={repo_id},{engine['repository']}", f"--enablerepo={repo_id}",
-            f"--setopt={repo_id}.gpgcheck=1", f"--setopt={repo_id}.gpgkey={engine['gpg_key']}",
-            *PACKAGES, engine["nevra"],
-        ], check=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
-        rollback_files(root)
-        retained = load_state(root)
-        retained["packages_installed_by_us"] = state.get("packages_installed_by_us", [])
-        write_state(root, retained)
-        raise InstallError(f"DNF installation failed; session files were rolled back: {exc}") from exc
+    if not defer_packages:
+        try:
+            install_locked_packages(engine)
+        except InstallError as exc:
+            rollback_files(root)
+            retained = load_state(root)
+            retained["packages_installed_by_us"] = state.get("packages_installed_by_us", [])
+            write_state(root, retained)
+            raise InstallError(f"DNF installation failed; session files were rolled back: {exc}") from exc
     state = load_state(root)
     write_state(root, state)
     if "known_good_version" in state and "applied_version" not in state:
@@ -426,14 +464,16 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
     state.setdefault("quickshell", {})["expected_commit"] = lock["commit"]
     state["quickshell"].setdefault("known_good_commit", None)
     write_state(root, state)
-    reload_invoking_user_manager()
-    print("Installed the Niri session. Existing user services remain untouched.")
-    if not changed:
-        print("Session files were already current (idempotent run).")
-    missing = set(BASE_SERVICES) - installed_rpm_packages_for(BASE_SERVICES)
-    if missing:
-        print("WARNING: baseline audio/network packages not found; no service or package changes were made for them: " + ", ".join(sorted(missing)), file=sys.stderr)
-    print("Quickshell runtime/API and visual behavior remain M1_REQUIRED until a Niri login passes health checks.")
+    if not defer_packages:
+        reload_invoking_user_manager()
+    if not defer_packages:
+        print("Installed the Niri session. Existing user services remain untouched.")
+        if not changed:
+            print("Session files were already current (idempotent run).")
+        missing = set(BASE_SERVICES) - installed_rpm_packages_for(BASE_SERVICES)
+        if missing:
+            print("WARNING: baseline audio/network packages not found; no service or package changes were made for them: " + ", ".join(sorted(missing)), file=sys.stderr)
+        print("Quickshell runtime/API and visual behavior remain M1_REQUIRED until a Niri login passes health checks.")
 
 
 def reload_invoking_user_manager() -> None:

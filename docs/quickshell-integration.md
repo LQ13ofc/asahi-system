@@ -26,15 +26,16 @@ The generic `qs` autostart was removed; Niri+ owns process lifecycle.
 `55e92880d0aff75d235f283c839ec0990eaa9e17`, the reviewed head of Quickshell
 PR #3 with the NetworkManager-backed Wi-Fi indicator. It includes PR #2's
 session-owned lifecycle and no visual startup snippet. The fork is private, so cloning
-`asahi-system` needs GitHub access that can read both repositories. Initialize
-the submodule recursively before running the single bootstrap, for example:
-`git clone --recurse-submodules https://github.com/LQ13ofc/asahi-system.git`.
-Bootstrap
-checks the origin and exact commit and creates a symlink from
-`/usr/local/share/niri-plus/quickshell` to that external checkout. It copies
-the lock metadata, never visual source. `niri+ status` and `doctor` compare the
-installed git HEAD with the lock. A changed or absent checkout is reported,
-not silently repaired.
+`asahi-system` needs GitHub access that can read both repositories. The
+submodule may be initialized for development; installation does not trust its
+working tree. `sudo niri+ install` checks both Git URLs, resolves exact commit
+objects, and materializes a hash-verified snapshot from those objects. It
+installs that visual snapshot at `/usr/local/share/niri-plus/quickshell`, with a
+manifest recording repository, commit and blob hashes. This is outside the
+`asahi-system` source tree; no QML is copied into the system repository.
+`niri+ status` and `doctor` compare the installed snapshot manifest, files and
+commit with the lock. Missing, changed or divergent content is reported, not
+silently repaired.
 
 The current lock keeps the expected visual commit separate from the Niri+
 version and reserves `known_good_commit` in install state. `niri+ update` stays
@@ -102,16 +103,21 @@ and [python3-gobject Fedora 44](https://packages.fedoraproject.org/pkgs/pygobjec
 ## Session lifecycle
 
 The Fedora-packaged `niri-session`/`niri.service` remains the display-manager
-entry and session owner. `asahi-quickshell.service` is wanted by
-`graphical-session.target`, ordered after `graphical-session-pre.target`,
-`PartOf=graphical-session.target`, and conditioned on
-`XDG_CURRENT_DESKTOP=niri`. It executes the pinned external checkout through
-`qs --path`; systemd provides one unit instance, bounded restart-on-failure,
-stop on session exit, and journal logs (`journalctl --user -u
-asahi-quickshell.service`). `niri+ doctor` checks unit state, restart count,
-recent log availability and duplicate processes. No process starts from Plasma because
-its desktop environment fails the Niri condition. No Niri `spawn-at-startup`
-is added to either repository.
+entry and session owner. M1 logs showed `graphical-session-pre.target` can be
+reached while `niri.service` is still creating its Wayland display. Starting
+clients at that point caused Quickshell and LXQt PolicyKit to abort with no
+`wl_display`; both worked after manual restart. `asahi-niri-wayland-ready.service`
+now gates the session clients: it waits for the real socket and verifies a
+Wayland `wl_display.sync` response, imports the selected display name into the
+user manager/D-Bus environment, and exits. It has no fixed sleep or persistent
+poller. Quickshell and PolicyKit both `Requires=` and `After=` this readiness
+unit, are conditioned on `XDG_CURRENT_DESKTOP=niri`, and are `PartOf=`
+`graphical-session.target`. Their first start therefore waits for compositor
+readiness and they stop with the session. Quickshell retains one systemd-owned
+instance, bounded restart-on-failure, and journal logs (`journalctl --user -u
+asahi-quickshell.service`). `niri+ doctor` checks readiness wiring, unit state,
+restart count, logs and duplicate processes. No Niri `spawn-at-startup` is
+added to either repository.
 
 The service does not start during install. It becomes eligible with the next
 Niri graphical-session lifecycle. A user unit reload is requested without
@@ -131,21 +137,40 @@ fields to an `ExecCondition` for `$XDG_CURRENT_DESKTOP`, so with no desktop
 restriction it generates a unit eligible in Niri as well as Plasma. This is
 why a KDE-purpose component appeared in the first Niri run.
 
-Niri+ installs a drop-in for each of the four baseline KDE XDG autostarts
-(Discover notifier, Kalendar, KDE Connect and XWayland Video Bridge) with
-`ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE`. They are skipped before
-execution in Niri and remain eligible in Plasma. The packages, desktop files,
-Plasma services and autostart files are untouched; nothing is globally
-disabled or killed after launch. `niri+ status` and `doctor` warn if these or
-other known KDE background processes/services are active in Niri. Akonadi,
-Baloo and Plasma session units are diagnosed but not globally masked; their
-actual Niri behavior remains M1_REQUIRED.
+Follow-up M1 logs confirmed the Video Bridge filter worked, but also found
+`kdeconnectd`, `kalendarac`, `akonadi_control` and multiple Akonadi agents
+resident in Niri. The Plasma baseline also records `plasma-keyboard`,
+`org_kde_powerdevil`, the KDE PolicyKit agent, the KWin Wayland wrapper and
+`startplasma-wayland`; the read-only doctor detects these process names even if
+their parent unit is no longer active. The parent causes were the baseline's
+KDE user services and generated XDG autostart units being eligible in any
+desktop: these generated entries had no KDE-only restriction, and direct user
+units had no session-specific condition. Niri+ now applies
+`ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE` to the four baseline XDG units
+(Discover notifier, Kalendar, KDE Connect and XWayland Video Bridge) and to
+direct background units in the baseline: Akonadi Control, Baloo,
+KUnifiedPush, and Plasma's menu proxy, accessibility, activity manager, kded,
+session manager, KWin, shell, PolicyKit, Powerdevil, KDE portal and XEmbed proxy.
+`PartOf=graphical-session.target` makes those background units stop at session
+exit. Plasma satisfies the condition and keeps its normal services. Packages,
+desktop files and global service configuration remain untouched; nothing is
+globally disabled or masked. D-Bus-activated KDE Wallet is retained for
+applications that need stored credentials, and an explicitly opened Konsole
+is not counted as a session leak.
+
+`niri+ status` and `doctor` inspect active KDE autostart/services and
+characteristic background process names, including Akonadi agents. They warn
+in Niri for unexpected KDE activity or a missing session filter, but report
+`NOT_APPLICABLE` in Plasma. A normal Niri logout was observed in the same M1
+logs (`quitting after confirming exit dialog`); subsequent Wayland loss was
+therefore expected. DRM/EDID/HDR/gamma warnings did not prevent Niri startup.
 
 ## Validation boundary
 
-Cloud tests can verify lock consistency, source path, systemd unit and drop-in
-text, idempotent managed-file backup/rollback, CLI output and the absence of
-Niri `spawn-at-startup` duplication. The M1 is still required to validate
+Cloud tests verify lock consistency, snapshot object hashes, concurrent source
+edits, non-interactive Git, transaction rollback/idempotence, Wayland socket
+handshake and target ordering, KDE filters and diagnostics, CLI output and the
+absence of Niri `spawn-at-startup` duplication. The M1 is still required to validate
 Quickshell 0.3.1 against this v0.2.1-oriented QML, Wayland surfaces, audio,
 network, Bluetooth, notifications, crash restart, process uniqueness, panel
 helpers and memory. First compare clean Niri-only idle against Niri+Quickshell

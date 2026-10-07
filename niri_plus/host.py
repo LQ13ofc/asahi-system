@@ -185,8 +185,10 @@ def niri_session_active() -> bool:
 
 KDE_BACKGROUND_PROCESSES = (
     "plasmashell", "kwin_wayland", "kded6", "ksmserver", "kalendarac",
-    "discovernotifier", "kdeconnectd", "akonadi_control", "akonadiserver",
-    "baloo_file", "powerdevil", "xwaylandvideobridge",
+    "discovernotifier", "discovernotifie", "kdeconnectd", "akonadi_control", "akonadiserver",
+    "akonadi_agent_server", "akonadi_maildispatcher_agent", "akonadi_indexing_agent",
+    "baloo_file", "powerdevil", "org_kde_powerdevil", "polkit-kde-auth",
+    "plasma-keyboard", "xwaylandvideobridge", "xwaylandvideobr", "kunifiedpush-distributor",
 )
 
 
@@ -197,13 +199,26 @@ def kde_processes(proc_root: pathlib.Path = pathlib.Path("/proc")) -> list[str]:
             if not entry.name.isdigit():
                 continue
             try:
-                args = (entry / "cmdline").read_bytes().decode(errors="replace").lower()
+                argv = [part.decode(errors="replace").lower()
+                        for part in (entry / "cmdline").read_bytes().split(b"\0") if part]
                 comm = (entry / "comm").read_text(encoding="utf-8").strip().lower()
-                executable = str((entry / "exe").resolve()).lower()
             except OSError:
                 continue
+            try:
+                executable = str((entry / "exe").resolve()).lower()
+            except OSError:
+                executable = ""
+            argv0 = pathlib.Path(argv[0]).name if argv else ""
+            process_names = {comm, pathlib.Path(executable).name, argv0}
             match = next((name for name in KDE_BACKGROUND_PROCESSES
-                          if name in args or name in comm or executable.endswith("/" + name)), None)
+                          if name in process_names), None)
+            if match is None:
+                if any(name.startswith("akonadi_") for name in process_names):
+                    match = "akonadi_agent"
+                elif any(name.startswith("kwin_wayland") for name in process_names):
+                    match = "kwin_wayland"
+                elif any(name.startswith("startplasma-") for name in process_names):
+                    match = "startplasma"
             if match:
                 processes.append(f"process:{match}")
     except OSError:
@@ -213,6 +228,10 @@ def kde_processes(proc_root: pathlib.Path = pathlib.Path("/proc")) -> list[str]:
 
 def kde_isolation_status(root: pathlib.Path, runner: Runner,
                          proc_root: pathlib.Path = pathlib.Path("/proc")) -> tuple[str, list[str]]:
+    # Import lazily to avoid the host/install module import cycle while making
+    # the installed filter set the single source of truth for this check.
+    from . import install
+
     if not niri_session_active():
         return "NOT_APPLICABLE", []
     result = run(["systemctl", "--user", "list-units", "--all", "--no-legend", "--no-pager"], runner)
@@ -224,22 +243,24 @@ def kde_isolation_status(root: pathlib.Path, runner: Runner,
         if len(fields) < 3 or fields[2] != "active":
             continue
         unit = fields[0]
-        if (unit.startswith("plasma-") or unit.startswith("app-org.kde.")
-                or unit in {"akonadi_control.service", "kde-baloo.service", "kunifiedpush-distributor.service"}):
+        if (unit.startswith("plasma-") or unit.endswith("@autostart.service") and unit.startswith("app-org.kde.")
+                or unit in {"akonadi_control.service", "kde-baloo.service", "kunifiedpush-distributor.service"}
+                or unit.startswith("akonadi_") and unit.endswith(".service")
+                or unit in {"kdeconnectd.service", "kalendarac.service", "discovernotifier.service",
+                            "xwaylandvideobridge.service"}):
+            if unit.startswith("app-org.kde.konsole@"):
+                continue  # An explicitly opened terminal is a user app, not a leaked autostart.
             active.append(unit)
     processes = kde_processes(proc_root)
     active.extend(processes)
-    filter_units = (
-        "app-org.kde.discover.notifier@autostart.service",
-        "app-org.kde.kalendarac@autostart.service",
-        "app-org.kde.kdeconnect.daemon@autostart.service",
-        "app-org.kde.xwaylandvideobridge@autostart.service",
-    )
+    filter_units = (*install.KDE_SESSION_ONLY_UNITS, *install.KDE_AUTOSTART_UNITS)
     missing_filters = []
     for unit in filter_units:
         dropin = root / f"usr/lib/systemd/user/{unit}.d/10-niri-session.conf"
         try:
-            valid = "ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE" in dropin.read_text(encoding="utf-8")
+            body = dropin.read_text(encoding="utf-8")
+            valid = ("ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE" in body
+                     and "PartOf=graphical-session.target" in body)
         except OSError:
             valid = False
         if not valid:
@@ -249,6 +270,33 @@ def kde_isolation_status(root: pathlib.Path, runner: Runner,
         active.extend(f"missing KDE-only filter:{unit}" for unit in missing_filters)
         return WARNING, active
     return (WARNING if active else OK), active
+
+
+def wayland_readiness_status(root: pathlib.Path) -> str:
+    helper = root / "usr/lib/systemd/user/asahi-niri-wayland-ready.service"
+    quickshell = root / "usr/lib/systemd/user/asahi-quickshell.service"
+    polkit = root / "usr/lib/systemd/user/asahi-niri-polkit-agent.service"
+    try:
+        helper_text = helper.read_text(encoding="utf-8")
+        quickshell_text = quickshell.read_text(encoding="utf-8")
+        polkit_text = polkit.read_text(encoding="utf-8")
+    except OSError:
+        return NOT_INSTALLED
+    requirements = [
+        "ConditionEnvironment=XDG_CURRENT_DESKTOP=niri" in helper_text,
+        "Before=graphical-session.target" in helper_text,
+        "PartOf=graphical-session.target" in helper_text,
+        "WantedBy=graphical-session.target" in helper_text,
+        "wayland_ready.py" in helper_text,
+    ]
+    for client in (quickshell_text, polkit_text):
+        requirements.extend((
+            "ConditionEnvironment=XDG_CURRENT_DESKTOP=niri" in client,
+            "Requires=asahi-niri-wayland-ready.service" in client,
+            "After=asahi-niri-wayland-ready.service" in client,
+            "PartOf=graphical-session.target" in client,
+        ))
+    return OK if all(requirements) else WARNING
 
 
 def installation_state(root: pathlib.Path) -> tuple[str, dict]:
@@ -365,6 +413,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         "managed_file_checksums": managed_files,
         "managed_links": managed_links,
         "polkit_unit": OK if installed_file(root, "/usr/lib/systemd/user/asahi-niri-polkit-agent.service") else NOT_INSTALLED,
+        "wayland_readiness": wayland_readiness_status(root),
         "portal_backend": OK if installed_file(root, "/usr/libexec/xdg-desktop-portal-gtk") else NOT_INSTALLED,
         "install_state": state_status,
         "known_good": state.get("verified_good_version", NOT_CONFIGURED),
@@ -412,7 +461,9 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
     if source_checkout["status"] not in (OK, "UNAVAILABLE"):
         report["warnings"].append(f"Niri+ source checkout health is {source_checkout['status']}.")
     if report["kde_isolation"][0] == WARNING:
-        report["warnings"].append("KDE/Plasma user units are active in the Niri session; inspect before changing anything.")
+        report["warnings"].append("Unexpected KDE/Plasma units or background processes are active in the Niri session.")
+    if report["wayland_readiness"] != OK:
+        report["warnings"].append("Niri graphical clients lack a verified Wayland readiness gate.")
     if report["launcher"] != OK:
         report["warnings"].append("Command+Space does not resolve to the Fuzzel launcher in the installed Niri config.")
     if report["configuration_validation"] == WARNING:

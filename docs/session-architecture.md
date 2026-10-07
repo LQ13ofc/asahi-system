@@ -1,6 +1,6 @@
 # Arquitetura planejada da sessão Niri
 
-Esta página descreve a arquitetura atual até B2 e separa o que já está integrado do que continua futuro. A primeira sessão real Niri+Quickshell iniciou no M1 e a barra apareceu; Command+Space, áudio/rede/suspend e a verificação completa dos autostarts KDE ainda precisam de confirmação no hardware.
+Esta página descreve a arquitetura atual até B2 e separa o que já está integrado do que continua futuro. Niri e a barra Quickshell iniciaram no M1. Logs posteriores confirmaram uma race em que clientes precediam o socket Wayland e processos KDE/PIM vazavam para Niri; os fixes Cloud estão no PR do release gate e ainda precisam de reteste no hardware.
 
 ```text
 Fedora Asahi
@@ -24,7 +24,7 @@ O conjunto base mantém Niri, foot, fuzzel, GTK portal e agente PolicyKit condic
 
 ## B2 — Quickshell integrado
 
-Na sessão Niri, `graphical-session.target` é dono da unidade `asahi-quickshell.service`, que inicia o checkout visual fixado. Quickshell não tem segundo `spawn-at-startup` nem é iniciado no Plasma. Os componentes base permanecem separados entre o engine instalado por Niri+ e o código visual no repo quickshell-. Jogos e Steam podem rodar diretamente nessa sessão normal, sem serem chamados de Gaming Mode.
+Na sessão Niri, `graphical-session.target` é dono de `asahi-niri-wayland-ready.service`, `asahi-niri-polkit-agent.service` e `asahi-quickshell.service`. O helper confirma handshake no socket Wayland real antes dos clientes; Quickshell usa o snapshot imutável do commit pinado, fora do source tree de `asahi-system`. Não há segundo `spawn-at-startup`. Jogos e Steam podem rodar diretamente nessa sessão normal, sem serem chamados de Gaming Mode.
 
 Xwayland-satellite continua on-demand pelo mecanismo do Niri, não como processo permanente presumido. O ciclo de vida dos painéis, polling e serviços Quickshell deve ser medido antes de qualquer suspensão ou lazy loading.
 
@@ -68,4 +68,4 @@ Compare RAM/PSS, CPU, GPU, FPS médio, 1% low, frametime, swap, PSI, latency e e
 
 Plasma não é alvo de otimização. Fica instalado apenas como recovery/fallback durante o desenvolvimento. Use seu baseline para entender o estado atual, identificar processos KDE que não devem aparecer em Niri e medir ganhos da nova sessão; não desenhe tuning para KDE/Plasma.
 
-O pin proposto é o gitlink do submodule mais `integration/quickshell.lock.json`, ambos no commit `55e92880d0aff75d235f283c839ec0990eaa9e17` (PR #3, ainda aberto). O rollback do updater de origem ainda não existe; `niri+ update` continua stub seguro. A auditoria encontrou um limite TOCTOU: `sudo niri+ install` executa o bootstrap mutável do checkout do usuário como root. Não aplique install nem faça merge do PR #8 até o updater usar snapshot imutável verificado. Nenhum pacote ou serviço global é removido ou desativado por esta documentação.
+O pin continua sendo o gitlink e `integration/quickshell.lock.json`, ambos no commit `55e92880d0aff75d235f283c839ec0990eaa9e17` (PR #3). O PR #8 implementa fetch pelo dono do checkout, snapshot dos commits exatos, aplicação transacional e os gates de Wayland/KDE; ainda não foi mergeado. `niri+ update` continua stub seguro. Nenhum pacote ou serviço global é removido ou desativado por esta documentação.

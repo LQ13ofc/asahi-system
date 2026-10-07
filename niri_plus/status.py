@@ -21,6 +21,7 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
         ("Niri config validator", report["configuration_validation"]),
         ("Packaged session", report["session_package"]), ("Launcher (Command+Space)", report["launcher"]),
         ("Fuzzel executable", report["launcher_binary"]),
+        ("Wayland readiness", report.get("wayland_readiness", host.NOT_CONFIGURED)),
         *report["core"].items()))
     lines.append("\nSystem")
     lines.extend(f"  {name:22} {value}" for name, value in report["system"].items())
@@ -37,7 +38,7 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
                   f"  {'Installed state pin':22} {qs['state_pin_status']} ({qs['state_expected_commit']})",
                   f"  {'Known-good commit':22} {qs['known_good_commit']}",
                   f"  {'Dirty checkout':22} {'clean' if qs['dirty'] is False else 'WARNING' if qs['dirty'] is True else 'UNAVAILABLE'}",
-                  f"  {'Runtime symlink':22} {qs['runtime_link_status']}",
+                  f"  {'Runtime snapshot':22} {qs['runtime_link_status']}",
                   f"  {'Lifecycle':22} {qs['lifecycle']} ({qs['lifecycle_detail']})",
                   f"  {'Engine compatibility':22} {qs['compatibility']}"])
     lines.extend([f"  {'Asahi runtime checks':22} {report['m1_checks']}",
@@ -65,7 +66,8 @@ def overall_state(report: dict, niri_active: bool = False) -> str:
                 "OK" if report["fedora_version"] == "44" else "WARNING", report["niri"]["status"], report["session"],
                 report["session_package"], report["configuration"], report["launcher"],
                 report["configuration_validation"], report["launcher_binary"],
-                report["install_state"], report["rollback_state"], report["source_checkout"]["status"], report["quickshell"]["status"],
+                report["install_state"], report["rollback_state"], report.get("wayland_readiness", host.NOT_CONFIGURED),
+                report["source_checkout"]["status"], report["quickshell"]["status"],
                 *report["core"].values(), *report["system"].values()]
     required.extend(report["managed_file_checksums"].values())
     required.extend(report.get("managed_links", {}).values())

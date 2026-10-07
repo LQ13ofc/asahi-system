@@ -1,272 +1,230 @@
 #!/usr/bin/env python3
-"""Install the niri+ CLI and its read-only benchmark/runtime assets.
+"""Install the Niri+ CLI/runtime from a verified, closed Git snapshot.
 
-The default is a dry-run. Apply with sudo only after reviewing this script.
-It does not install Niri or change the graphical session.
+Public use is a read-only dry run. The privileged apply form is internal to
+``sudo niri+ install`` and requires its root-owned snapshot manifest.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
-import platform
-import pwd
-import re
 import shutil
 import sys
 import tempfile
-import subprocess
 from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-QUICKSHELL_SOURCE = ROOT / "external/quickshell"
+sys.path.insert(0, str(ROOT))
+
 LIB = pathlib.Path("/usr/local/lib/niri-plus")
 DATA = pathlib.Path("/usr/local/share/niri-plus")
 BIN = pathlib.Path("/usr/local/bin/niri+")
 STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
-
-
-def normalize_repository(value: str) -> str:
-    value = value.strip().lower()
-    value = re.sub(r"^git@github\.com:", "https://github.com/", value)
-    value = re.sub(r"^ssh://git@github\.com/", "https://github.com/", value)
-    return value.rstrip("/").removesuffix(".git")
-
-
-def check_no_symlink_parents(path: pathlib.Path) -> None:
-    current = pathlib.Path("/")
-    for part in path.absolute().parts[1:]:
-        current = current / part
-        if current.is_symlink():
-            raise RuntimeError(f"managed path has a symlinked parent: {current}")
+BACKUPS = pathlib.Path("/var/lib/niri-plus/bootstrap-backups")
+EXPECTED_MANAGED = [str(LIB), str(DATA), str(BIN)]
 
 
 def launcher() -> str:
-    return """#!/usr/bin/python3
+    return '''#!/usr/bin/python3 -I
 import sys
 import os
 os.environ.setdefault("NIRI_PLUS_DATA_DIR", "/usr/local/share/niri-plus")
 sys.path.insert(0, "/usr/local/lib/niri-plus")
 from niri_plus.cli import main
 raise SystemExit(main())
-"""
+'''
 
 
-def git_as_checkout_owner(path: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run Git probes without elevating repository config/hooks to root."""
-    try:
-        metadata = path.stat()
-        account = pwd.getpwuid(metadata.st_uid)
-        groups = os.getgrouplist(account.pw_name, account.pw_gid)
-    except (OSError, KeyError) as exc:
-        raise RuntimeError(f"cannot determine checkout owner: {path}") from exc
-    env = os.environ.copy()
-    for key in tuple(env):
-        if key.startswith("GIT_"):
-            env.pop(key, None)
-    env.update({"HOME": account.pw_dir, "USER": account.pw_name,
-                "LOGNAME": account.pw_name, "GIT_TERMINAL_PROMPT": "0"})
-    command = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-               "-C", str(path), *args]
-    options = {"user": account.pw_uid, "group": account.pw_gid, "extra_groups": groups} if os.geteuid() != account.pw_uid else {}
-    return subprocess.run(command, check=True, text=True, capture_output=True, env=env, **options)
+def check_no_symlink_parents(path: pathlib.Path) -> None:
+    current = pathlib.Path("/")
+    for part in path.absolute().parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise RuntimeError(f"managed path has a symlinked parent: {current}")
 
 
-def copy_tree(source: pathlib.Path, destination: pathlib.Path) -> None:
-    shutil.copytree(source, destination, symlinks=True)
+def _signature(path: pathlib.Path):
+    if path.is_symlink():
+        return ("link", os.readlink(path))
+    if path.is_file():
+        return ("file", hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mode & 0o777)
+    if path.is_dir():
+        result = []
+        for child in sorted(path.iterdir(), key=lambda item: item.name):
+            result.append((child.name, _signature(child)))
+        return ("dir", tuple(result))
+    return ("absent",)
 
 
-def validate_quickshell_source() -> tuple[str, dict]:
-    lock = json.loads((ROOT / "integration/quickshell.lock.json").read_text(encoding="utf-8"))
-    if lock.get("schema_version") != 1 or lock.get("checkout") != "external/quickshell":
-        raise RuntimeError("Quickshell lock has an unknown schema or checkout path")
-    try:
-        commit = git_as_checkout_owner(QUICKSHELL_SOURCE, "rev-parse", "--verify", "HEAD").stdout.strip()
-        remote = git_as_checkout_owner(QUICKSHELL_SOURCE, "remote", "get-url", "origin").stdout.strip()
-        dirty = git_as_checkout_owner(QUICKSHELL_SOURCE, "status", "--porcelain", "--untracked-files=all").stdout
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise RuntimeError("initialize the private Quickshell submodule with authenticated Git access before bootstrap") from exc
-    if commit != lock.get("commit"):
-        raise RuntimeError(f"Quickshell submodule is not at its locked commit ({commit}; expected {lock.get('commit')})")
-    if normalize_repository(remote) != normalize_repository(lock.get("repository", "")):
-        raise RuntimeError("Quickshell submodule origin does not match the repository in the lock file")
-    if dirty:
-        raise RuntimeError("Quickshell submodule has local modifications; bootstrap requires the exact clean pinned commit")
-    return commit, lock
+def _copy(source: pathlib.Path, destination: pathlib.Path) -> None:
+    if source.is_dir() and not source.is_symlink():
+        shutil.copytree(source, destination, symlinks=True, copy_function=shutil.copy2)
+    elif source.is_symlink():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination, follow_symlinks=False)
 
 
-def validate_system_source() -> tuple[str, str]:
-    if not (ROOT / ".git").exists():
-        raise RuntimeError("bootstrap requires a Git checkout of LQ13ofc/asahi-system main")
-    try:
-        origin = git_as_checkout_owner(ROOT, "remote", "get-url", "origin").stdout.strip()
-        branch = git_as_checkout_owner(ROOT, "branch", "--show-current").stdout.strip()
-        dirty = git_as_checkout_owner(ROOT, "status", "--porcelain", "--untracked-files=all").stdout
-        head = git_as_checkout_owner(ROOT, "rev-parse", "HEAD").stdout.strip()
-        upstream = git_as_checkout_owner(ROOT, "rev-parse", "refs/remotes/origin/main").stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise RuntimeError("could not verify the system source checkout and cached origin/main") from exc
-    if normalize_repository(origin) != "https://github.com/lq13ofc/asahi-system":
-        raise RuntimeError(f"unexpected asahi-system origin: {origin}")
-    if branch != "main":
-        raise RuntimeError(f"bootstrap requires branch main, found {branch or 'detached HEAD'}")
-    if dirty:
-        raise RuntimeError("asahi-system checkout has local changes; bootstrap requires a clean tree")
-    if not head or head != upstream:
-        raise RuntimeError("asahi-system HEAD must equal cached origin/main before bootstrap")
-    return head, branch
+def _remove(path: pathlib.Path) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
 
 
-def install() -> None:
-    if os.geteuid() != 0:
-        raise RuntimeError("bootstrap --apply requires root; use sudo ./scripts/bootstrap-niri-plus --apply")
-    system_commit, system_branch = validate_system_source()
-    quickshell_commit, quickshell_lock = validate_quickshell_source()
-    for path in (STATE.parent, LIB.parent, DATA.parent, BIN.parent,
-                 pathlib.Path("/var/lib/niri-plus/bootstrap-backups")):
+def _validate_ownership() -> tuple[dict, bool]:
+    for path in (STATE.parent, LIB.parent, DATA.parent, BIN.parent, BACKUPS):
         check_no_symlink_parents(path)
     if STATE.is_symlink():
         raise RuntimeError("bootstrap ownership state is a symlink; refusing to follow it")
+    state = {}
     if STATE.exists():
         metadata = STATE.stat()
         if not STATE.is_file() or metadata.st_uid != 0 or metadata.st_mode & 0o022:
             raise RuntimeError("bootstrap ownership state has unsafe type, owner, or permissions")
-    existing = any(path.exists() for path in (LIB, DATA, BIN))
-    state = {}
-    if STATE.exists():
         state = json.loads(STATE.read_text(encoding="utf-8"))
-        expected_paths = [str(LIB), str(DATA), str(BIN)]
-        if state.get("schema_version") != 1 or state.get("managed") != expected_paths:
+        if state.get("schema_version") not in (1, 2) or state.get("managed") != EXPECTED_MANAGED:
             raise RuntimeError("bootstrap ownership state is unknown; refusing to overwrite destinations")
-    elif existing:
-        raise RuntimeError("Niri+ bootstrap destinations already exist without ownership state; refusing to overwrite them")
+    elif any(path.exists() or path.is_symlink() for path in (LIB, DATA, BIN)):
+        raise RuntimeError("Niri+ bootstrap destinations exist without ownership state")
     if any(path.is_symlink() for path in (LIB, DATA, BIN)):
         raise RuntimeError("a managed bootstrap destination is a symlink; refusing to replace it")
+    return state, bool(state)
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ") + f"-{os.getpid()}"
-    backup_root = pathlib.Path("/var/lib/niri-plus/bootstrap-backups") / stamp
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    state_content = json.dumps({
-        "schema_version": 1,
-        "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
-        "backup": str(backup_root) if existing else None,
-        "managed": [str(LIB), str(DATA), str(BIN)],
-        "source_root": str(ROOT.resolve()),
-        "source_repository": "https://github.com/LQ13ofc/asahi-system.git",
-        "source_branch": system_branch,
-        "source_commit": system_commit,
-        "quickshell_repository": quickshell_lock["repository"],
-        "quickshell_expected_commit": quickshell_commit,
-        "quickshell_source": str(QUICKSHELL_SOURCE.resolve()),
-    }, indent=2) + "\n"
-    fd, temporary_state = tempfile.mkstemp(prefix=".bootstrap-state-", dir=STATE.parent)
+
+def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -> None:
+    if os.geteuid() != 0:
+        raise RuntimeError("snapshot apply requires root")
+    from niri_plus import source_update
+
+    manifest = source_update.validate_snapshot(snapshot_root, manifest_path)
+    system = manifest["system"]
+    quickshell = manifest["quickshell"]
+    if system.get("branch") != "main" or system.get("repository") != source_update.EXPECTED_REPOSITORY:
+        raise RuntimeError("snapshot is not from the approved asahi-system main source")
+    if quickshell.get("repository") != source_update.EXPECTED_QUICKSHELL_REPOSITORY:
+        raise RuntimeError("snapshot Quickshell origin is not approved")
+    version = (snapshot_root / "VERSION").read_text(encoding="utf-8").strip()
+    if not version:
+        raise RuntimeError("snapshot Niri+ VERSION is empty")
+    lock = json.loads((snapshot_root / "integration/quickshell.lock.json").read_text(encoding="utf-8"))
+    if lock.get("commit") != quickshell.get("commit") or lock.get("repository") != quickshell.get("repository"):
+        raise RuntimeError("snapshot Quickshell lock and fetched visual snapshot disagree")
+
+    state, has_state = _validate_ownership()
+    changed = any(not path.exists() for path in (LIB, DATA, BIN))
+    stage = pathlib.Path(tempfile.mkdtemp(prefix=".niri-plus-stage-", dir="/usr/local"))
+    state_tmp = None
     try:
+        lib_stage = stage / "lib/niri-plus"
+        data_stage = stage / "share/niri-plus"
+        lib_stage.mkdir(parents=True)
+        _copy(snapshot_root / "niri_plus", lib_stage / "niri_plus")
+        pycache = lib_stage / "niri_plus/__pycache__"
+        if pycache.exists():
+            shutil.rmtree(pycache)
+        data_stage.mkdir(parents=True)
+        _copy(snapshot_root / "VERSION", data_stage / "VERSION")
+        _copy(snapshot_root / "niri", data_stage / "niri")
+        _copy(snapshot_root / "sessions", data_stage / "sessions")
+        _copy(snapshot_root / "integration", data_stage / "integration")
+        (data_stage / "scripts").mkdir()
+        collector = snapshot_root / "scripts/collect-performance-baseline"
+        _copy(collector, data_stage / "scripts/collect-performance-baseline")
+        (data_stage / "scripts/collect-performance-baseline").chmod(0o755)
+        _copy(snapshot_root / "external/quickshell", data_stage / "quickshell")
+        (data_stage / "quickshell.snapshot.json").write_text(json.dumps({
+            "schema_version": 1,
+            "repository": quickshell["repository"],
+            "commit": quickshell["commit"],
+            "files": quickshell["files"],
+        }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        bin_stage = stage / "niri+"
+        bin_stage.write_text(launcher(), encoding="utf-8")
+        bin_stage.chmod(0o755)
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ") + f"-{os.getpid()}"
+        backup = None
+        if has_state:
+            differences = any(_signature(current) != _signature(staged) for current, staged in (
+                (LIB, lib_stage), (DATA, data_stage), (BIN, bin_stage),
+            ))
+            changed = differences
+            if differences:
+                backup_root = BACKUPS / stamp
+                backup_root.mkdir(parents=True, exist_ok=False)
+                for current, label in ((LIB, "lib"), (DATA, "share"), (BIN, "bin")):
+                    if current.exists() or current.is_symlink():
+                        _copy(current, backup_root / label)
+                backup = str(backup_root)
+            else:
+                backup = state.get("backup")
+        else:
+            changed = True
+
+        source_root = manifest.get("source_root")
+        if not isinstance(source_root, str) or not source_root.startswith("/"):
+            raise RuntimeError("snapshot does not identify the configured user source checkout")
+        new_state = {
+            "schema_version": 2,
+            "version": version,
+            "backup": backup,
+            "managed": EXPECTED_MANAGED,
+            "source_root": source_root,
+            "source_repository": system["repository"],
+            "source_branch": system["branch"],
+            "source_commit": system["commit"],
+            "snapshot_sha256": manifest["snapshot_sha256"],
+            "quickshell_repository": quickshell["repository"],
+            "quickshell_expected_commit": quickshell["commit"],
+            "quickshell_source": str(DATA / "quickshell"),
+        }
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        fd, state_tmp = tempfile.mkstemp(prefix=".bootstrap-state-", dir=STATE.parent)
         with os.fdopen(fd, "w", encoding="utf-8") as output:
-            output.write(state_content)
+            json.dump(new_state, output, sort_keys=True, indent=2)
+            output.write("\n")
             output.flush()
             os.fsync(output.fileno())
             os.fchmod(output.fileno(), 0o644)
-    except Exception:
-        if os.path.exists(temporary_state):
-            os.unlink(temporary_state)
-        raise
 
-    replaced = []
-    if existing:
-        backup_root.mkdir(parents=True, exist_ok=False)
-        managed_paths = ((LIB, "lib"), (DATA, "share"), (BIN, "bin"))
-        for path, label in managed_paths:
-            if path.exists() or path.is_symlink():
-                saved = backup_root / label
-                if path.is_dir() and not path.is_symlink():
-                    copy_tree(path, saved)
-                else:
-                    saved.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(path, saved, follow_symlinks=False)
-                replaced.append(str(saved))
-
-    staging = pathlib.Path(tempfile.mkdtemp(prefix=".niri-plus-bootstrap-", dir="/usr/local"))
-    try:
-        lib_stage = staging / "lib/niri-plus"
-        data_stage = staging / "share/niri-plus"
-        lib_stage.mkdir(parents=True)
-        copy_tree(ROOT / "niri_plus", lib_stage / "niri_plus")
-        (lib_stage / "niri_plus/__pycache__").exists() and shutil.rmtree(lib_stage / "niri_plus/__pycache__")
-        data_stage.mkdir(parents=True)
-        shutil.copy2(ROOT / "VERSION", data_stage / "VERSION")
-        copy_tree(ROOT / "niri", data_stage / "niri")
-        copy_tree(ROOT / "sessions", data_stage / "sessions")
-        copy_tree(ROOT / "integration", data_stage / "integration")
-        (data_stage / "scripts").mkdir()
-        shutil.copy2(ROOT / "scripts/collect-performance-baseline", data_stage / "scripts/collect-performance-baseline")
-        data_stage.joinpath("scripts/collect-performance-baseline").chmod(0o755)
-        for target in (LIB, DATA):
-            if target.exists():
-                shutil.rmtree(target)
-        LIB.parent.mkdir(parents=True, exist_ok=True)
-        DATA.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(lib_stage, LIB)
-        os.replace(data_stage, DATA)
-        quickshell_link = DATA / "quickshell"
-        if quickshell_link.exists() or quickshell_link.is_symlink():
-            if quickshell_link.is_dir() and not quickshell_link.is_symlink():
-                shutil.rmtree(quickshell_link)
-            else:
-                quickshell_link.unlink()
-        quickshell_link.symlink_to(QUICKSHELL_SOURCE.resolve(), target_is_directory=True)
-        bin_stage = staging / "niri+"
-        bin_stage.write_text(launcher(), encoding="utf-8")
-        bin_stage.chmod(0o755)
-        if BIN.exists() or BIN.is_symlink():
-            BIN.unlink()
-        BIN.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(bin_stage, BIN)
-        os.replace(temporary_state, STATE)
-    except Exception:
-        for path, label in ((LIB, "lib"), (DATA, "share"), (BIN, "bin")):
-            saved = backup_root / label
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            elif path.exists() or path.is_symlink():
-                path.unlink()
-            if saved.is_dir() and not saved.is_symlink():
-                copy_tree(saved, path)
-            elif saved.exists() or saved.is_symlink():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(saved, path, follow_symlinks=False)
-        raise
+        if changed:
+            for current, staged in ((LIB, lib_stage), (DATA, data_stage), (BIN, bin_stage)):
+                current.parent.mkdir(parents=True, exist_ok=True)
+                _remove(current)
+                os.replace(staged, current)
+        os.replace(state_tmp, STATE)
+        state_tmp = None
+        print(f"Installed Niri+ CLI {version}; asahi-system {system['commit'][:12]}; Quickshell {quickshell['commit'][:12]}.")
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
-        if os.path.exists(temporary_state):
-            os.unlink(temporary_state)
-    print(f"Installed Niri+ CLI { (ROOT / 'VERSION').read_text(encoding='utf-8').strip() } at {BIN}")
-    print("No Niri packages or graphical session files were installed.")
-    if replaced:
-        print(f"Previous Niri+ CLI files were copied to {backup_root}")
+        shutil.rmtree(stage, ignore_errors=True)
+        if state_tmp and os.path.exists(state_tmp):
+            os.unlink(state_tmp)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--apply", action="store_true", help="install the CLI; requires root")
+    parser.add_argument("--apply", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--snapshot-root", type=pathlib.Path, help=argparse.SUPPRESS)
+    parser.add_argument("--snapshot-manifest", type=pathlib.Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not args.apply:
-        print("Niri+ CLI bootstrap dry-run (no host changes)")
-        print(f"Version: {(ROOT / 'VERSION').read_text(encoding='utf-8').strip()}")
+        print("Niri+ bootstrap dry-run (no host changes)")
         print(f"Destinations: {LIB}, {DATA}, {BIN}")
-        try:
-            system_commit, _ = validate_system_source()
-            print(f"asahi-system main: {system_commit}")
-            commit, _ = validate_quickshell_source()
-            print(f"Quickshell submodule pin: {commit}")
-        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-            print(f"Quickshell submodule: not ready ({exc})")
-        print("To apply: sudo ./scripts/bootstrap-niri-plus --apply")
+        print("Apply only through: sudo niri+ install")
         return 0
+    if not args.snapshot_root or not args.snapshot_manifest:
+        print("bootstrap --apply requires a verified snapshot; use sudo niri+ install", file=sys.stderr)
+        return 2
     try:
-        install()
-    except (OSError, RuntimeError, ValueError) as exc:
+        install_snapshot(args.snapshot_root, args.snapshot_manifest)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(f"bootstrap failed: {exc}", file=sys.stderr)
         return 2
     return 0

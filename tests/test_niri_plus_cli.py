@@ -3,13 +3,14 @@ import io
 import json
 import pathlib
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, cli, doctor, host, install_command, quickshell, rollback, source_update, status
+from niri_plus import benchmark, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -55,6 +56,7 @@ class NiriPlusCliTests(unittest.TestCase):
             "source_checkout": {"status": "OK"}, "quickshell": {"status": "OK", "processes": {"count": 1, "managed_count": 1}},
             "core": {"all": "OK"}, "system": {"all": "OK"},
             "managed_file_checksums": {}, "kde_isolation": ("OK", []),
+            "wayland_readiness": host.OK,
         }
         self.assertEqual(status.overall_state(report, niri_active=True), "M1_REQUIRED")
         report["configuration_validation"] = host.WARNING
@@ -75,16 +77,10 @@ class NiriPlusCliTests(unittest.TestCase):
             root = pathlib.Path(temp) / "host"
             proc = pathlib.Path(temp) / "proc"
             proc.mkdir()
-            filters = (
-                "app-org.kde.discover.notifier@autostart.service",
-                "app-org.kde.kalendarac@autostart.service",
-                "app-org.kde.kdeconnect.daemon@autostart.service",
-                "app-org.kde.xwaylandvideobridge@autostart.service",
-            )
-            for unit in filters:
+            for unit in (*install.KDE_SESSION_ONLY_UNITS, *install.KDE_AUTOSTART_UNITS):
                 dropin = root / "usr/lib/systemd/user" / f"{unit}.d/10-niri-session.conf"
                 dropin.parent.mkdir(parents=True, exist_ok=True)
-                dropin.write_text("[Unit]\nConditionEnvironment=XDG_CURRENT_DESKTOP=KDE\n")
+                dropin.write_text("[Unit]\nConditionEnvironment=XDG_CURRENT_DESKTOP=KDE\nPartOf=graphical-session.target\n")
             def runner(args, **kwargs):
                 return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
             with mock.patch.dict("os.environ", {"NIRI_SOCKET": "/tmp/niri-test.sock", "XDG_CURRENT_DESKTOP": "niri"}):
@@ -102,6 +98,54 @@ class NiriPlusCliTests(unittest.TestCase):
                 state, names = host.kde_isolation_status(root, runner, proc)
                 self.assertEqual(state, host.WARNING)
                 self.assertIn("process:xwaylandvideobridge", names)
+
+                bridge.rename(proc / "old")
+                shutil.rmtree(proc / "old")
+                agent = proc / "124"
+                agent.mkdir()
+                (agent / "cmdline").write_bytes(b"/usr/libexec/akonadi_maildispatcher_agent\0")
+                (agent / "comm").write_text("akonadi_maildispatcher_agent\n")
+                state, names = host.kde_isolation_status(root, runner, proc)
+                self.assertEqual(state, host.WARNING)
+                self.assertIn("process:akonadi_maildispatcher_agent", names)
+
+                shutil.rmtree(agent)
+                for pid, process_name in (("125", "plasma-keyboard"), ("126", "org_kde_powerdevil"),
+                                          ("127", "polkit-kde-authentication-agent-1"),
+                                          ("128", "kwin_wayland_wrapper"),
+                                          ("129", "startplasma-wayland")):
+                    entry = proc / pid
+                    entry.mkdir()
+                    (entry / "cmdline").write_bytes(f"/usr/libexec/{process_name}\0".encode())
+                    (entry / "comm").write_text(process_name[:15] + "\n")
+                state, names = host.kde_isolation_status(root, runner, proc)
+                self.assertEqual(state, host.WARNING)
+                for process in ("plasma-keyboard", "org_kde_powerdevil", "polkit-kde-auth",
+                                "kwin_wayland", "startplasma"):
+                    self.assertIn(f"process:{process}", names)
+
+    def test_kde_isolation_keeps_shared_wallet_and_open_konsole_out_of_warnings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp) / "host"
+            proc = pathlib.Path(temp) / "proc"
+            proc.mkdir()
+            for unit in (*install.KDE_SESSION_ONLY_UNITS, *install.KDE_AUTOSTART_UNITS):
+                dropin = root / "usr/lib/systemd/user" / f"{unit}.d/10-niri-session.conf"
+                dropin.parent.mkdir(parents=True, exist_ok=True)
+                dropin.write_text("[Unit]\nConditionEnvironment=XDG_CURRENT_DESKTOP=KDE\nPartOf=graphical-session.target\n")
+
+            active_shared_units = (
+                "app-org.kde.konsole@session.service loaded active running User-opened Konsole\n"
+                "dbus-org.kde.kwalletd6.service loaded active running KDE Wallet D-Bus service\n"
+            )
+
+            def runner(args, **kwargs):
+                return subprocess.CompletedProcess(args, 0, stdout=active_shared_units, stderr="")
+
+            with mock.patch.dict("os.environ", {"NIRI_SOCKET": "/tmp/niri-test.sock", "XDG_CURRENT_DESKTOP": "niri"}):
+                self.assertEqual(host.kde_isolation_status(root, runner, proc), (host.OK, []))
+            with mock.patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "KDE"}, clear=True):
+                self.assertEqual(host.kde_isolation_status(root, runner, proc), ("NOT_APPLICABLE", []))
 
     def test_quickshell_process_diagnostic_detects_unmanaged_duplicate_invocations(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -377,164 +421,6 @@ class NiriPlusCliTests(unittest.TestCase):
             report = host.host_report(root, machine="aarch64", runner=missing_runner)
             self.assertEqual(report["quickshell"]["state_pin_status"], host.WARNING)
             self.assertEqual(report["quickshell"]["status"], host.WARNING)
-
-    def test_source_update_ff_only_sequence_reaches_cached_origin_main(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp)
-            remote = root / "remote.git"
-            seed = root / "seed"
-            checkout = root / "checkout"
-            subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(remote)], check=True, capture_output=True)
-            subprocess.run(["git", "init", "--initial-branch=main", str(seed)], check=True, capture_output=True)
-            subprocess.run(["git", "-C", str(seed), "config", "user.email", "test@example.invalid"], check=True)
-            subprocess.run(["git", "-C", str(seed), "config", "user.name", "Test"], check=True)
-            (seed / "VERSION").write_text("0.1.1\n")
-            subprocess.run(["git", "-C", str(seed), "add", "VERSION"], check=True)
-            subprocess.run(["git", "-C", str(seed), "commit", "-qm", "initial"], check=True)
-            subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(remote)], check=True)
-            subprocess.run(["git", "-C", str(seed), "push", "-qu", "origin", "main"], check=True)
-            subprocess.run(["git", "clone", "-q", str(remote), str(checkout)], check=True)
-            # A user-owned checkout can contain executable hooks and a
-            # repository-local fsmonitor command. Source refresh must never
-            # execute either while invoked by `sudo niri+ install`.
-            hook_marker = root / "post-merge-ran"
-            hook_dir = checkout / ".git/hooks"
-            hook_dir.mkdir(exist_ok=True)
-            post_merge = hook_dir / "post-merge"
-            post_merge.write_text(f"#!/bin/sh\nprintf ran > {hook_marker}\n")
-            post_merge.chmod(0o755)
-            fsmonitor_marker = root / "fsmonitor-ran"
-            fsmonitor = root / "fsmonitor-helper"
-            fsmonitor.write_text(f"#!/bin/sh\nprintf ran > {fsmonitor_marker}\nprintf 'token\\n'\n")
-            fsmonitor.chmod(0o755)
-            subprocess.run(["git", "-C", str(checkout), "config", "core.fsmonitor", str(fsmonitor)], check=True)
-            (seed / "VERSION").write_text("0.1.2\n")
-            subprocess.run(["git", "-C", str(seed), "add", "VERSION"], check=True)
-            subprocess.run(["git", "-C", str(seed), "commit", "-qm", "update"], check=True)
-            subprocess.run(["git", "-C", str(seed), "push", "-qu", "origin", "main"], check=True)
-            head = source_update.refresh_source(checkout, expected_repository=str(remote))
-            current = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
-            self.assertEqual(head, current)
-            self.assertFalse(hook_marker.exists(), "source update must disable checkout Git hooks")
-            self.assertFalse(fsmonitor_marker.exists(), "source update must disable repository-local fsmonitor")
-
-    def test_privileged_git_probe_runs_as_checkout_owner_with_clean_git_environment(self):
-        with tempfile.TemporaryDirectory() as temp:
-            checkout = pathlib.Path(temp) / "checkout"
-            checkout.mkdir()
-            captured = {}
-
-            def runner(args, **kwargs):
-                captured.update(kwargs)
-                captured["args"] = args
-                return subprocess.CompletedProcess(args, 0, stdout="clean\n", stderr="")
-
-            with mock.patch.object(source_update.os, "geteuid", return_value=0), \
-                 mock.patch.dict(source_update.os.environ, {"GIT_TRACE": "/tmp/should-not-leak"}):
-                result = source_update._run_as_owner(
-                    checkout, ["git", "status"], runner, check=False, timeout=4
-                )
-            self.assertEqual(result.returncode, 0)
-            self.assertEqual(captured["user"], checkout.stat().st_uid)
-            self.assertEqual(captured["env"]["HOME"], str(pathlib.Path.home()))
-            self.assertNotIn("GIT_CONFIG_NOSYSTEM", captured["env"])
-            self.assertNotIn("GIT_TRACE", captured["env"])
-
-            bootstrap = runpy.run_path(str(ROOT / "scripts/bootstrap-niri-plus"))
-            with mock.patch.object(bootstrap["os"], "geteuid", return_value=0), \
-                 mock.patch.object(bootstrap["subprocess"], "run",
-                                  return_value=subprocess.CompletedProcess([], 0, stdout="ok", stderr="")) as run:
-                bootstrap["git_as_checkout_owner"](checkout, "status")
-            self.assertEqual(run.call_args.kwargs["user"], checkout.stat().st_uid)
-
-    def test_reexec_failure_is_reported_without_retrying(self):
-        with mock.patch.object(source_update.os, "execve", side_effect=FileNotFoundError("missing CLI")):
-            with self.assertRaisesRegex(source_update.SourceUpdateError, "could not be restarted"):
-                source_update.reexec_install()
-
-    def test_source_update_discovers_checkout_from_bootstrap_state(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp)
-            source = root / "asahi-system"
-            quickshell = source / "external/quickshell"
-            quickshell.mkdir(parents=True)
-            state = root / "bootstrap.json"
-            state.write_text(json.dumps({"quickshell_source": str(quickshell)}))
-            self.assertEqual(source_update.discover_source_root(state), source.resolve())
-
-    def test_source_update_rejects_wrong_origin_before_pull(self):
-        with tempfile.TemporaryDirectory() as temp:
-            source = pathlib.Path(temp) / "repo"
-            source.mkdir()
-            subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
-            subprocess.run(["git", "-C", str(source), "remote", "add", "origin", "https://example.invalid/not-asahi.git"], check=True)
-            with self.assertRaisesRegex(source_update.SourceUpdateError, "unexpected origin"):
-                source_update.refresh_source(source)
-
-    def test_source_update_refuses_dirty_tree_before_pull(self):
-        with tempfile.TemporaryDirectory() as temp:
-            source = pathlib.Path(temp) / "repo"
-            source.mkdir()
-            subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
-            subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
-            subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
-            (source / "VERSION").write_text("0.1.1\n")
-            subprocess.run(["git", "-C", str(source), "add", "VERSION"], check=True)
-            subprocess.run(["git", "-C", str(source), "commit", "-qm", "initial"], check=True)
-            subprocess.run(["git", "-C", str(source), "remote", "add", "origin", "https://github.com/LQ13ofc/asahi-system.git"], check=True)
-            (source / "dirty").write_text("local")
-            with self.assertRaisesRegex(source_update.SourceUpdateError, "local changes"):
-                source_update.refresh_source(source)
-
-    def test_bootstrap_requires_clean_official_main_at_cached_remote_head(self):
-        bootstrap = runpy.run_path(str(ROOT / "scripts/bootstrap-niri-plus"))
-        with tempfile.TemporaryDirectory() as temp:
-            source = pathlib.Path(temp) / "repo"
-            source.mkdir()
-            subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
-            subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
-            subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
-            (source / "VERSION").write_text("0.1.1\n")
-            subprocess.run(["git", "-C", str(source), "add", "VERSION"], check=True)
-            subprocess.run(["git", "-C", str(source), "commit", "-qm", "initial"], check=True)
-            subprocess.run(["git", "-C", str(source), "remote", "add", "origin", "git@github.com:LQ13ofc/asahi-system.git"], check=True)
-            head = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
-            subprocess.run(["git", "-C", str(source), "update-ref", "refs/remotes/origin/main", head], check=True)
-            validate_source = bootstrap["validate_system_source"]
-            validate_source.__globals__["ROOT"] = source
-            self.assertEqual(validate_source(), (head, "main"))
-            (source / "dirty").write_text("pending")
-            with self.assertRaisesRegex(RuntimeError, "local changes"):
-                validate_source()
-
-    def test_install_refreshes_and_reexecs_before_apply(self):
-        with mock.patch.object(install_command.os, "geteuid", return_value=0), \
-             mock.patch.object(install_command.install, "target_mismatches", return_value=[]), \
-             mock.patch.object(install_command.source_update, "refresh_and_bootstrap", return_value="a" * 40) as refresh, \
-             mock.patch.object(install_command.source_update, "reexec_install", side_effect=SystemExit(0)) as reexec:
-            with self.assertRaises(SystemExit):
-                install_command.run_install(dry_run=False)
-        refresh.assert_called_once()
-        reexec.assert_called_once()
-
-    def test_incompatible_host_refuses_before_self_update(self):
-        with mock.patch.object(install_command.os, "geteuid", return_value=0), \
-             mock.patch.object(install_command.install, "parse_os_release", return_value={"ID": "fedora", "VERSION_ID": "44"}), \
-             mock.patch.object(install_command.platform, "machine", return_value="x86_64"), \
-             mock.patch.object(install_command.source_update, "refresh_and_bootstrap") as refresh, \
-             contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(install_command.run_install(dry_run=False), 2)
-        refresh.assert_not_called()
-        self.assertIn("incompatible host", output.getvalue())
-
-    def test_install_skips_refresh_after_reexec(self):
-        with mock.patch.object(install_command.os, "geteuid", return_value=0), \
-             mock.patch.dict(install_command.os.environ, {"NIRI_PLUS_SELF_UPDATED": "1"}), \
-             mock.patch.object(install_command.install, "apply_install") as apply_install, \
-             mock.patch.object(install_command.source_update, "refresh_and_bootstrap") as refresh:
-            self.assertEqual(install_command.run_install(dry_run=False), 0)
-        apply_install.assert_called_once()
-        refresh.assert_not_called()
 
     def test_quickshell_report_detects_pinned_and_diverged_checkouts(self):
         with tempfile.TemporaryDirectory() as temp:

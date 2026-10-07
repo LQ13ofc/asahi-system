@@ -40,9 +40,32 @@ class NiriSessionTests(unittest.TestCase):
         unit = (ROOT / "sessions/systemd/asahi-niri-polkit-agent.service").read_text(encoding="utf-8")
         self.assertIn("ConditionEnvironment=XDG_CURRENT_DESKTOP=niri", unit)
         self.assertIn("PartOf=graphical-session.target", unit)
-        self.assertIn("After=graphical-session-pre.target", unit)
+        self.assertIn("Requires=asahi-niri-wayland-ready.service", unit)
+        self.assertIn("After=asahi-niri-wayland-ready.service", unit)
         self.assertIn("ExecStart=/usr/libexec/lxqt-policykit-agent", unit)
         self.assertNotIn("speakersafetyd", unit)
+
+    def test_wayland_readiness_gate_precedes_niri_graphical_clients(self):
+        ready = (ROOT / "sessions/systemd/asahi-niri-wayland-ready.service").read_text(encoding="utf-8")
+        self.assertIn("ConditionEnvironment=XDG_CURRENT_DESKTOP=niri", ready)
+        self.assertIn("After=graphical-session-pre.target", ready)
+        self.assertIn("Before=graphical-session.target", ready)
+        self.assertIn("PartOf=graphical-session.target", ready)
+        self.assertIn("WantedBy=graphical-session.target", ready)
+        self.assertIn("wayland_ready.py", ready)
+        ready_unit = configparser.ConfigParser()
+        ready_unit.read_string(ready)
+        self.assertEqual(ready_unit.get("Service", "Type"), "oneshot")
+        self.assertEqual(ready_unit.get("Service", "RemainAfterExit"), "yes")
+        self.assertEqual(ready_unit.get("Service", "TimeoutStartSec"), "25s")
+        self.assertFalse(ready_unit.has_option("Unit", "TimeoutStartSec"))
+        with tempfile.TemporaryDirectory() as temp:
+            host_root = pathlib.Path(temp)
+            unit_root = host_root / "usr/lib/systemd/user"
+            unit_root.mkdir(parents=True)
+            for name in ("asahi-niri-wayland-ready.service", "asahi-quickshell.service", "asahi-niri-polkit-agent.service"):
+                (unit_root / name).write_text((ROOT / "sessions/systemd" / name).read_text())
+            self.assertEqual(host.wayland_readiness_status(host_root), host.OK)
 
     def test_only_minimal_explicit_packages_are_requested(self):
         package_lines = [line.strip() for line in (ROOT / "packages/niri-performance.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
@@ -90,7 +113,8 @@ class NiriSessionTests(unittest.TestCase):
     def test_quickshell_lifecycle_and_no_niri_exec_once_duplication(self):
         unit = (ROOT / "sessions/systemd/asahi-quickshell.service").read_text()
         self.assertIn("ConditionEnvironment=XDG_CURRENT_DESKTOP=niri", unit)
-        self.assertIn("After=graphical-session-pre.target", unit)
+        self.assertIn("Requires=asahi-niri-wayland-ready.service", unit)
+        self.assertIn("After=asahi-niri-wayland-ready.service", unit)
         self.assertIn("PartOf=graphical-session.target", unit)
         self.assertIn("WantedBy=graphical-session.target", unit)
         self.assertIn("Restart=on-failure", unit)
@@ -117,11 +141,25 @@ class NiriSessionTests(unittest.TestCase):
                     for path in installer.MANAGED_FILES if "@autostart.service.d/" in path}
         self.assertEqual(observed, filtered)
 
+    def test_baseline_kde_background_units_are_scoped_to_kde_session(self):
+        baseline = (ROOT / "hardware/mba-m1-8gb/baseline/user-services.txt").read_text(encoding="utf-8")
+        observed = {line.split()[0] for line in baseline.splitlines() if line.strip()}
+        common = (ROOT / "sessions/systemd/kde-session-only.conf").read_text(encoding="utf-8")
+        self.assertIn("ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE", common)
+        self.assertIn("PartOf=graphical-session.target", common)
+        for unit in installer.KDE_SESSION_ONLY_UNITS:
+            with self.subTest(unit=unit):
+                self.assertIn(unit, observed)
+                self.assertIn(f"/usr/lib/systemd/user/{unit}.d/10-niri-session.conf", installer.MANAGED_FILES)
+        self.assertNotIn("systemctl disable", common)
+        self.assertNotIn("systemctl mask", common)
+
     def test_quickshell_unit_is_session_owned_and_restart_bounded(self):
         unit = (ROOT / "sessions/systemd/asahi-quickshell.service").read_text(encoding="utf-8")
         for required in (
             "ConditionEnvironment=XDG_CURRENT_DESKTOP=niri",
-            "After=graphical-session-pre.target",
+            "Requires=asahi-niri-wayland-ready.service",
+            "After=asahi-niri-wayland-ready.service",
             "PartOf=graphical-session.target",
             "StartLimitIntervalSec=60",
             "StartLimitBurst=5",

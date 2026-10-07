@@ -2,7 +2,8 @@
 Description=PolicyKit authentication agent for the asahi-system Niri session
 ConditionEnvironment=XDG_CURRENT_DESKTOP=niri
 PartOf=graphical-session.target
-After=graphical-session-pre.target
+Requires=asahi-niri-wayland-ready.service
+After=asahi-niri-wayland-ready.service
 
 [Service]
 Type=exec
