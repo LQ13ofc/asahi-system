@@ -470,8 +470,13 @@ def _fetch_commit(source_root: pathlib.Path, git_dir: pathlib.Path, repository: 
 
 
 def _create_git_dir(source_root: pathlib.Path, git_dir: pathlib.Path, runner: Runner) -> None:
+    # The parent temporary directory is handed to the checkout owner by
+    # resolved_snapshot(). Let Git create the bare repository itself as that
+    # user. Pre-creating git_dir as root makes Git fail with "File exists" and
+    # also gives the owner the wrong permissions on the object store.
     git_dir.parent.mkdir(parents=True, exist_ok=True)
-    git_dir.mkdir(mode=0o700)
+    if git_dir.exists() or git_dir.is_symlink():
+        raise SourceUpdateError(f"temporary Git object store already exists: {git_dir}")
     _run_as_owner(source_root, ["git", "init", "--bare", str(git_dir)], runner, timeout=15)
 
 
