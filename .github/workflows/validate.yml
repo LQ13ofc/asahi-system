@@ -1,0 +1,24 @@
+name: Validate baseline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate baseline snapshot
+        run: python scripts/validate_baseline.py
+      - name: Run standard-library tests
+        run: python -m unittest discover -s tests -v
