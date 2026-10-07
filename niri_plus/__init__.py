@@ -1,0 +1,2 @@
+"""Niri+ administration CLI."""
+

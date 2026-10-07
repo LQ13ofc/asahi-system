@@ -2,7 +2,7 @@
 
 ## Coleta
 
-`scripts/collect-performance-baseline` é um coletor read-only. Ele só lê `/proc`, `/sys`, metadados do sistema e resultados de ferramentas de consulta. Não executa `drop_caches`, não altera sysctl, serviços, pacotes, mounts ou arquivos de configuração. Sem `--output`, escreve JSON em stdout; com `--output`, grava apenas o arquivo de captura solicitado.
+`niri+ benchmark` encaminha para o coletor read-only interno `scripts/collect-performance-baseline`. O coletor só lê `/proc`, `/sys`, metadados do sistema e resultados de ferramentas de consulta. Não executa `drop_caches`, não altera sysctl, serviços, pacotes, mounts ou arquivos de configuração. Sem `--output`, escreve JSON em stdout; com `--output`, grava apenas o arquivo de captura solicitado.
 
 Cada métrica tem um estado próprio:
 

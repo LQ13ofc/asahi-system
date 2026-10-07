@@ -40,7 +40,7 @@ Package metadata is mutable. Before applying on the Mac, DNF's live Fedora Asahi
 
 ## Session and lifecycle
 
-The custom display-manager entry is named `Niri Performance (B1)` and sits beside, without replacing, Fedora's packaged `Niri` entry. Its launcher sets Wayland desktop environment variables and `NIRI_CONFIG`, then executes Fedora's `/usr/bin/niri-session`.
+The custom display-manager entry is named `Niri` and sits beside, without replacing, Fedora's packaged entry. Its launcher sets Wayland desktop environment variables and `NIRI_CONFIG`, then executes Fedora's `/usr/bin/niri-session`.
 
 The packaged session script already imports the login environment into `systemd --user`, updates D-Bus activation environment, starts and waits for `niri.service`, starts `niri-shutdown.target`, and unsets session variables. Fedora's Niri user service orders itself around `graphical-session-pre.target`, binds to `graphical-session.target`, and brings up `xdg-desktop-autostart.target`; the shutdown target conflicts with graphical session targets. B1 uses that upstream lifecycle rather than duplicating it.
 
@@ -50,22 +50,32 @@ No output name, resolution, refresh rate, scale or Asahi-specific environment va
 
 ## Safe installer and rollback
 
-Run with no options or `--dry-run` to display the plan. Apply requires root and exact host match: `ID=fedora-asahi-remix`, `VERSION_ID=44`, `aarch64`. It installs only the explicit package list with weak dependencies disabled, adds uniquely named session/config files, and backs up any files it must replace under `/var/lib/asahi-system/niri-performance/`. Repeated apply is idempotent. It does not edit SDDM configuration, Plasma, boot/kernel/driver files, global services, or existing audio/network configuration.
+The public interface is the `niri+` CLI. The single repository bootstrap entrypoint is `scripts/bootstrap-niri-plus`; it installs only the CLI and its runtime data, defaults to dry-run, and does not install Niri. After bootstrap, `niri+ install --dry-run` displays the plan. Applying requires root (`sudo niri+ install`) and an exact host match: `ID=fedora-asahi-remix`, `VERSION_ID=44`, `aarch64`. It installs only the explicit package list with weak dependencies disabled, adds uniquely named session/config files, and backs up any files it must replace under `/var/lib/asahi-system/niri-performance/`. Repeated apply is idempotent. It does not edit SDDM configuration, Plasma, boot/kernel/driver files, global services, or existing audio/network configuration.
 
 Rollback restores backed-up files and removes only files created by this installer. By default packages stay installed; `--remove-packages` removes only explicit packages recorded as absent before apply, using `dnf remove --noautoremove`, and retains shared dependencies. Post-install local edits are saved in the rollback state directory before files are restored.
 
-Commands for later Mac use:
+The initial safe command sequence for later Mac use is:
 
 ```sh
-./scripts/install-niri-performance
-sudo ./scripts/install-niri-performance --apply
-sudo ./scripts/install-niri-performance --rollback
+sudo ./scripts/bootstrap-niri-plus --apply && sudo niri+ install
 ```
 
-The first line is informational. The only intended installation command is the second. Do not run it until the PR is reviewed and merged; no installer command was run on the Mac in this phase.
+Bootstrap installs the CLI only; the second command installs the Niri session. `niri+ rollback` restores only Niri+ managed files. Uninstall also removes only explicitly tracked packages installed by Niri+, using DNF with `--noautoremove`. The updater remains unavailable until versioned releases, content verification, and a health-check rollback protocol exist. Status and doctor are read-only. No command was run on the Mac in this phase.
+
+### Niri+ command surface
+
+`VERSION` is the single tracked source for the Niri+ application version. The bootstrap installs the Python CLI under `/usr/local/lib/niri-plus`, its data/collector under `/usr/local/share/niri-plus`, and the public executable at `/usr/local/bin/niri+`. It defaults to dry-run and backs up a previously bootstrapped copy before replacing it. It refuses unmanaged destinations.
+
+- `niri+ status`: read-only host/session/package/service summary; optional Quickshell, Gamescope and Steam can be absent without treating that as an installation failure.
+- `niri+ install [--dry-run]`: uses the existing strict Fedora Asahi 44/aarch64 installer. Apply requires `sudo niri+ install`; privilege is not retained by a resident process.
+- `niri+ rollback`: restores only files recorded by the installer; package removal is opt-in with `--remove-packages`.
+- `niri+ uninstall`: removes tracked session files and only packages recorded as newly installed; it does not remove shared dependencies or protected system components.
+- `niri+ doctor`: read-only diagnostics, including managed-file checksums and M1-required hardware checks.
+- `niri+ benchmark [--runs N] [--output FILE]`: forwards arguments to the existing Phase A collector.
+- `niri+ update`: safe unavailable stub. It performs no changes until signed/versioned releases, content validation, a known-good point, and health-check rollback are designed.
 
 ## Cloud checks and M1-required validation
 
 Cloud tests cover KDL syntax parsing, desktop-entry shape, shell syntax, package manifest, target refusal logic, idempotency, backup and rollback in a temporary directory. They do not prove Niri option semantics, session-manager discovery, sound, networking, input, suspend/resume, Honeykrisp rendering, or power behavior.
 
-**M1_REQUIRED:** confirm DNF resolves the documented package set from configured Fedora Asahi repositories; confirm the new session appears beside Plasma in SDDM/Plasma Login; boot B1 and check internal keyboard/trackpad/touch input, audio output and volume/mute keys, Wi-Fi reconnect, lock/logout, suspend/resume, external display behavior if used, and returning to Plasma recovery. Capture the first Niri baseline only after a fresh login and 2–3 minutes idle with no terminal/browser/application open; use five runs of `scripts/collect-performance-baseline`. B2 Quickshell comparison follows separately.
+**M1_REQUIRED:** confirm DNF resolves the documented package set from configured Fedora Asahi repositories; confirm the new session appears beside Plasma in SDDM/Plasma Login; boot the Niri session and check internal keyboard/trackpad/touch input, audio output and volume/mute keys, Wi-Fi reconnect, lock/logout, suspend/resume, external display behavior if used, and returning to Plasma recovery. Capture the first Niri baseline only after a fresh login and 2–3 minutes idle with no terminal/browser/application open; use `niri+ benchmark --runs 5`. Quickshell comparison follows separately.

@@ -6,13 +6,13 @@ Este repositório é a fonte principal do sistema. A interface Quickshell/Niri e
 
 ## Estado atual
 
-O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/), infraestrutura de benchmark read-only e a preparação revisável da sessão Niri mínima B1. A instalação ainda não foi executada. Quickshell fica para B2. Gaming Mode exige Gamescope ativo dentro do Niri; jogos no Niri sem Gamescope são uso normal, não Gaming Mode. Plasma permanece como recovery/fallback e não é alvo de otimização.
+O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/), infraestrutura de benchmark read-only e a preparação revisável da sessão Niri mínima. A instalação ainda não foi executada. Quickshell será integrado depois. Gaming Mode exige Gamescope ativo dentro do Niri; jogos no Niri sem Gamescope são uso normal, não Gaming Mode. Plasma permanece como recovery/fallback e não é alvo de otimização.
 
-O desenho e pesquisa de pacotes da sessão B1 estão em [`docs/niri-phase-b.md`](docs/niri-phase-b.md). A instalação é dry-run por padrão e tem rollback; não execute `--apply` antes da revisão do PR e do teste manual planejado.
+O desenho e pesquisa de pacotes da sessão Niri mínima estão em [`docs/niri-phase-b.md`](docs/niri-phase-b.md). A CLI pública é `niri+`; após instalar/preparar a CLI com o bootstrap revisado, use `niri+ status`, `niri+ install --dry-run` ou `sudo niri+ install`. A instalação tem backup e rollback e ainda não foi executada no Mac.
 
 ## Benchmark read-only
 
-O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md); a classificação observacional dos serviços do snapshot está em [`docs/service-classification.md`](docs/service-classification.md). O coletor `scripts/collect-performance-baseline` produz JSON parcial com status por métrica e não altera serviços, sysctls ou arquivos do sistema. Para uma captura comparável, siga o protocolo; nenhuma captura Cloud x86_64 substitui teste no M1.
+O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md); a classificação observacional dos serviços do snapshot está em [`docs/service-classification.md`](docs/service-classification.md). Após o bootstrap, `niri+ benchmark` é a interface pública para o coletor read-only interno. Ele produz JSON parcial por métrica e não altera serviços, sysctls ou configuração do sistema. Nenhuma captura Cloud x86_64 substitui teste no M1.
 
 ## Validação no Cloud
 
