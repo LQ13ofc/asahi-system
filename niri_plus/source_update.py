@@ -649,12 +649,14 @@ def validate_snapshot(root: pathlib.Path, manifest_path: pathlib.Path) -> dict:
 def install_from_snapshot(snapshot: Snapshot, runner: Runner = subprocess.run) -> None:
     validate_snapshot(snapshot.root, snapshot.manifest)
     # Do not let a caller-preserved PYTHONHOME, startup hook, user site, or
-    # search path inject code into the privileged interpreter. The sole Python
-    # import root for the child is the closed snapshot validated above.
+    # search path inject code into the privileged interpreter. The snapshot
+    # entrypoint adds its own closed root to sys.path, so run Python isolated
+    # and with bytecode writes disabled. Otherwise the first import creates
+    # __pycache__ inside the verified snapshot and the child validation sees
+    # those files as untracked content.
     env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
-    env["PYTHONPATH"] = str(snapshot.root)
     env["NIRI_PLUS_DATA_DIR"] = str(snapshot.root)
-    command = [sys_executable(), str(snapshot.root / "scripts/install-snapshot"),
+    command = [sys_executable(), "-I", "-B", str(snapshot.root / "scripts/install-snapshot"),
                "--snapshot-root", str(snapshot.root), "--manifest", str(snapshot.manifest)]
     try:
         runner(command, check=True, env=env, stdin=subprocess.DEVNULL, cwd=str(snapshot.root))

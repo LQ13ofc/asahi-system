@@ -278,6 +278,19 @@ class GitSnapshotTests(unittest.TestCase):
         apply.assert_not_called()
         self.assertIn("no changes were applied", output.getvalue())
 
+    def test_snapshot_child_runs_without_writing_python_bytecode(self):
+        with self._snapshot() as snapshot:
+            calls = []
+
+            def runner(args, **kwargs):
+                calls.append((args, kwargs))
+                return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+
+            source_update.install_from_snapshot(snapshot, runner)
+
+            self.assertEqual(calls[0][0][1:3], ["-I", "-B"])
+            self.assertFalse(any(path.name == "__pycache__" for path in snapshot.root.rglob("__pycache__")))
+
     def test_origin_url_rewrite_is_checked_without_overwriting_configured_value(self):
         git(["-C", str(self.checkout), "config", "url.https://example.invalid/.insteadOf", self.asahi_url])
         with self.assertRaisesRegex(source_update.SourceUpdateError, "URL rewrite"):
@@ -299,8 +312,8 @@ class GitSnapshotTests(unittest.TestCase):
                 executed["args"] = args
                 executed["env"] = kwargs["env"]
                 executed["cwd"] = kwargs["cwd"]
-                executed["snapshot_code"] = pathlib.Path(args[1]).read_bytes()
-                executed["snapshot_cli"] = pathlib.Path(kwargs["env"]["PYTHONPATH"],
+                executed["snapshot_code"] = pathlib.Path(args[3]).read_bytes()
+                executed["snapshot_cli"] = pathlib.Path(snapshot.root,
                                                          "niri_plus/install_command.py").read_bytes()
                 executed["python_environment"] = {key: value for key, value in kwargs["env"].items()
                                                   if key.startswith("PYTHON")}
@@ -311,8 +324,8 @@ class GitSnapshotTests(unittest.TestCase):
                 source_update.install_from_snapshot(snapshot, root_runner)
             self.assertEqual(executed["snapshot_code"], pinned_entry)
             self.assertEqual(executed["snapshot_cli"], pinned)
-            self.assertEqual(executed["env"]["PYTHONPATH"], str(snapshot.root))
-            self.assertEqual(executed["python_environment"], {"PYTHONPATH": str(snapshot.root)})
+            self.assertEqual(executed["args"][1:3], ["-I", "-B"])
+            self.assertEqual(executed["python_environment"], {})
             self.assertNotIn(str(self.checkout), executed["args"])
             self.assertEqual(executed["cwd"], str(snapshot.root))
             self.assertEqual((snapshot.root / "niri_plus/install_command.py").read_bytes(), pinned)
