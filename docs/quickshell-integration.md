@@ -23,7 +23,8 @@ The generic `qs` autostart was removed; Niri+ owns process lifecycle.
 
 `.gitmodules` declares `external/quickshell`; the gitlink and
 `integration/quickshell.lock.json` both pin
-`e0731859af5dc559e115760de41db43f5dbe5bc8`. The fork is private, so cloning
+`554718f01faa3f6b713cc0d58e30c4129d49e524`, the reviewed head of Quickshell
+PR #2 that removes its startup snippet. The fork is private, so cloning
 `asahi-system` needs GitHub access that can read both repositories. Initialize
 the submodule recursively before running the single bootstrap, for example:
 `git clone --recurse-submodules https://github.com/LQ13ofc/asahi-system.git`.
