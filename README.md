@@ -8,7 +8,7 @@ Este repositório é a fonte principal do sistema. A interface Quickshell/Niri e
 
 O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/), infraestrutura read-only de benchmark e preparação reversível da sessão Niri. A integração visual Quickshell está sendo revisada em Phase B2, fixada em commit separado e controlada pelo lifecycle da sessão; ainda não foi aplicada no Mac. Gaming Mode exige Gamescope ativo dentro do Niri; jogos no Niri sem Gamescope são uso normal, não Gaming Mode. Plasma permanece como recovery/fallback e não é alvo de otimização.
 
-O desenho e pesquisa de pacotes da sessão Niri estão em [`docs/niri-phase-b.md`](docs/niri-phase-b.md). A fronteira, pin e lifecycle de Quickshell estão em [`docs/quickshell-integration.md`](docs/quickshell-integration.md). A CLI pública é `niri+`; depois de clonar com submodules e preparar a CLI pelo bootstrap, use `niri+ status`, `niri+ install --dry-run` ou `sudo niri+ install`. A instalação tem backup e rollback e ainda não foi executada no Mac.
+O desenho e pesquisa de pacotes da sessão Niri estão em [`docs/niri-phase-b.md`](docs/niri-phase-b.md). A fronteira, pin e lifecycle de Quickshell estão em [`docs/quickshell-integration.md`](docs/quickshell-integration.md). A CLI pública é `niri+`. O bootstrap é necessário apenas uma vez para registrar a origem local do projeto. Depois disso, `sudo niri+ install` atualiza automaticamente o checkout `main` com `git pull --ff-only`, sincroniza o submodule Quickshell pinado, atualiza a própria CLI e então aplica a instalação. `niri+ install --dry-run` continua sem fazer alterações.
 
 ## Benchmark read-only
 
