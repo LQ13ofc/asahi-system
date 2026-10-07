@@ -4,7 +4,7 @@
 
 | Repositório | Responsabilidade | Estado observado |
 |---|---|---|
-| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline, CLI Niri+, configuração Niri, lifecycle e integração. | Baseline e coletor read-only estão em main. A sessão Niri+Quickshell, o lifecycle e as correções do release gate estão no PR #8 aberto, sem merge. O primeiro login real no M1 confirmou compositor, entrada, terminal e barra; o race Wayland e vazamentos KDE/PIM ficaram confirmados em logs e aguardam reteste após o PR. |
+| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline, CLI Niri+, configuração Niri, lifecycle e integração. | Baseline, coletor read-only e sessão Niri+Quickshell estão em `main`. O release gate de infraestrutura passou no M1 real: readiness/runtime Wayland, PolicyKit, lifecycle Quickshell sem restart/duplicação, isolamento KDE/Plasma, managed files, checkout e snapshot/pin/runtime foram confirmados. Os fixes do gate e da migração do snapshot estão mergeados. |
 | [`quickshell-`](https://github.com/LQ13ofc/quickshell-) | Interface da barra e painéis Quickshell usados com Niri. | Mantém QML, serviços, `niri/barra.kdl`, documentação e harness de teste no próprio repositório. |
 
 A integração entre eles é um submodule externo mais `integration/quickshell.lock.json`; o gitlink e o lock fixam o mesmo commit. O engine ARM64 `quickshell-0:0.3.1-2.fc44` tem pin independente. O README da interface documenta a API original 0.2.1 e a transição do indicador Wi-Fi para `Quickshell.Networking` 0.3.1. Ao alterar essa interface, atualize e revise cada repositório separadamente.
