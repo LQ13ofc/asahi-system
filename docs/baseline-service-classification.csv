@@ -1,0 +1,84 @@
+scope,unit_as_captured,classification,reason,active_state_as_captured,description_as_captured
+system,abrt-journal-core.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,ABRT coredumpctl message creator
+system,abrt-oops.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,ABRT kernel log watcher
+system,abrt-xorg.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,ABRT Xorg log watcher
+system,abrtd.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,ABRT Daemon
+system,accounts-daemon.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Accounts Service
+system,alsa-state.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Manage Sound Card State (restore and store)
+system,atd.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Deferred execution scheduler
+system,auditd.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Security Audit Logging Service
+system,avahi-daemon.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Avahi mDNS/DNS-SD Stack
+system,bluetooth.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Bluetooth service
+system,chronyd.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,NTP client/server
+system,crond.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Command Scheduler
+system,cups.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,CUPS Scheduler
+system,dbus-:1.3-org.freedesktop.problems@0.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,dbus-:1.3-org.freedesktop.problems@0.service
+system,dbus-broker.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,D-Bus System Message Bus
+system,firewalld.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,firewalld - dynamic firewall daemon
+system,gssproxy.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,GSSAPI Proxy Daemon
+system,iio-sensor-proxy.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,IIO Sensor Proxy service
+system,irqbalance.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,irqbalance daemon
+system,ModemManager.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Modem Manager
+system,NetworkManager.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Network Manager
+system,packagekit.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,PackageKit Daemon
+system,pcscd.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,PC/SC Smart Card Daemon
+system,plasmalogin.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Plasma Login Manager
+system,polkit.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Authorization Manager
+system,rsyslog.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,System Logging Service
+system,rtkit-daemon.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,RealtimeKit Scheduling Policy Service
+system,smartd.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,Self Monitoring and Reporting Technology (SMART) Daemon
+system,speakersafetyd.service,DO_NOT_TOUCH,Protegido explicitamente pelo escopo atual; nunca inferir remoção ou desativação.,active,Speaker Protection Daemon
+system,switcheroo-control.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Switcheroo Control Proxy service
+system,systemd-homed.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Home Area Manager
+system,systemd-journald.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Journal Service
+system,systemd-logind.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,User Login Management
+system,systemd-oomd.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Userspace Out-Of-Memory (OOM) Killer
+system,systemd-resolved.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Network Name Resolution
+system,systemd-udevd.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,Rule-based Manager for Device Events and Files
+system,systemd-userdbd.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,User Database Manager
+system,tuned-ppd.service,DO_NOT_TOUCH,TuneD está protegido explicitamente no escopo atual; sem mudanças nesta fase.,active,PPD-to-TuneD API Translation Daemon
+system,tuned.service,DO_NOT_TOUCH,TuneD está protegido explicitamente no escopo atual; sem mudanças nesta fase.,active,Dynamic System Tuning Daemon
+system,udisks2.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Disk Manager
+system,upower.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Daemon for power management
+system,uresourced.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,User resource assignment daemon
+system,user@1000.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,User Manager for UID 1000
+system,wpa_supplicant.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,WPA supplicant
+user,akonadi_control.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,Akonadi Control
+user,app-brave\x2dbrowser@fbb689c67a01443fa831687c57953a5f.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Brave Web Browser - Navegador da Internet
+user,app-geoclue\x2ddemo\x2dagent@autostart.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Geoclue Demo agent
+user,app-org.freedesktop.problems.applet@autostart.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,Problem Reporting
+user,app-org.kde.discover.notifier@autostart.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,Discover
+user,app-org.kde.kalendarac@autostart.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,Calendar Reminders
+user,app-org.kde.kdeconnect.daemon@autostart.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,KDE Connect
+user,app-org.kde.konsole@12774aacf1944060969ccd165124ec0c.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,Konsole - Terminal
+user,app-org.kde.xwaylandvideobridge@autostart.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,Xwayland Video Bridge
+user,app-sealertauto@autostart.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,SELinux Troubleshooter
+user,at-spi-dbus-bus.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Accessibility services bus
+user,dbus-:1.2-org.kde.kwalletd6@0.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,dbus-:1.2-org.kde.kwalletd6@0.service
+user,dbus-:1.37-org.a11y.atspi.Registry@0.service,UNKNOWN,Função/dependências insuficientemente estabelecidas; manter e investigar antes de propor qualquer ação.,active,dbus-:1.37-org.a11y.atspi.Registry@0.service
+user,dbus-broker.service,ESSENTIAL,"Serviço estrutural observado; manter como referência, sem inferir que toda sessão exige a mesma configuração.",active,D-Bus User Message Bus
+user,dconf.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,User preferences database
+user,kde-baloo.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,Baloo File Indexer Daemon
+user,kunifiedpush-distributor.service,OPTIONAL,Integração de usuário/relato observada; decisão depende do uso pessoal e não está autorizada nesta fase.,active,KUnifiedPush Distributor
+user,obex.service,ON_DEMAND,"Função periférica e reconhecível (rede, impressão, mídia ou armazenamento); verificar ativação/dependências antes de qualquer decisão.",active,Bluetooth OBEX service
+user,pipewire-pulse.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,PipeWire PulseAudio
+user,pipewire.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,PipeWire Multimedia Service
+user,plasma-gmenudbusmenuproxy.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Proxies GTK DBus menus to a Plasma readable format
+user,plasma-kaccess.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KAccess
+user,plasma-kactivitymanagerd.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KActivityManager Activity manager Service
+user,plasma-kded6.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KDE Daemon 6
+user,plasma-ksmserver.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KDE Session Management Server
+user,plasma-kwin_wayland.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KDE Wayland Compositor
+user,plasma-plasmashell.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KDE Plasma Workspace
+user,plasma-polkit-agent.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,KDE PolicyKit Authentication Agent
+user,plasma-powerdevil.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Powerdevil
+user,plasma-xdg-desktop-portal-kde.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Xdg Desktop Portal For KDE
+user,plasma-xembedsniproxy.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Handle legacy xembed system tray icons
+user,run-p2179-i28968.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,[systemd-run] /usr/libexec/imsettings-daemon --replace
+user,ssh-agent.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,OpenSSH key agent
+user,uresourced.service,CANDIDATE,Ponto de investigação medido em experimento isolado; a classificação não recomenda desativar.,active,User resource assignment daemon
+user,wireplumber.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Multimedia Service Session Manager
+user,xdg-desktop-portal-gtk.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Portal service (GTK/GNOME implementation)
+user,xdg-desktop-portal.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,Portal service
+user,xdg-document-portal.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,flatpak document portal service
+user,xdg-permission-store.service,SESSION,"Componente de login, áudio ou Plasma da sessão capturada; avaliar pertencimento por sessão depois, preservando Plasma.",active,sandboxed app permission store
