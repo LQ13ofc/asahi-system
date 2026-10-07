@@ -1,6 +1,6 @@
 # Arquitetura planejada da sessão Niri
 
-Esta página descreve a arquitetura atual até B2 e separa o que já está integrado do que continua futuro. Niri e a barra Quickshell iniciaram no M1. Logs posteriores confirmaram uma race em que clientes precediam o socket Wayland e processos KDE/PIM vazavam para Niri; os fixes Cloud estão no PR do release gate e ainda precisam de reteste no hardware.
+Esta página descreve a arquitetura atual até B2 e separa o que já está integrado do que continua futuro. Niri e a barra Quickshell iniciaram no M1, e o release gate de infraestrutura passou no hardware real. O handshake Wayland, lifecycle de PolicyKit/Quickshell, isolamento KDE/PIM, managed files, alinhamento do checkout e snapshot/pin/runtime foram validados; os bugs encontrados durante esse gate foram corrigidos e mergeados.
 
 ```text
 Fedora Asahi
@@ -68,4 +68,4 @@ Compare RAM/PSS, CPU, GPU, FPS médio, 1% low, frametime, swap, PSI, latency e e
 
 Plasma não é alvo de otimização. Fica instalado apenas como recovery/fallback durante o desenvolvimento. Use seu baseline para entender o estado atual, identificar processos KDE que não devem aparecer em Niri e medir ganhos da nova sessão; não desenhe tuning para KDE/Plasma.
 
-O pin continua sendo o gitlink e `integration/quickshell.lock.json`, ambos no commit `55e92880d0aff75d235f283c839ec0990eaa9e17` (PR #3). O PR #8 implementa fetch pelo dono do checkout, snapshot dos commits exatos, aplicação transacional e os gates de Wayland/KDE; ainda não foi mergeado. `niri+ update` continua stub seguro. Nenhum pacote ou serviço global é removido ou desativado por esta documentação.
+O pin continua sendo o gitlink e `integration/quickshell.lock.json`, ambos no commit `55e92880d0aff75d235f283c839ec0990eaa9e17` (PR #3). O PR #8 e os fixes subsequentes de migração/snapshot estão mergeados em `main`; o fluxo normal `sudo niri+ install` e os gates de Wayland/KDE passaram no M1. `niri+ update` continua stub seguro. Nenhum pacote ou serviço global é removido ou desativado por esta documentação.
