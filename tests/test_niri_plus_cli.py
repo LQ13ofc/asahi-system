@@ -436,8 +436,8 @@ class NiriPlusCliTests(unittest.TestCase):
                 )
             self.assertEqual(result.returncode, 0)
             self.assertEqual(captured["user"], checkout.stat().st_uid)
-            self.assertEqual(captured["env"]["GIT_CONFIG_NOSYSTEM"], "1")
-            self.assertEqual(captured["env"]["GIT_CONFIG_GLOBAL"], source_update.os.devnull)
+            self.assertEqual(captured["env"]["HOME"], str(pathlib.Path.home()))
+            self.assertNotIn("GIT_CONFIG_NOSYSTEM", captured["env"])
             self.assertNotIn("GIT_TRACE", captured["env"])
 
             bootstrap = runpy.run_path(str(ROOT / "scripts/bootstrap-niri-plus"))

@@ -76,10 +76,8 @@ def _owner_identity(source_root: pathlib.Path) -> tuple[int, int, list[int], dic
         "LOGNAME": account.pw_name,
         "GIT_TERMINAL_PROMPT": "0",
         "GCM_INTERACTIVE": "never",
-        # Never execute checkout-controlled hooks or fsmonitor helpers while
-        # refreshing a privileged install from a user-owned worktree.
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
+        # Hooks/fsmonitor are disabled per Git command below; retain the
+        # owner's normal credential-helper configuration for private repos.
     })
     return account.pw_uid, account.pw_gid, groups, env
 

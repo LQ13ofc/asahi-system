@@ -67,8 +67,7 @@ def git_as_checkout_owner(path: pathlib.Path, *args: str) -> subprocess.Complete
         if key.startswith("GIT_"):
             env.pop(key, None)
     env.update({"HOME": account.pw_dir, "USER": account.pw_name,
-                "LOGNAME": account.pw_name, "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"})
+                "LOGNAME": account.pw_name, "GIT_TERMINAL_PROMPT": "0"})
     command = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
                "-C", str(path), *args]
     options = {"user": account.pw_uid, "group": account.pw_gid, "extra_groups": groups} if os.geteuid() != account.pw_uid else {}
