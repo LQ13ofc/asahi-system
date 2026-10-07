@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, cli, doctor, host, install_command, quickshell, rollback, status
+from niri_plus import benchmark, cli, doctor, host, install_command, quickshell, rollback, source_update, status
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -125,6 +125,44 @@ class NiriPlusCliTests(unittest.TestCase):
             legacy = root / "usr/share/wayland-sessions/niri-performance.desktop"
             legacy.write_text("[Desktop Entry]\nName=Niri\nType=Application\n")
             self.assertEqual(host.session_status(root), host.WARNING)
+
+
+    def test_source_update_discovers_checkout_from_bootstrap_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source = root / "asahi-system"
+            quickshell = source / "external/quickshell"
+            quickshell.mkdir(parents=True)
+            state = root / "bootstrap.json"
+            state.write_text(json.dumps({"quickshell_source": str(quickshell)}))
+            self.assertEqual(source_update.discover_source_root(state), source.resolve())
+
+    def test_source_update_rejects_wrong_origin_before_pull(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = pathlib.Path(temp) / "repo"
+            source.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+            subprocess.run(["git", "-C", str(source), "remote", "add", "origin", "https://example.invalid/not-asahi.git"], check=True)
+            with self.assertRaisesRegex(source_update.SourceUpdateError, "unexpected origin"):
+                source_update.refresh_source(source)
+
+    def test_install_refreshes_and_reexecs_before_apply(self):
+        with mock.patch.object(install_command.os, "geteuid", return_value=0), \
+             mock.patch.object(install_command.source_update, "refresh_and_bootstrap", return_value="a" * 40) as refresh, \
+             mock.patch.object(install_command.source_update, "reexec_install", side_effect=SystemExit(0)) as reexec:
+            with self.assertRaises(SystemExit):
+                install_command.run_install(dry_run=False)
+        refresh.assert_called_once()
+        reexec.assert_called_once()
+
+    def test_install_skips_refresh_after_reexec(self):
+        with mock.patch.object(install_command.os, "geteuid", return_value=0), \
+             mock.patch.dict(install_command.os.environ, {"NIRI_PLUS_SELF_UPDATED": "1"}), \
+             mock.patch.object(install_command.install, "apply_install") as apply_install, \
+             mock.patch.object(install_command.source_update, "refresh_and_bootstrap") as refresh:
+            self.assertEqual(install_command.run_install(dry_run=False), 0)
+        apply_install.assert_called_once()
+        refresh.assert_not_called()
 
     def test_quickshell_report_detects_pinned_and_diverged_checkouts(self):
         with tempfile.TemporaryDirectory() as temp:
