@@ -77,7 +77,7 @@ def _unit_state(root: pathlib.Path, runner: Runner) -> tuple[str, str]:
     active_text = (active.stdout or "").strip() if active else "unavailable"
     if active_text == "active":
         return OK, f"enabled={enabled_text}, active"
-    if enabled_text in ("enabled", "enabled-runtime", "static"):
+    if active_text == "inactive" and enabled_text in ("enabled", "enabled-runtime", "static"):
         return OK, f"enabled={enabled_text}, inactive (outside Niri session)"
     return WARNING, f"enabled={enabled_text}, active={active_text}"
 
@@ -87,6 +87,9 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
     base = base or data_dir()
     lock = load_lock(base)
     expected = lock.get("commit")
+    engine = lock.get("engine", {})
+    locked_nevra = engine.get("nevra", "")
+    package_expected = locked_nevra.removeprefix("quickshell-") + "." + engine.get("architecture", "aarch64") if locked_nevra else "unknown"
     checkout = checkout_path(root, base)
     checkout_present = checkout.is_dir()
     installed_commit = git_value(checkout, ["rev-parse", "--verify", "HEAD"], runner) if checkout_present else None
@@ -95,6 +98,8 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
     dirty = bool(dirty_output)
     version_status, version = _qs_version(root, runner)
     package_status, package_version = _rpm_version(root, runner)
+    if package_status == OK and package_version != package_expected:
+        package_status = WARNING
     lifecycle, lifecycle_detail = _unit_state(root, runner)
     if not lock:
         checkout_status = WARNING
@@ -110,8 +115,10 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
         overall_status = checkout_status
     elif version_status != OK:
         overall_status = version_status
-    elif lifecycle == NOT_INSTALLED:
-        overall_status = NOT_CONFIGURED
+    elif package_status != OK:
+        overall_status = package_status
+    elif lifecycle != OK:
+        overall_status = NOT_CONFIGURED if lifecycle == NOT_INSTALLED else lifecycle
     else:
         overall_status = OK
     return {
@@ -121,6 +128,7 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
         "version": version,
         "package_status": package_status,
         "package_version": package_version,
+        "package_expected": package_expected,
         "repository": lock.get("repository", "unknown"),
         "installed_commit": installed_commit or NOT_INSTALLED,
         "expected_commit": expected or "unknown",
@@ -128,7 +136,7 @@ def report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.r
         "checkout": str(checkout),
         "lifecycle": lifecycle,
         "lifecycle_detail": lifecycle_detail,
-        "compatibility": lock.get("engine", {}).get("compatibility", M1_REQUIRED),
+        "compatibility": engine.get("compatibility", M1_REQUIRED),
         "warnings": ["Quickshell rendering, D-Bus features and memory cost require M1_REQUIRED validation."],
     }
 

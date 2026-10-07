@@ -23,7 +23,7 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
                   f"GPU/Asahi hardware: {report['m1_checks']}"])
     qs = {**report["quickshell"], **quickshell.doctor_report(root, runner)}
     lines.extend(["\nQuickshell integration", f"  Binary/version: {qs['version_status']} ({qs['version']})",
-                  f"  RPM engine: {qs['package_status']} ({qs['package_version']})",
+                  f"  RPM engine: {qs['package_status']} ({qs['package_version']}, expected {qs['package_expected']})",
                   f"  Checkout/config: {qs['checkout_status']} ({qs['installed_commit']} expected {qs['expected_commit']})",
                   f"  Known-good commit: {qs['known_good_commit']}; dirty: {qs['dirty']}",
                   f"  Repository: {qs['repository']}", f"  Lifecycle unit: {qs['lifecycle']} ({qs['lifecycle_detail']})",

@@ -26,7 +26,7 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
     qs = report["quickshell"]
     lines.extend(["\nQuickshell", f"  {'Status':22} {qs['status']}",
                   f"  {'Binary/version':22} {qs['version_status']} {qs['version']}",
-                  f"  {'RPM engine':22} {qs['package_status']} {qs['package_version']}",
+                  f"  {'RPM engine':22} {qs['package_status']} {qs['package_version']} (expected {qs['package_expected']})",
                   f"  {'Repository':22} {qs['repository']}",
                   f"  {'Installed commit':22} {qs['installed_commit']}",
                   f"  {'Expected commit':22} {qs['expected_commit']}",
