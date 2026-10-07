@@ -6,19 +6,23 @@ Este repositório é a fonte principal do sistema. A interface Quickshell/Niri e
 
 ## Estado atual
 
-O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/) e infraestrutura de benchmark read-only. Ainda não há configuração executável da sessão Niri Performance ou de Gaming Mode. Niri é o objetivo da sessão otimizada; Gaming Mode exige Gamescope ativo dentro do Niri. Plasma permanece apenas como recovery/fallback e não é alvo de otimização.
+O conteúdo atual inclui a captura de referência em [`hardware/mba-m1-8gb/baseline/`](hardware/mba-m1-8gb/baseline/), infraestrutura de benchmark read-only e a preparação revisável da sessão Niri mínima. A instalação ainda não foi executada. Quickshell será integrado depois. Gaming Mode exige Gamescope ativo dentro do Niri; jogos no Niri sem Gamescope são uso normal, não Gaming Mode. Plasma permanece como recovery/fallback e não é alvo de otimização.
+
+O desenho e pesquisa de pacotes da sessão Niri mínima estão em [`docs/niri-phase-b.md`](docs/niri-phase-b.md). A CLI pública é `niri+`; após instalar/preparar a CLI com o bootstrap revisado, use `niri+ status`, `niri+ install --dry-run` ou `sudo niri+ install`. A instalação tem backup e rollback e ainda não foi executada no Mac.
 
 ## Benchmark read-only
 
-O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md); a classificação observacional dos serviços do snapshot está em [`docs/service-classification.md`](docs/service-classification.md). O coletor `scripts/collect-performance-baseline` produz JSON parcial com status por métrica e não altera serviços, sysctls ou arquivos do sistema. Para uma captura comparável, siga o protocolo; nenhuma captura Cloud x86_64 substitui teste no M1.
+O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md); a classificação observacional dos serviços do snapshot está em [`docs/service-classification.md`](docs/service-classification.md). Após o bootstrap, `niri+ benchmark` é a interface pública para o coletor read-only interno. Ele produz JSON parcial por métrica e não altera serviços, sysctls ou configuração do sistema. Nenhuma captura Cloud x86_64 substitui teste no M1.
 
 ## Validação no Cloud
 
-As verificações abaixo usam apenas Python padrão e não mudam o sistema:
+As verificações abaixo usam Python e o parser KDL isolado listado em `requirements-test.txt`; não mudam o sistema:
 
 ```bash
 python3 scripts/validate_baseline.py
 python3 -m unittest discover -s tests -v
 ```
+
+Instale a dependência de validação em um ambiente virtual antes de rodar os testes: `python3 -m pip install -r requirements-test.txt`.
 
 O GitHub Actions executa as mesmas verificações em PRs e em atualizações de `main`. Elas conferem estrutura e consistência do snapshot; não substituem testes no Fedora Asahi real.

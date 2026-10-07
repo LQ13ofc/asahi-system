@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Install/rollback the reversible Fedora Asahi Niri B1 session.
+
+No argument performs a dry-run. --apply is limited to Fedora Asahi Remix 44
+aarch64 and never edits Plasma, display-manager configuration, kernel, or boot.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import pathlib
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Any
+
+
+_installed_data = pathlib.Path("/usr/local/share/niri-plus")
+REPO = pathlib.Path(os.environ.get(
+    "NIRI_PLUS_DATA_DIR",
+    _installed_data if (_installed_data / "VERSION").is_file() else pathlib.Path(__file__).resolve().parents[1],
+))
+PACKAGES = ("niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit")
+BASE_SERVICES = ("pipewire", "pipewire-pulseaudio", "wireplumber", "NetworkManager")
+MANAGED_FILES = {
+    "/usr/share/wayland-sessions/niri-performance.desktop": REPO / "sessions/niri.desktop",
+    "/usr/local/bin/asahi-niri-session": REPO / "sessions/launch/niri-session",
+    "/usr/lib/systemd/user/asahi-niri-polkit-agent.service": REPO / "sessions/systemd/asahi-niri-polkit-agent.service",
+    "/usr/local/share/asahi-system/niri/config.kdl": REPO / "niri/config.kdl",
+    "/usr/local/share/asahi-system/niri/keybinds.kdl": REPO / "niri/keybinds.kdl",
+    "/usr/local/share/asahi-system/niri/outputs.kdl": REPO / "niri/outputs.kdl",
+    "/usr/local/share/asahi-system/niri/rules.kdl": REPO / "niri/rules.kdl",
+    "/usr/local/share/asahi-system/niri/autostart.kdl": REPO / "niri/autostart.kdl",
+}
+MANAGED_LINKS = {
+    "/usr/lib/systemd/user/graphical-session.target.wants/asahi-niri-polkit-agent.service": "../asahi-niri-polkit-agent.service",
+}
+STATE_PATH = "/var/lib/asahi-system/niri-performance/state.json"
+
+
+class InstallError(Exception):
+    pass
+
+
+def target_mismatches(os_release: dict[str, str], machine: str) -> list[str]:
+    errors = []
+    if os_release.get("ID") != "fedora-asahi-remix":
+        errors.append("OS ID must be fedora-asahi-remix")
+    if os_release.get("VERSION_ID") != "44":
+        errors.append("VERSION_ID must be 44")
+    if machine != "aarch64":
+        errors.append("architecture must be aarch64")
+    return errors
+
+
+def parse_os_release(path: pathlib.Path = pathlib.Path("/etc/os-release")) -> dict[str, str]:
+    result: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            result[key] = value.strip().strip('"').strip("'")
+    except OSError as exc:
+        raise InstallError(f"cannot read {path}: {exc}") from exc
+    return result
+
+
+def content_for(source: pathlib.Path) -> bytes:
+    data = source.read_bytes()
+    if source == REPO / "sessions/niri.desktop":
+        # The installer marker lets a later run distinguish its own file.
+        return b"# Managed by LQ13ofc/asahi-system; local edits are backed up on update.\n" + data
+    return data
+
+
+def prefixed(root: pathlib.Path, absolute: str) -> pathlib.Path:
+    return root / absolute.lstrip("/")
+
+
+def backup_existing(root: pathlib.Path, target: pathlib.Path, relative: str, state: dict[str, Any]) -> None:
+    entries = state.setdefault("entries", {})
+    if relative in entries:
+        if entries[relative]["kind"] != "preserve":
+            return
+        del entries[relative]
+    if target.is_symlink():
+        entries[relative] = {"kind": "symlink", "backup": None, "original_target": os.readlink(target)}
+    elif target.exists():
+        backup_rel = f"/var/lib/asahi-system/niri-performance/backups{relative}"
+        backup_path = prefixed(root, backup_rel)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, backup_path)
+        entries[relative] = {"kind": "file", "backup": backup_rel, "original_target": None}
+    else:
+        entries[relative] = {"kind": "absent", "backup": None, "original_target": None}
+
+
+def write_state(root: pathlib.Path, state: dict[str, Any]) -> None:
+    path = prefixed(root, STATE_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=".state-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(state, output, indent=2, sort_keys=True)
+            output.write("\n")
+        os.replace(temp_name, path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def load_state(root: pathlib.Path) -> dict[str, Any]:
+    path = prefixed(root, STATE_PATH)
+    if not path.exists():
+        return {"schema_version": 1, "entries": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("schema_version") != 1 or not isinstance(data.get("entries"), dict):
+            raise ValueError("unknown state schema")
+        allowed = set(MANAGED_FILES) | set(MANAGED_LINKS)
+        for relative, entry in data["entries"].items():
+            if relative not in allowed or not isinstance(entry, dict):
+                raise ValueError(f"unknown managed path in state: {relative}")
+            kind = entry.get("kind")
+            if kind not in {"preserve", "file", "symlink", "absent"}:
+                raise ValueError(f"invalid state entry for {relative}")
+            backup = entry.get("backup")
+            if backup is not None and backup != f"/var/lib/asahi-system/niri-performance/backups{relative}":
+                raise ValueError(f"invalid backup path for {relative}")
+        return data
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise InstallError(f"cannot read install state {path}: {exc}") from exc
+
+
+def render_plan() -> None:
+    print("Niri+ install plan (dry-run; no host changes)")
+    print("Explicit packages:")
+    for package in PACKAGES:
+        print(f"  - {package}")
+    print("Niri hard dependency resolved by DNF: xwayland-satellite >= 0.7 (on-demand Xwayland integration)")
+    print("DNF option: --setopt=install_weak_deps=False")
+    print("Existing baseline components checked, not installed or enabled:")
+    for package in BASE_SERVICES:
+        print(f"  - {package}")
+    print("Managed destinations:")
+    for path in (*MANAGED_FILES, *MANAGED_LINKS):
+        print(f"  - {path}")
+    print("Plasma, SDDM configuration, global services, kernel, boot, and drivers are not changed.")
+
+
+def install_files(root: pathlib.Path) -> tuple[dict[str, Any], bool]:
+    state = load_state(root)
+    changed = False
+    try:
+        for relative, source in MANAGED_FILES.items():
+            target = prefixed(root, relative)
+            desired = content_for(source)
+            if target.exists() and not target.is_symlink():
+                if not target.is_file():
+                    raise InstallError(f"refusing to replace non-file destination {target}")
+                if target.read_bytes() == desired:
+                    state.setdefault("entries", {}).setdefault(relative, {"kind": "preserve", "backup": None, "original_target": None})
+                    continue
+            backup_existing(root, target, relative, state)
+            write_state(root, state)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink():
+                target.unlink()
+            target.write_bytes(desired)
+            if relative.endswith("/asahi-niri-session"):
+                target.chmod(0o755)
+            else:
+                target.chmod(0o644)
+            state["entries"][relative]["installed_sha256"] = hashlib.sha256(desired).hexdigest()
+            write_state(root, state)
+            changed = True
+        for relative, link_target in MANAGED_LINKS.items():
+            target = prefixed(root, relative)
+            if target.is_symlink() and os.readlink(target) == link_target:
+                state.setdefault("entries", {}).setdefault(relative, {"kind": "preserve", "backup": None, "original_target": None})
+                continue
+            backup_existing(root, target, relative, state)
+            write_state(root, state)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            target.symlink_to(link_target)
+            state["entries"][relative]["installed_target"] = link_target
+            write_state(root, state)
+            changed = True
+        write_state(root, state)
+    except (OSError, InstallError) as exc:
+        rollback_files(root)
+        if isinstance(exc, InstallError):
+            raise
+        raise InstallError(f"file installation failed; prior files were restored: {exc}") from exc
+    return state, changed
+
+
+def rollback_files(root: pathlib.Path) -> list[str]:
+    state = load_state(root)
+    entries = state.get("entries", {})
+    messages = []
+    for relative, entry in reversed(list(entries.items())):
+        target = prefixed(root, relative)
+        if entry["kind"] == "preserve":
+            messages.append(f"left pre-existing identical file unchanged: {relative}")
+            continue
+        if entry.get("installed_sha256") and target.is_file() and not target.is_symlink():
+            current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+            if current_hash != entry["installed_sha256"]:
+                edited_rel = f"/var/lib/asahi-system/niri-performance/rollback-edits{relative}"
+                edited = prefixed(root, edited_rel)
+                edited.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, edited)
+                messages.append(f"saved post-install edits at {edited_rel}")
+        if entry.get("installed_target") and target.is_symlink() and os.readlink(target) != entry["installed_target"]:
+            messages.append(f"replacing post-install symlink edit at {relative}")
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.exists() and target.is_dir():
+            raise InstallError(f"refusing to recursively remove unexpected directory {target}")
+        if entry["kind"] == "file":
+            backup = prefixed(root, entry["backup"])
+            if not backup.is_file():
+                raise InstallError(f"required backup is missing: {backup}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, target)
+            messages.append(f"restored {relative}")
+        elif entry["kind"] == "symlink":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(entry["original_target"])
+            messages.append(f"restored symlink {relative}")
+        else:
+            messages.append(f"removed {relative}")
+    state_path = prefixed(root, STATE_PATH)
+    if state_path.exists():
+        state_path.unlink()
+    return messages
+
+
+def installed_rpm_packages() -> set[str]:
+    return installed_rpm_packages_for(PACKAGES)
+
+
+def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, str] | None = None, machine: str | None = None) -> None:
+    release = os_release if os_release is not None else parse_os_release()
+    arch = machine if machine is not None else platform.machine()
+    errors = target_mismatches(release, arch)
+    if errors:
+        raise InstallError("incompatible host: " + "; ".join(errors))
+    if os.geteuid() != 0:
+        raise InstallError("--apply requires root; use sudo")
+    if root != pathlib.Path("/"):
+        raise InstallError("test roots are not accepted by the installer CLI")
+    if shutil.which("dnf") is None:
+        raise InstallError("dnf was not found")
+    state = load_state(root)
+    installed_before = installed_rpm_packages()
+    state.setdefault("packages_installed_by_us", sorted(set(PACKAGES) - installed_before))
+    write_state(root, state)
+    _, changed = install_files(root)
+    try:
+        subprocess.run(["dnf", "install", "-y", "--setopt=install_weak_deps=False", *PACKAGES], check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        rollback_files(root)
+        raise InstallError(f"DNF installation failed; session files were rolled back: {exc}") from exc
+    state = load_state(root)
+    write_state(root, state)
+    state["known_good_version"] = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    write_state(root, state)
+    print("Installed the Niri session. Existing user services remain untouched.")
+    if not changed:
+        print("Session files were already current (idempotent run).")
+    missing = set(BASE_SERVICES) - installed_rpm_packages_for(BASE_SERVICES)
+    if missing:
+        print("WARNING: baseline audio/network packages not found; no service or package changes were made for them: " + ", ".join(sorted(missing)), file=sys.stderr)
+
+
+def installed_rpm_packages_for(names: tuple[str, ...]) -> set[str]:
+    present = set()
+    for package in names:
+        if subprocess.run(["rpm", "-q", package], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            present.add(package)
+    return present
+
+
+def rollback(root: pathlib.Path = pathlib.Path("/"), remove_packages: bool = False,
+             require_root: bool = True) -> None:
+    if require_root and os.geteuid() != 0:
+        raise InstallError("--rollback requires root; use sudo")
+    state = load_state(root)
+    messages = rollback_files(root)
+    for message in messages:
+        print(message)
+    if remove_packages:
+        packages = state.get("packages_installed_by_us", [])
+        if not isinstance(packages, list) or any(package not in PACKAGES for package in packages):
+            raise InstallError("install state contains an unexpected package name; refusing package removal")
+        if packages:
+            print("Removing only explicit packages recorded as absent before install; dependencies are retained.")
+            subprocess.run(["dnf", "remove", "--noautoremove", "-y", *packages], check=True)
+        else:
+            print("No explicit package is recorded as newly installed; no packages removed.")
+    else:
+        print("Packages remain installed. Pass --remove-packages to remove only packages recorded as newly installed; dependencies remain.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--dry-run", action="store_true", help="print the plan only (default)")
+    action.add_argument("--apply", action="store_true", help="install after strict host checks; requires root")
+    action.add_argument("--rollback", action="store_true", help="restore backed-up files and remove session files")
+    parser.add_argument("--remove-packages", action="store_true", help="with --rollback, remove only explicit packages newly installed by this installer")
+    args = parser.parse_args(argv)
+    if args.remove_packages and not args.rollback:
+        parser.error("--remove-packages requires --rollback")
+    try:
+        if args.apply:
+            apply_install()
+        elif args.rollback:
+            rollback(remove_packages=args.remove_packages)
+        else:
+            render_plan()
+            errors = target_mismatches(parse_os_release(), platform.machine())
+            if errors:
+                print("Apply will refuse this host: " + "; ".join(errors), file=sys.stderr)
+    except InstallError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except subprocess.CalledProcessError as exc:
+        print(f"error: command failed with exit {exc.returncode}: {exc.cmd}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

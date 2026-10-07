@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Install the niri+ CLI and its read-only benchmark/runtime assets.
+
+The default is a dry-run. Apply with sudo only after reviewing this script.
+It does not install Niri or change the graphical session.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import platform
+import shutil
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+LIB = pathlib.Path("/usr/local/lib/niri-plus")
+DATA = pathlib.Path("/usr/local/share/niri-plus")
+BIN = pathlib.Path("/usr/local/bin/niri+")
+STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
+
+
+def launcher() -> str:
+    return """#!/usr/bin/python3
+import sys
+import os
+os.environ.setdefault("NIRI_PLUS_DATA_DIR", "/usr/local/share/niri-plus")
+sys.path.insert(0, "/usr/local/lib/niri-plus")
+from niri_plus.cli import main
+raise SystemExit(main())
+"""
+
+
+def copy_tree(source: pathlib.Path, destination: pathlib.Path) -> None:
+    shutil.copytree(source, destination, symlinks=True)
+
+
+def install() -> None:
+    if os.geteuid() != 0:
+        raise RuntimeError("bootstrap --apply requires root; use sudo ./scripts/bootstrap-niri-plus --apply")
+    if STATE.is_symlink():
+        raise RuntimeError("bootstrap ownership state is a symlink; refusing to follow it")
+    existing = any(path.exists() for path in (LIB, DATA, BIN))
+    state = {}
+    if STATE.exists():
+        state = json.loads(STATE.read_text(encoding="utf-8"))
+        expected_paths = [str(LIB), str(DATA), str(BIN)]
+        if state.get("schema_version") != 1 or state.get("managed") != expected_paths:
+            raise RuntimeError("bootstrap ownership state is unknown; refusing to overwrite destinations")
+    elif existing:
+        raise RuntimeError("Niri+ bootstrap destinations already exist without ownership state; refusing to overwrite them")
+    if any(path.is_symlink() for path in (LIB, DATA, BIN)):
+        raise RuntimeError("a managed bootstrap destination is a symlink; refusing to replace it")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = pathlib.Path("/var/lib/niri-plus/bootstrap-backups") / stamp
+    replaced = []
+    if existing:
+        backup_root.mkdir(parents=True, exist_ok=False)
+        managed_paths = ((LIB, "lib"), (DATA, "share"), (BIN, "bin"))
+        for path, label in managed_paths:
+            if path.exists() or path.is_symlink():
+                saved = backup_root / label
+                if path.is_dir() and not path.is_symlink():
+                    copy_tree(path, saved)
+                else:
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, saved, follow_symlinks=False)
+                replaced.append(str(saved))
+
+    staging = pathlib.Path(tempfile.mkdtemp(prefix=".niri-plus-bootstrap-", dir="/usr/local"))
+    try:
+        lib_stage = staging / "lib/niri-plus"
+        data_stage = staging / "share/niri-plus"
+        lib_stage.mkdir(parents=True)
+        copy_tree(ROOT / "niri_plus", lib_stage / "niri_plus")
+        (lib_stage / "niri_plus/__pycache__").exists() and shutil.rmtree(lib_stage / "niri_plus/__pycache__")
+        data_stage.mkdir(parents=True)
+        shutil.copy2(ROOT / "VERSION", data_stage / "VERSION")
+        copy_tree(ROOT / "niri", data_stage / "niri")
+        copy_tree(ROOT / "sessions", data_stage / "sessions")
+        (data_stage / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts/collect-performance-baseline", data_stage / "scripts/collect-performance-baseline")
+        data_stage.joinpath("scripts/collect-performance-baseline").chmod(0o755)
+        for target in (LIB, DATA):
+            if target.exists():
+                shutil.rmtree(target)
+        LIB.parent.mkdir(parents=True, exist_ok=True)
+        DATA.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(lib_stage, LIB)
+        os.replace(data_stage, DATA)
+        bin_stage = staging / "niri+"
+        bin_stage.write_text(launcher(), encoding="utf-8")
+        bin_stage.chmod(0o755)
+        if BIN.exists() or BIN.is_symlink():
+            BIN.unlink()
+        BIN.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(bin_stage, BIN)
+    except Exception:
+        for path, label in ((LIB, "lib"), (DATA, "share"), (BIN, "bin")):
+            saved = backup_root / label
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            elif path.exists() or path.is_symlink():
+                path.unlink()
+            if saved.is_dir() and not saved.is_symlink():
+                copy_tree(saved, path)
+            elif saved.exists() or saved.is_symlink():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(saved, path, follow_symlinks=False)
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    state_content = json.dumps({
+        "schema_version": 1,
+        "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+        "backup": str(backup_root) if replaced else None,
+        "managed": [str(LIB), str(DATA), str(BIN)],
+    }, indent=2) + "\n"
+    state_tmp = STATE.with_suffix(".tmp")
+    state_tmp.write_text(state_content, encoding="utf-8")
+    os.replace(state_tmp, STATE)
+    print(f"Installed Niri+ CLI { (ROOT / 'VERSION').read_text(encoding='utf-8').strip() } at {BIN}")
+    print("No Niri packages or graphical session files were installed.")
+    if replaced:
+        print(f"Previous Niri+ CLI files were copied to {backup_root}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true", help="install the CLI; requires root")
+    args = parser.parse_args()
+    if not args.apply:
+        print("Niri+ CLI bootstrap dry-run (no host changes)")
+        print(f"Version: {(ROOT / 'VERSION').read_text(encoding='utf-8').strip()}")
+        print(f"Destinations: {LIB}, {DATA}, {BIN}")
+        print("To apply: sudo ./scripts/bootstrap-niri-plus --apply")
+        return 0
+    try:
+        install()
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"bootstrap failed: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

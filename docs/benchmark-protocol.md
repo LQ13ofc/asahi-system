@@ -2,7 +2,7 @@
 
 ## Coleta
 
-`scripts/collect-performance-baseline` é um coletor read-only. Ele só lê `/proc`, `/sys`, metadados do sistema e resultados de ferramentas de consulta. Não executa `drop_caches`, não altera sysctl, serviços, pacotes, mounts ou arquivos de configuração. Sem `--output`, escreve JSON em stdout; com `--output`, grava apenas o arquivo de captura solicitado.
+`niri+ benchmark` encaminha para o coletor read-only interno `scripts/collect-performance-baseline`. O coletor só lê `/proc`, `/sys`, metadados do sistema e resultados de ferramentas de consulta. Não executa `drop_caches`, não altera sysctl, serviços, pacotes, mounts ou arquivos de configuração. Sem `--output`, escreve JSON em stdout; com `--output`, grava apenas o arquivo de captura solicitado.
 
 Cada métrica tem um estado próprio:
 
@@ -22,6 +22,16 @@ A falta de debugfs, ferramentas, arquivos de kernel e interfaces cgroup não int
 5. Registre o perfil da sessão, energia/rede, horário e qualquer atividade externa em `conclusion.md`. Não compare capturas com condições diferentes como se fossem um A/B controlado.
 
 Não use `drop_caches`: isso cria um estado artificial e muda o comportamento normal do sistema. Registre baseline e hipótese antes de uma única mudança. Faça A/B com os mesmos passos; decida `KEEP`, `REVERT` ou `INCONCLUSIVE`, documente evidências e só então faça commit e PR. Nenhuma medição Cloud x86_64 substitui medição no M1.
+
+## Comparação de sessões B1/B2
+
+Depois de revisão e instalação manual da sessão B1, colete três perfis independentes:
+
+- **A — Plasma recovery:** login limpo na sessão Plasma, sem navegador, Steam, terminal ou aplicação extra.
+- **B — Niri puro (B1):** o mesmo login limpo e conjunto de aplicações, sem Quickshell.
+- **C — Niri + Quickshell (B2):** repetir sob as mesmas condições, com o Quickshell fixado em commit documentado.
+
+Para cada perfil, aguarde 2–3 minutos e faça cinco execuções do coletor. Registre mediana e MAD separadamente por perfil e horário. Compare Niri puro contra B1/B2 para separar o custo do compositor do custo da shell. Plasma serve como fotografia de recuperação/ganho, não como alvo de tuning. Não altere serviços ou pacotes entre esses perfis; se a sessão não for funcional/estável, encerre, volte para Plasma e registre o problema sem começar otimização.
 
 ## Esquema e interpretação
 

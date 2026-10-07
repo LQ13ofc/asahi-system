@@ -1,0 +1,2 @@
+// B1 has no exec-once collection. Niri's packaged systemd session starts and
+// stops the one optional session agent through graphical-session.target.

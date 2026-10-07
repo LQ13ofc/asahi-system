@@ -1,0 +1,2 @@
+// Do not hardcode panel name, resolution, refresh rate, or scale before the
+// first M1 session. Niri uses the display's supported defaults for B1.
