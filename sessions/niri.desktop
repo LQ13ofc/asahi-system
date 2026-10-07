@@ -1,6 +1,6 @@
 [Desktop Entry]
-Name=Niri Performance (B1)
-Comment=Minimal Niri session for the Fedora Asahi system
+Name=Niri
+Comment=Niri session for Fedora Asahi
 Exec=/usr/local/bin/asahi-niri-session
 TryExec=/usr/local/bin/asahi-niri-session
 Type=Application

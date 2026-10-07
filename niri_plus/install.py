@@ -20,11 +20,15 @@ import tempfile
 from typing import Any
 
 
-REPO = pathlib.Path(__file__).resolve().parents[1]
+_installed_data = pathlib.Path("/usr/local/share/niri-plus")
+REPO = pathlib.Path(os.environ.get(
+    "NIRI_PLUS_DATA_DIR",
+    _installed_data if (_installed_data / "VERSION").is_file() else pathlib.Path(__file__).resolve().parents[1],
+))
 PACKAGES = ("niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit")
 BASE_SERVICES = ("pipewire", "pipewire-pulseaudio", "wireplumber", "NetworkManager")
 MANAGED_FILES = {
-    "/usr/share/wayland-sessions/niri-performance.desktop": REPO / "sessions/niri-performance.desktop",
+    "/usr/share/wayland-sessions/niri-performance.desktop": REPO / "sessions/niri.desktop",
     "/usr/local/bin/asahi-niri-session": REPO / "sessions/launch/niri-session",
     "/usr/lib/systemd/user/asahi-niri-polkit-agent.service": REPO / "sessions/systemd/asahi-niri-polkit-agent.service",
     "/usr/local/share/asahi-system/niri/config.kdl": REPO / "niri/config.kdl",
@@ -69,7 +73,7 @@ def parse_os_release(path: pathlib.Path = pathlib.Path("/etc/os-release")) -> di
 
 def content_for(source: pathlib.Path) -> bytes:
     data = source.read_bytes()
-    if source == REPO / "sessions/niri-performance.desktop":
+    if source == REPO / "sessions/niri.desktop":
         # The installer marker lets a later run distinguish its own file.
         return b"# Managed by LQ13ofc/asahi-system; local edits are backed up on update.\n" + data
     return data
@@ -119,13 +123,23 @@ def load_state(root: pathlib.Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("schema_version") != 1 or not isinstance(data.get("entries"), dict):
             raise ValueError("unknown state schema")
+        allowed = set(MANAGED_FILES) | set(MANAGED_LINKS)
+        for relative, entry in data["entries"].items():
+            if relative not in allowed or not isinstance(entry, dict):
+                raise ValueError(f"unknown managed path in state: {relative}")
+            kind = entry.get("kind")
+            if kind not in {"preserve", "file", "symlink", "absent"}:
+                raise ValueError(f"invalid state entry for {relative}")
+            backup = entry.get("backup")
+            if backup is not None and backup != f"/var/lib/asahi-system/niri-performance/backups{relative}":
+                raise ValueError(f"invalid backup path for {relative}")
         return data
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise InstallError(f"cannot read install state {path}: {exc}") from exc
 
 
 def render_plan() -> None:
-    print("Niri Performance B1 dry-run (no host changes)")
+    print("Niri+ install plan (dry-run; no host changes)")
     print("Explicit packages:")
     for package in PACKAGES:
         print(f"  - {package}")
@@ -259,7 +273,9 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
         raise InstallError(f"DNF installation failed; session files were rolled back: {exc}") from exc
     state = load_state(root)
     write_state(root, state)
-    print("Installed the B1 session. The existing user services remain untouched.")
+    state["known_good_version"] = (REPO / "VERSION").read_text(encoding="utf-8").strip()
+    write_state(root, state)
+    print("Installed the Niri session. Existing user services remain untouched.")
     if not changed:
         print("Session files were already current (idempotent run).")
     missing = set(BASE_SERVICES) - installed_rpm_packages_for(BASE_SERVICES)
@@ -275,8 +291,9 @@ def installed_rpm_packages_for(names: tuple[str, ...]) -> set[str]:
     return present
 
 
-def rollback(root: pathlib.Path = pathlib.Path("/"), remove_packages: bool = False) -> None:
-    if os.geteuid() != 0:
+def rollback(root: pathlib.Path = pathlib.Path("/"), remove_packages: bool = False,
+             require_root: bool = True) -> None:
+    if require_root and os.geteuid() != 0:
         raise InstallError("--rollback requires root; use sudo")
     state = load_state(root)
     messages = rollback_files(root)
@@ -284,6 +301,8 @@ def rollback(root: pathlib.Path = pathlib.Path("/"), remove_packages: bool = Fal
         print(message)
     if remove_packages:
         packages = state.get("packages_installed_by_us", [])
+        if not isinstance(packages, list) or any(package not in PACKAGES for package in packages):
+            raise InstallError("install state contains an unexpected package name; refusing package removal")
         if packages:
             print("Removing only explicit packages recorded as absent before install; dependencies are retained.")
             subprocess.run(["dnf", "remove", "--noautoremove", "-y", *packages], check=True)

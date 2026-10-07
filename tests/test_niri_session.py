@@ -1,7 +1,5 @@
 import contextlib
 import configparser
-import importlib.machinery
-import importlib.util
 import io
 import pathlib
 import subprocess
@@ -13,11 +11,8 @@ import kdl
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "install-niri-performance"
-LOADER = importlib.machinery.SourceFileLoader("install_niri_performance", str(SCRIPT))
-SPEC = importlib.util.spec_from_loader("install_niri_performance", LOADER)
-installer = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(installer)
+from niri_plus import install
+installer = install
 
 
 class NiriSessionTests(unittest.TestCase):
@@ -29,11 +24,11 @@ class NiriSessionTests(unittest.TestCase):
 
     def test_desktop_entry_is_parseable_and_preserves_plasma_choice(self):
         parser = configparser.ConfigParser(interpolation=None)
-        parser.read(ROOT / "sessions/niri-performance.desktop", encoding="utf-8")
+        parser.read(ROOT / "sessions/niri.desktop", encoding="utf-8")
         entry = parser["Desktop Entry"]
         self.assertEqual(entry["Type"], "Application")
         self.assertEqual(entry["Exec"], "/usr/local/bin/asahi-niri-session")
-        self.assertEqual(entry["Name"], "Niri Performance (B1)")
+        self.assertEqual(entry["Name"], "Niri")
         self.assertNotIn("/usr/share/wayland-sessions/plasma.desktop", installer.MANAGED_FILES)
 
     def test_launcher_shell_syntax_and_delegates_lifecycle_to_niri(self):
@@ -81,7 +76,7 @@ class NiriSessionTests(unittest.TestCase):
              mock.patch.object(installer.platform, "machine", return_value="x86_64"):
             status = installer.main(["--dry-run"])
         self.assertEqual(status, 0)
-        self.assertIn("Niri Performance B1 dry-run", output.getvalue())
+        self.assertIn("Niri+ install plan", output.getvalue())
         self.assertIn("Apply will refuse this host", error.getvalue())
 
     def test_install_is_idempotent_and_rollback_restores_backups(self):
@@ -96,7 +91,7 @@ class NiriSessionTests(unittest.TestCase):
             self.assertTrue(first_changed)
             self.assertFalse(second_changed)
             installed_content = preexisting.read_text()
-            self.assertIn("Niri Performance (B1)", installed_content)
+            self.assertIn("Name=Niri", installed_content)
 
             restored = installer.rollback_files(root)
             self.assertEqual(preexisting.read_text(), "user session entry\n")
