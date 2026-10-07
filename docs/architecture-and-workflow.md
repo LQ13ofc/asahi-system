@@ -4,10 +4,10 @@
 
 | Repositório | Responsabilidade | Estado observado |
 |---|---|---|
-| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline e futura configuração reproduzível do sistema. | Baseline, coletor read-only, protocolo A/B e sessão Niri mínima B1 preparada em PR; nada foi instalado no M1. |
+| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline, CLI Niri+, configuração Niri, lifecycle e integração. | Baseline, coletor read-only, instalador reversível B1 e lifecycle B2 de Quickshell em main. O primeiro login real no M1 confirmou Niri, teclado/trackpad para operar, terminal e barra Quickshell; outros checks de hardware ainda faltam. |
 | [`quickshell-`](https://github.com/LQ13ofc/quickshell-) | Interface da barra e painéis Quickshell usados com Niri. | Mantém QML, serviços, `niri/barra.kdl`, documentação e harness de teste no próprio repositório. |
 
-A integração entre eles é uma dependência de runtime: o sistema deverá fornecer os programas, bibliotecas e serviços que a barra usa; a configuração e o código da barra continuam pertencendo a `quickshell-`. O README da interface documenta Quickshell 0.2.1, Niri 26.04, `qs -c barra` e dependências como NetworkManager, PipeWire, BlueZ, UPower, Python D-Bus/GObject e `curl` (`cava` é opcional). Ao alterar essa interface, atualize e revise cada repositório separadamente.
+A integração entre eles é um submodule externo mais `integration/quickshell.lock.json`; o gitlink e o lock fixam o mesmo commit. O engine ARM64 `quickshell-0:0.3.1-2.fc44` tem pin independente. O README da interface documenta a API original 0.2.1 e a transição do indicador Wi-Fi para `Quickshell.Networking` 0.3.1. Ao alterar essa interface, atualize e revise cada repositório separadamente.
 
 O objetivo gráfico otimizado é uma sessão principal Niri Performance. Gaming é um mode/profile dentro do mesmo compositor: `Gaming Mode == Gamescope ativo`; fora dele, jogo ou Steam pode rodar normalmente no Niri. Não existe sessão Steam independente nem backend `direct-niri` para Gaming Mode. Steam inicia sob demanda; ARM64 nativo roda no host e jogos x86 podem seguir Steam → muvm → FEX → Proton. Consulte `docs/session-architecture.md`. Plasma fica somente como recovery/fallback durante o desenvolvimento: o baseline ajuda a entender o estado atual, identificar processos KDE ausentes em Niri e comparar ganhos, sem tuning de Plasma.
 
@@ -43,20 +43,24 @@ python3 scripts/validate_baseline.py
 python3 -m unittest discover -s tests -v
 ```
 
-Os testes de `asahi-system` usam `kdl-py` fixado em `requirements-test.txt` para parsear KDL; o workflow CI instala essa dependência. Para o harness do repositório separado `quickshell-`, use um virtualenv fora dos checkouts e instale as versões que foram validadas neste ambiente Cloud:
+Os testes de `asahi-system` usam `kdl-py` fixado em `requirements-test.txt` para parsear KDL; o workflow CI instala essa dependência. Para o harness do repositório separado `quickshell-`, use um virtualenv fora dos checkouts e instale as dependências declaradas pelo próprio repositório:
 
 ```bash
 python3.12 -m venv /workspace/.venvs/quickshell-tests
-/workspace/.venvs/quickshell-tests/bin/python -m pip install \
-  'PySide6==6.11.2' 'Pillow==12.3.0'
-
 cd /workspace/repos/quickshell-
+/workspace/.venvs/quickshell-tests/bin/python -m pip install \
+  -r requirements-test.txt
+
 QT_QPA_PLATFORM=offscreen /workspace/.venvs/quickshell-tests/bin/python tests/run.py load
 QT_QPA_PLATFORM=offscreen /workspace/.venvs/quickshell-tests/bin/python tests/run.py render --all
 /workspace/.venvs/quickshell-tests/bin/python tests/test_agenda_lifecycle.py
 /workspace/.venvs/quickshell-tests/bin/python tests/test_bluetooth_lifecycle.py
 /workspace/.venvs/quickshell-tests/bin/python tests/test_netctl.py
 /workspace/.venvs/quickshell-tests/bin/python tests/test_notifications.py
+/workspace/.venvs/quickshell-tests/bin/python tests/test_network_indicator.py
+/workspace/.venvs/quickshell-tests/bin/python tests/test_niri_integration_contract.py
+/workspace/.venvs/quickshell-tests/bin/python -m compileall -q services tests
+/workspace/.venvs/quickshell-tests/bin/python tests/lint_qml.py
 ```
 
 O wheel de PySide6 inclui as ferramentas e módulos Qt necessários ao harness; não é preciso instalar um SDK Qt do sistema para esses comandos. Use `/workspace/.venvs/quickshell-tests/bin/pyside6-qmllint` para o lint Qt 6. Neste Cloud, `/usr/bin/qmllint` é um shim `qtchooser` que aponta para uma instalação Qt 5 ausente. O lint de QML é consultivo: mesmo com os caminhos de módulos gerados pelo harness, o linter reporta avisos porque não conhece todos os tipos Quickshell externos e os tipos registrados pelo harness Python. O comando de carga do harness é a validação QML executável disponível.

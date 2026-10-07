@@ -23,15 +23,15 @@ A falta de debugfs, ferramentas, arquivos de kernel e interfaces cgroup não int
 
 Não use `drop_caches`: isso cria um estado artificial e muda o comportamento normal do sistema. Registre baseline e hipótese antes de uma única mudança. Faça A/B com os mesmos passos; decida `KEEP`, `REVERT` ou `INCONCLUSIVE`, documente evidências e só então faça commit e PR. Nenhuma medição Cloud x86_64 substitui medição no M1.
 
-## Comparação de sessões B1/B2
+## Comparação da sessão Niri e do shell
 
-Depois de revisão e instalação manual da sessão B1, colete três perfis independentes:
+Com a instalação B2 atual, colete três perfis independentes:
 
 - **A — Plasma recovery:** login limpo na sessão Plasma, sem navegador, Steam, terminal ou aplicação extra.
-- **B — Niri puro (B1):** o mesmo login limpo e conjunto de aplicações, sem Quickshell.
-- **C — Niri + Quickshell (B2):** repetir sob as mesmas condições, com o Quickshell fixado em commit documentado.
+- **B — Niri sem shell:** faça login limpo em Niri, pare `asahi-quickshell.service` apenas para esse login, feche o terminal usado para executar o comando e aguarde novamente 2–3 minutos. Não desabilite nem mascare a unidade.
+- **C — Niri + Quickshell:** use o lifecycle normal com a unidade ativa e o commit registrado em `niri+ status`.
 
-Para cada perfil, aguarde 2–3 minutos e faça cinco execuções do coletor. Registre mediana e MAD separadamente por perfil e horário. Compare Niri puro contra B1/B2 para separar o custo do compositor do custo da shell. Plasma serve como fotografia de recuperação/ganho, não como alvo de tuning. Não altere serviços ou pacotes entre esses perfis; se a sessão não for funcional/estável, encerre, volte para Plasma e registre o problema sem começar otimização.
+Para cada perfil, faça login fresco, aguarde 2–3 minutos e faça cinco execuções do coletor. Registre mediana e MAD separadamente por perfil e horário. Compare Niri sem shell com Niri+Quickshell para separar o custo do compositor do custo visual. Plasma serve como fotografia de recuperação/ganho, não como alvo de tuning. Não altere serviços globalmente nem pacotes entre esses perfis; se a sessão não for funcional/estável, volte para Plasma e registre o problema sem começar otimização.
 
 ## Esquema e interpretação
 

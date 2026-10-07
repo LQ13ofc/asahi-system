@@ -2,7 +2,7 @@
 
 ## Scope
 
-B1 is a first, deliberately plain Niri session. Quickshell is deferred to B2 so its cost can be measured separately. This change prepares files and a reversible installer; it does not install packages or change the Mac. Plasma remains installed and selectable in the display manager as recovery.
+B1 introduced the Fedora-packaged Niri session and minimal base tools; B2 integrates the pinned Quickshell checkout. On the first real M1 login, Niri rendered through Honeykrisp/Wayland, keyboard/trackpad operation and the terminal keybind worked, and the Quickshell bar appeared. Command+Space is now bound to Fuzzel but still needs a real M1 smoke test; audio/network, suspend/resume and KDE-autostart isolation also remain pending. Plasma remains installed and selectable as recovery.
 
 Gaming Mode is out of scope. It means Gamescope active inside this same Niri session. Normal Niri may run Steam or a game without Gamescope; that is not Gaming Mode. There is no direct-Niri Gaming Mode fallback.
 
@@ -22,19 +22,20 @@ Sources:
 - [Niri user service](https://github.com/niri-wm/niri/blob/main/resources/niri.service)
 - [Niri shutdown target](https://github.com/niri-wm/niri/blob/main/resources/niri-shutdown.target)
 
-### Explicit B1 package set
+### Explicit Niri+ session package set
 
 | Package | Why it is included |
 |---|---|
 | `niri` | Wayland compositor and packaged `niri-session`, `niri.service`, shutdown target, portal configuration and standard session entry. |
 | `foot` | Small native Wayland terminal bound to Mod+Return. |
-| `fuzzel` | Native Wayland application launcher bound to Mod+D. |
+| `fuzzel` | Native Wayland application launcher; Command/Super+Space is primary and Mod+D remains an alias. |
 | `xdg-desktop-portal-gtk` | Basic portal backend for file chooser and common desktop requests. Screen capture portal support is not enabled in B1. |
 | `lxqt-policykit` | Lightweight Qt PolicyKit authentication agent (`/usr/libexec/lxqt-policykit-agent`), started only for the Niri graphical session. |
+| `python3-dbus`, `python3-gobject` | Python 3 is part of the Fedora base; the on-demand NetworkManager control helper uses these D-Bus/GLib bindings. |
 
 Fedora's Niri RPM has a hard dependency on `xwayland-satellite >= 0.7`; DNF installs it, and Niri starts it on demand for X11 clients. Do not add a manual `exec-once` or `DISPLAY` setup. Package `pipewire`, `pipewire-pulseaudio`, `wireplumber`, and `NetworkManager` were found installed in the real baseline. The installer checks and reports their presence but does not install, enable, restart, or reconfigure them.
 
-The installer sets `install_weak_deps=False` to avoid Fedora's optional Niri suggestions (Waybar, GNOME portal, keyring, swaylock and similar) in this first comparison. This means B1 does not promise GNOME screencasting, Secret portal, screen lock, notifications, screenshots, clipboard history, wallpaper, or Quickshell. These can be added as separately measured session features. RPM dependencies remain DNF-managed.
+The installer sets `install_weak_deps=False` to avoid Fedora's optional Niri suggestions (Waybar, GNOME portal, keyring, swaylock and similar). The base session does not promise GNOME screencasting, Secret portal, screen lock, screenshots, clipboard history or wallpaper. B2 adds the separate Quickshell engine and pinned visual checkout; the visual repository owns the UI. RPM dependencies remain DNF-managed.
 
 Package metadata is mutable. Before applying on the Mac, DNF's live Fedora Asahi repository resolution remains the authoritative availability check; if a package has disappeared or needs another repo, stop and investigate instead of adding a foreign RPM source.
 
@@ -44,17 +45,17 @@ Niri+ reuses Fedora's packaged `Niri` display-manager entry instead of adding a 
 
 The Niri+ defaults are installed at `/etc/niri/config.kdl` (plus its included KDL files), which is the system fallback supported by Niri. This keeps Fedora's packaged `niri-session` lifecycle intact and avoids a custom display-manager launcher.
 
-The packaged session script already imports the login environment into `systemd --user`, updates D-Bus activation environment, starts and waits for `niri.service`, starts `niri-shutdown.target`, and unsets session variables. Fedora's Niri user service orders itself around `graphical-session-pre.target`, binds to `graphical-session.target`, and brings up `xdg-desktop-autostart.target`; the shutdown target conflicts with graphical session targets. B1 uses that upstream lifecycle rather than duplicating it.
+The packaged session script already imports the login environment into `systemd --user`, updates D-Bus activation environment, starts and waits for `niri.service`, starts `niri-shutdown.target`, and unsets session variables. Fedora's Niri user service orders itself around `graphical-session-pre.target`, binds to `graphical-session.target`, and brings up `xdg-desktop-autostart.target`; the shutdown target conflicts with graphical session targets. Niri+ uses that upstream lifecycle rather than duplicating it.
 
 The PolicyKit agent is one user service wanted by `graphical-session.target`, conditioned on `XDG_CURRENT_DESKTOP=niri`, and `PartOf` that target. It therefore starts only in this Niri session and stops when the session target stops; Plasma's session environment does not satisfy the condition. NetworkManager, PipeWire, WirePlumber, `speakersafetyd`, SDDM and other system services are left untouched.
 
-No output name, resolution, refresh rate, scale or Asahi-specific environment variables are guessed before testing on the M1. Xwayland support is package-provided and on-demand. There is no manual Xwayland service, screenshot tool, clipboard utility, shell, or `exec-once` app group in B1.
+No output name, resolution, refresh rate, scale or Asahi-specific environment variables are guessed before testing on the M1. Xwayland support is package-provided and on-demand. There is no manual Xwayland service or `exec-once` app group; the user-facing Niri session comes from Fedora's package.
 
 ## Safe installer and rollback
 
-The public interface is the `niri+` CLI. The single repository bootstrap entrypoint is `scripts/bootstrap-niri-plus`; it installs only the CLI and its runtime data, defaults to dry-run, and does not install Niri. After bootstrap, `niri+ install --dry-run` displays the plan. Applying requires root (`sudo niri+ install`) and an exact host match: `ID=fedora-asahi-remix`, `VERSION_ID=44`, `aarch64`. It installs only the explicit package list with weak dependencies disabled, adds uniquely named session/config files, and backs up any files it must replace under `/var/lib/asahi-system/niri-performance/`. Repeated apply is idempotent. It does not edit SDDM configuration, Plasma, boot/kernel/driver files, global services, or existing audio/network configuration.
+The public interface is the `niri+` CLI. The single bootstrap entrypoint is `scripts/bootstrap-niri-plus`; it installs only the CLI and runtime data, defaults to dry-run, and does not install Niri. Bootstrap requires a clean official `asahi-system` `main` checkout equal to cached `origin/main`, plus the clean pinned Quickshell submodule. After bootstrap, `niri+ install --dry-run` displays the plan. `sudo niri+ install` verifies and fast-forwards the official source checkout as its owner, synchronizes submodules, re-bootstraps the CLI, re-execs once and applies only on an exact host match: `ID=fedora-asahi-remix`, `VERSION_ID=44`, `aarch64`. It installs explicit packages with weak dependencies disabled, reuses Fedora's session entry, and backs up replaced files under `/var/lib/asahi-system/niri-performance/`. Repeated apply is idempotent. It does not edit SDDM configuration, Plasma, boot/kernel/driver files, global services, or existing audio/network configuration.
 
-Rollback restores backed-up files and removes only files created by this installer. By default packages stay installed; `--remove-packages` removes only explicit packages recorded as absent before apply, using `dnf remove --noautoremove`, and retains shared dependencies. Post-install local edits are saved in the rollback state directory before files are restored.
+Rollback restores backed-up files and removes only files created by this installer. It validates every backup before deleting managed files and preserves post-install edits in the rollback state directory. By default packages stay installed and their ownership record is retained; `--remove-packages` removes only explicit packages recorded as absent before apply, using `dnf remove --noautoremove`, and retains shared dependencies.
 
 The initial safe command sequence for later Mac use is:
 
@@ -62,22 +63,32 @@ The initial safe command sequence for later Mac use is:
 sudo ./scripts/bootstrap-niri-plus --apply && sudo niri+ install
 ```
 
-Bootstrap installs the CLI only; the second command installs the Niri session. `niri+ rollback` restores only Niri+ managed files. Uninstall also removes only explicitly tracked packages installed by Niri+, using DNF with `--noautoremove`. The updater remains unavailable until versioned releases, content verification, and a health-check rollback protocol exist. Status and doctor are read-only. No command was run on the Mac in this phase.
+Bootstrap installs the CLI only; the second command installs the Niri session. `niri+ rollback` restores only Niri+ managed files and retains package ownership for a later uninstall. `niri+ update` remains an unavailable stub because signed/versioned releases and a cross-repository health-check rollback protocol are not defined. The self-update path is part of `sudo niri+ install`; it does not call the source commit known-good. Status and doctor are read-only. The initial Niri and Quickshell login test has run on the Mac; further checks remain pending.
 
 ### Niri+ command surface
 
 `VERSION` is the single tracked source for the Niri+ application version. The bootstrap installs the Python CLI under `/usr/local/lib/niri-plus`, its data/collector under `/usr/local/share/niri-plus`, and the public executable at `/usr/local/bin/niri+`. It defaults to dry-run and backs up a previously bootstrapped copy before replacing it. It refuses unmanaged destinations.
 
-- `niri+ status`: read-only host/session/package/service summary; optional Quickshell, Gamescope and Steam can be absent without treating that as an installation failure.
+- `niri+ status`: read-only host/session/package/service summary; Quickshell is part of the B2 setup. Gamescope and Steam remain optional/unavailable until separately validated.
 - `niri+ install [--dry-run]`: uses the existing strict Fedora Asahi 44/aarch64 installer. Apply requires `sudo niri+ install`; privilege is not retained by a resident process.
 - `niri+ rollback`: restores only files recorded by the installer; package removal is opt-in with `--remove-packages`.
 - `niri+ uninstall`: removes tracked session files and only packages recorded as newly installed; it does not remove shared dependencies or protected system components.
 - `niri+ doctor`: read-only diagnostics, including managed-file checksums and M1-required hardware checks.
 - `niri+ benchmark [--runs N] [--output FILE]`: forwards arguments to the existing Phase A collector.
-- `niri+ update`: safe unavailable stub. It performs no changes until signed/versioned releases, content validation, a known-good point, and health-check rollback are designed.
+- `niri+ update`: safe unavailable stub. Normal `sudo niri+ install` refreshes the trusted main checkout before applying the session; `update` does not perform that action.
 
 ## Cloud checks and M1-required validation
 
 Cloud tests cover KDL syntax parsing, desktop-entry shape, shell syntax, package manifest, target refusal logic, idempotency, backup and rollback in a temporary directory. They do not prove Niri option semantics, session-manager discovery, sound, networking, input, suspend/resume, Honeykrisp rendering, or power behavior.
 
-**M1_REQUIRED:** confirm DNF resolves the documented package set from configured Fedora Asahi repositories; confirm the new session appears beside Plasma in SDDM/Plasma Login; boot the Niri session and check internal keyboard/trackpad/touch input, audio output and volume/mute keys, Wi-Fi reconnect, lock/logout, suspend/resume, external display behavior if used, and returning to Plasma recovery. Capture the first Niri baseline only after a fresh login and 2–3 minutes idle with no terminal/browser/application open; use `niri+ benchmark --runs 5`. Quickshell comparison follows separately.
+**M1_REQUIRED:** confirm the installed package set and the single Fedora-provided Niri entry in SDDM; verify Command+Space opens Fuzzel and launches an application; verify PipeWire/WirePlumber audio, Wi-Fi reconnect, lock/logout, suspend/resume, external display behavior if used, no KDE XDG autostarts or XWayland Video Bridge in Niri, and return to Plasma recovery. The first Quickshell bar already appeared, but session lifecycle/restart and all device behavior remain to be checked. Capture comparable idle baselines only after a fresh login and 2–3 minutes of stabilization; use five runs per profile.
+
+## Release gate review
+
+The main branch configuration had no `Mod+Space` binding; `Mod+D` was the only Fuzzel binding. The audit adds Command/Super+Space as the primary launcher and retains Mod+D as an alias. `Mod` maps to Super; the Mac Command key already operated a working `Mod+Return` terminal binding. The Fuzzel package is explicitly in the install set, but the launcher process and its application list still require the M1 smoke test.
+
+The old custom `sessions/niri.desktop` and `sessions/launch/niri-session` source files are removed. Fedora's packaged `niri.desktop`/`niri-session` remains the only entry and keeps the upstream graphical-session lifecycle. The installer retains old managed paths only to safely migrate and roll back prior installations.
+
+The release gate checks managed configuration hashes and links, Niri's own read-only config validator, session duplicates, Fuzzel availability, Quickshell pin/state, any Quickshell process including unmanaged `qs -c` invocations, unit restart state and known KDE autostarts. Previous install state mislabeled an applied version as known-good; status now flags that legacy state and does not silently claim it passed a health check. A future update that fails after `git pull` can leave the source checkout advanced; retry is safe, but source and Quickshell updates do not yet have transactional known-good rollback.
+
+The four KDE XDG autostarts present in the Plasma baseline are session-scoped by per-unit user-systemd conditions. This preserves Plasma eligibility and does not mask global units. Cloud validates the unit names, conditions, config, and rollback; confirmation that systemd imported the session environment and skipped these generated units remains M1_REQUIRED.
