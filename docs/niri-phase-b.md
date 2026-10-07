@@ -53,29 +53,23 @@ No output name, resolution, refresh rate, scale or Asahi-specific environment va
 
 ## Safe installer and rollback
 
-The public interface is the `niri+` CLI. The single bootstrap entrypoint is `scripts/bootstrap-niri-plus`; it installs only the CLI and runtime data, defaults to dry-run, and does not install Niri. Bootstrap requires a clean official `asahi-system` `main` checkout equal to cached `origin/main`, plus the clean pinned Quickshell submodule. After bootstrap, `niri+ install --dry-run` displays the plan. `sudo niri+ install` verifies and fast-forwards the official source checkout as its owner, synchronizes submodules, re-bootstraps the CLI, re-execs once and applies only on an exact host match: `ID=fedora-asahi-remix`, `VERSION_ID=44`, `aarch64`. It installs explicit packages with weak dependencies disabled, reuses Fedora's session entry, and backs up replaced files under `/var/lib/asahi-system/niri-performance/`. Repeated apply is idempotent. It does not edit SDDM configuration, Plasma, boot/kernel/driver files, global services, or existing audio/network configuration.
+The public interface is the `niri+` CLI. The single bootstrap entrypoint is `scripts/bootstrap-niri-plus`; it installs only the CLI and runtime data, defaults to dry-run, and does not install Niri. Bootstrap requires a clean official `asahi-system` `main` checkout equal to cached `origin/main`, plus the clean pinned Quickshell submodule. `niri+ status`, `niri+ doctor` and `niri+ install --dry-run` are read-only. The apply path verifies/fast-forwards the official checkout as its owner, synchronizes submodules, re-bootstraps the CLI, re-execs once and checks the exact host match (`ID=fedora-asahi-remix`, `VERSION_ID=44`, `aarch64`). But it then executes a mutable user-owned bootstrap as root; do not run apply until this TOCTOU boundary is replaced with a root-owned verified immutable snapshot. If/when released, the installer uses explicit packages with weak dependencies disabled, reuses Fedora's session entry, backs up replaced files under `/var/lib/asahi-system/niri-performance/`, remains idempotent, and leaves SDDM configuration, Plasma, boot/kernel/driver files, global services, and existing audio/network configuration alone.
 
 Rollback restores backed-up files and removes only files created by this installer. It validates every backup before deleting managed files and preserves post-install edits in the rollback state directory. By default packages stay installed and their ownership record is retained; `--remove-packages` removes only explicit packages recorded as absent before apply, using `dnf remove --noautoremove`, and retains shared dependencies.
 
-The initial safe command sequence for later Mac use is:
-
-```sh
-sudo ./scripts/bootstrap-niri-plus --apply && sudo niri+ install
-```
-
-Bootstrap installs the CLI only; the second command installs the Niri session. `niri+ rollback` restores only Niri+ managed files and retains package ownership for a later uninstall. `niri+ update` remains an unavailable stub because signed/versioned releases and a cross-repository health-check rollback protocol are not defined. The self-update path is part of `sudo niri+ install`; it does not call the source commit known-good. Status and doctor are read-only. The initial Niri and Quickshell login test has run on the Mac; further checks remain pending.
+Do not apply the installer until the security gate below is closed. `niri+ rollback` restores only Niri+ managed files and retains package ownership for a later uninstall. `niri+ update` remains an unavailable stub because signed/versioned releases and a cross-repository health-check rollback protocol are not defined. The self-update path is part of `sudo niri+ install`; it does not call the source commit known-good. Status, doctor and dry-run remain read-only. The initial Niri and Quickshell login test has run on the Mac; further checks remain pending.
 
 ### Niri+ command surface
 
 `VERSION` is the single tracked source for the Niri+ application version. The bootstrap installs the Python CLI under `/usr/local/lib/niri-plus`, its data/collector under `/usr/local/share/niri-plus`, and the public executable at `/usr/local/bin/niri+`. It defaults to dry-run and backs up a previously bootstrapped copy before replacing it. It refuses unmanaged destinations.
 
 - `niri+ status`: read-only host/session/package/service summary; Quickshell is part of the B2 setup. Gamescope and Steam remain optional/unavailable until separately validated.
-- `niri+ install [--dry-run]`: uses the existing strict Fedora Asahi 44/aarch64 installer. Apply requires `sudo niri+ install`; privilege is not retained by a resident process.
+- `niri+ install [--dry-run]`: dry-run is currently safe. Apply requires `sudo niri+ install`, but is blocked until self-update runs bootstrap from a root-owned verified snapshot.
 - `niri+ rollback`: restores only files recorded by the installer; package removal is opt-in with `--remove-packages`.
 - `niri+ uninstall`: removes tracked session files and only packages recorded as newly installed; it does not remove shared dependencies or protected system components.
 - `niri+ doctor`: read-only diagnostics, including managed-file checksums and M1-required hardware checks.
 - `niri+ benchmark [--runs N] [--output FILE]`: forwards arguments to the existing Phase A collector.
-- `niri+ update`: safe unavailable stub. Normal `sudo niri+ install` refreshes the trusted main checkout before applying the session; `update` does not perform that action.
+- `niri+ update`: safe unavailable stub. The self-refresh logic exists inside `sudo niri+ install`, but is not release-ready until its root/user TOCTOU boundary is closed.
 
 ## Cloud checks and M1-required validation
 
