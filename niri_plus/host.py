@@ -122,6 +122,8 @@ def installation_state(root: pathlib.Path) -> tuple[str, dict]:
 
 def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = None,
                 runner: Runner = subprocess.run) -> dict:
+    from . import quickshell
+
     machine = machine or platform.machine()
     release = read_os_release(root)
     host = release.get("PRETTY_NAME") or "Unknown Linux"
@@ -138,7 +140,8 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         except OSError:
             managed_files[absolute] = NOT_INSTALLED
     niri_state, niri_version = command_version("niri", runner, root)
-    quickshell = OK if find_binary(root, "qs") else NOT_INSTALLED
+    quickshell_info = quickshell.report(root, runner)
+    quickshell_info["known_good_commit"] = state.get("quickshell", {}).get("known_good_commit") or NOT_CONFIGURED
     gamescope = OK if find_binary(root, "gamescope") else UNAVAILABLE
     steam = OK if find_binary(root, "steam") else NOT_INSTALLED
     report = {
@@ -167,10 +170,10 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
             "speakersafetyd": service_status("speakersafetyd.service", runner, root=root),
         },
         "optional": {
-            "Quickshell": quickshell,
             "Gamescope": gamescope,
             "Steam": steam,
         },
+        "quickshell": quickshell_info,
         "m1_checks": M1_REQUIRED,
         "warnings": _warnings(release, machine, state_status, gamescope),
     }
@@ -182,6 +185,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         if status != OK:
             report["warnings"].append(f"Managed file check failed for {absolute}: {status}.")
     report["warnings"].append("Real input, audio, Wi-Fi, suspend/resume and graphics behavior require M1_REQUIRED validation.")
+    report["warnings"].extend(quickshell_info["warnings"])
     return report
 
 

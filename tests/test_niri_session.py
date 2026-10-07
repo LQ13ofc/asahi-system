@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
+import json
 from unittest import mock
 
 import kdl
@@ -38,9 +39,51 @@ class NiriSessionTests(unittest.TestCase):
 
     def test_only_minimal_explicit_packages_are_requested(self):
         package_lines = [line.strip() for line in (ROOT / "packages/niri-performance.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
-        self.assertEqual(package_lines, ["niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit"])
+        self.assertEqual(package_lines, ["niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit", "quickshell"])
         self.assertNotIn("plasma", " ".join(package_lines))
         self.assertNotIn("gamescope", " ".join(package_lines))
+
+    def test_quickshell_submodule_and_lock_have_same_exact_pin(self):
+        lock = json.loads((ROOT / "integration/quickshell.lock.json").read_text())
+        gitmodules = (ROOT / ".gitmodules").read_text()
+        self.assertIn('path = external/quickshell', gitmodules)
+        self.assertIn('url = https://github.com/LQ13ofc/quickshell-.git', gitmodules)
+        self.assertEqual(lock["repository"], "https://github.com/LQ13ofc/quickshell-.git")
+        self.assertRegex(lock["commit"], r"^[0-9a-f]{40}$")
+        self.assertEqual(lock["checkout"], "external/quickshell")
+        self.assertEqual(lock["engine"]["architecture"], "aarch64")
+        self.assertEqual(lock["engine"]["compatibility"], "M1_REQUIRED")
+        if (ROOT / ".git").exists():
+            result = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "HEAD", "external/quickshell"],
+                                    check=True, capture_output=True, text=True)
+            fields = result.stdout.split()
+            self.assertGreaterEqual(len(fields), 4)
+            self.assertEqual(fields[0], "160000")
+            self.assertEqual(fields[1], "commit")
+            self.assertEqual(fields[2], lock["commit"])
+        else:
+            self.skipTest("Cloud source archive has no Git tree metadata; CI validates the gitlink")
+
+    def test_visual_qml_is_not_duplicated_in_asahi_system(self):
+        self.assertEqual(list(ROOT.rglob("*.qml")), [])
+
+    def test_quickshell_lifecycle_and_no_niri_exec_once_duplication(self):
+        unit = (ROOT / "sessions/systemd/asahi-quickshell.service").read_text()
+        self.assertIn("ConditionEnvironment=XDG_CURRENT_DESKTOP=niri", unit)
+        self.assertIn("After=graphical-session-pre.target", unit)
+        self.assertIn("PartOf=graphical-session.target", unit)
+        self.assertIn("WantedBy=graphical-session.target", unit)
+        self.assertIn("Restart=on-failure", unit)
+        self.assertIn("ExecStart=/usr/bin/qs --path /usr/local/share/niri-plus/quickshell/shell.qml", unit)
+        self.assertIn("asahi-quickshell.service", installer.MANAGED_LINKS["/usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service"])
+        self.assertNotIn("spawn-at-startup", "\n".join(path.read_text() for path in (ROOT / "niri").glob("*.kdl")))
+
+    def test_xwayland_video_bridge_is_only_filtered_for_plasma_context(self):
+        dropin = (ROOT / "sessions/systemd/autostart-filters/app-org.kde.xwaylandvideobridge@autostart.service.d/10-niri-session.conf").read_text()
+        self.assertIn("ConditionEnvironment=XDG_CURRENT_DESKTOP=KDE", dropin)
+        self.assertEqual(len([path for path in installer.MANAGED_FILES if "xwaylandvideobridge" in path]), 1)
+        self.assertFalse(any("disable" in str(path).lower() for path in installer.MANAGED_LINKS))
+        self.assertFalse(any("xwaylandvideobridge" in path for path in installer.LEGACY_MANAGED_PATHS))
 
     def test_target_checks_reject_cloud_and_non_asahi(self):
         fedora_asahi_44 = {"ID": "fedora-asahi-remix", "VERSION_ID": "44"}

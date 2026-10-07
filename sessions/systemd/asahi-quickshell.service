@@ -1,0 +1,17 @@
+[Unit]
+Description=Niri+ Quickshell visual layer
+Documentation=https://github.com/LQ13ofc/asahi-system
+ConditionEnvironment=XDG_CURRENT_DESKTOP=niri
+After=graphical-session-pre.target
+PartOf=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs --path /usr/local/share/niri-plus/quickshell/shell.qml
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=graphical-session.target

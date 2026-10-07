@@ -1,4 +1,4 @@
-# Explicit B1 packages from Fedora 44 Everything/updates aarch64.
+# Explicit Niri session packages from Fedora 44 Everything/updates aarch64.
 # Niri has a hard RPM dependency on xwayland-satellite (>= 0.7); DNF resolves it.
 # install_weak_deps=False keeps Niri's optional Waybar, keyring, GNOME portal,
 # lock screen, and other suggestions out of the first minimal-session trial.
@@ -7,3 +7,6 @@ foot
 fuzzel
 xdg-desktop-portal-gtk
 lxqt-policykit
+# Version and signed Fedora 44 aarch64 COPR source are pinned separately in
+# integration/quickshell.lock.json. This is the ARM64-native visual engine.
+quickshell
