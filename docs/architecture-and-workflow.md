@@ -4,12 +4,12 @@
 
 | Repositório | Responsabilidade | Estado observado |
 |---|---|---|
-| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline e futura configuração reproduzível do sistema. | Por enquanto contém o baseline do MacBook e validação estática; ainda não declara pacotes ou sessões. |
+| [`asahi-system`](https://github.com/LQ13ofc/asahi-system) | Fonte principal do sistema Fedora Asahi: perfil do hardware, baseline e futura configuração reproduzível do sistema. | Baseline do MacBook, validação estática, coletor read-only e protocolo de experimento; ainda não aplica nem declara pacotes/sessões. |
 | [`quickshell-`](https://github.com/LQ13ofc/quickshell-) | Interface da barra e painéis Quickshell usados com Niri. | Mantém QML, serviços, `niri/barra.kdl`, documentação e harness de teste no próprio repositório. |
 
 A integração entre eles é uma dependência de runtime: o sistema deverá fornecer os programas, bibliotecas e serviços que a barra usa; a configuração e o código da barra continuam pertencendo a `quickshell-`. O README da interface documenta Quickshell 0.2.1, Niri 26.04, `qs -c barra` e dependências como NetworkManager, PipeWire, BlueZ, UPower, Python D-Bus/GObject e `curl` (`cava` é opcional). Ao alterar essa interface, atualize e revise cada repositório separadamente.
 
-Os objetivos de sessão ainda são planejamento: Niri Performance usará Niri, Quickshell, PipeWire/WirePlumber e NetworkManager; Gaming terá uma sessão dedicada mínima com Gamescope ou alternativa e Steam/muvm/FEX quando necessário. Plasma continua instalado como sessão de recuperação.
+O objetivo gráfico otimizado é uma sessão principal Niri Performance. Gaming é um mode/profile dentro do mesmo compositor: `Gaming Mode == Gamescope ativo`; fora dele, jogo ou Steam pode rodar normalmente no Niri. Não existe sessão Steam independente nem backend `direct-niri` para Gaming Mode. Steam inicia sob demanda; ARM64 nativo roda no host e jogos x86 podem seguir Steam → muvm → FEX → Proton. Consulte `docs/session-architecture.md`. Plasma fica somente como recovery/fallback durante o desenvolvimento: o baseline ajuda a entender o estado atual, identificar processos KDE ausentes em Niri e comparar ganhos, sem tuning de Plasma.
 
 ## O que o baseline mostra
 
@@ -20,12 +20,14 @@ O estado capturado está em uma sessão Plasma em uso, com navegador, Discover e
 ## Codex Cloud → GitHub → M1
 
 1. Faça o desenvolvimento no Cloud, em branch do repositório responsável pela mudança. Mantenha código de sistema em `asahi-system` e código de interface em `quickshell-`.
-2. Rode as validações estáticas disponíveis no Cloud. No repositório principal: `python3 scripts/validate_baseline.py` e `python3 -m unittest discover -s tests -v`. O workflow do GitHub Actions repete essas verificações em PRs.
+2. Rode as validações estáticas disponíveis no Cloud. No repositório principal: `python3 scripts/validate_baseline.py` e `python3 -m unittest discover -s tests -v`. O workflow do GitHub Actions repete essas verificações em PRs. O coletor read-only é validado com dados simulados para arquivos ausentes e arquitetura Cloud; isso não valida o hardware Apple.
 3. Faça commits pequenos e abra PR. Revise o diff e os resultados do CI antes de integrar; `main` deve continuar representando uma configuração conhecida e revisável.
 4. Só depois da revisão use o M1 para testes que dependem do hardware ou da sessão Asahi real. Cloud pode validar formato, scripts e lógica isolada; não comprova kernel, boot, GPU Honeykrisp, Wayland/Niri real, uso de RAM, jogos, FEX/muvm ou desempenho.
 5. Se for necessário coletar informação ou executar um teste no M1, mantenha tudo em um único script versionado e entregue um único comando de execução. Registre novas capturas sem substituir o baseline anterior.
 
 Nenhuma otimização ou alteração do sistema físico faz parte deste workflow inicial. Mudanças que afetem Plasma, serviços, pacotes ou os componentes protegidos em `AGENTS.md` precisam de autorização explícita e revisão própria.
+
+O protocolo A/B, interpretação de métricas, categorias observacionais do baseline e desenho futuro das sessões estão em `docs/benchmark-protocol.md`, `docs/service-classification.md` e `docs/session-architecture.md`.
 
 ## Ferramentas de validação
 

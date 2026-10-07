@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+"""Read-only, best-effort Fedora/Asahi performance snapshot collector."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import pathlib
+import platform
+import shutil
+import subprocess
+import sys
+import time
+import statistics
+from typing import Any
+
+
+AVAILABLE = "AVAILABLE"
+UNAVAILABLE = "UNAVAILABLE"
+PERMISSION_REQUIRED = "PERMISSION_REQUIRED"
+NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+def metric(status: str, value: Any = None, note: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {"status": status}
+    if value is not None:
+        out["value"] = value
+    if note:
+        out["note"] = note
+    return out
+
+
+def read_text(path: pathlib.Path) -> tuple[str | None, str | None]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace"), None
+    except PermissionError as exc:
+        return None, str(exc)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        return None, str(exc)
+    except OSError as exc:
+        return None, str(exc)
+
+
+def status_for_error(error: str | None) -> str:
+    if error and ("Permission denied" in error or "Operation not permitted" in error):
+        return PERMISSION_REQUIRED
+    return UNAVAILABLE
+
+
+def parse_key_values(text: str) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 2:
+            try:
+                result[fields[0].rstrip(":")] = int(fields[1])
+            except ValueError:
+                continue
+    return result
+
+
+def command(args: list[str], timeout: float = 4) -> dict[str, Any]:
+    if not shutil.which(args[0]):
+        return metric(UNAVAILABLE, note=f"tool not installed: {args[0]}")
+    try:
+        result = subprocess.run(args, text=True, capture_output=True, check=False, timeout=timeout)
+    except PermissionError as exc:
+        return metric(PERMISSION_REQUIRED, note=str(exc))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return metric(UNAVAILABLE, note=str(exc))
+    if result.returncode:
+        return metric(UNAVAILABLE, {"returncode": result.returncode, "stdout": result.stdout.strip(), "stderr": result.stderr.strip()})
+    return metric(AVAILABLE, result.stdout.strip())
+
+
+class Collector:
+    """Collect from the host; root_prefix exists for isolated tests only."""
+
+    def __init__(self, root_prefix: pathlib.Path | None = None, cpu_interval: float = 0.25):
+        self.root_prefix = root_prefix
+        self.cpu_interval = max(0.0, cpu_interval)
+
+    def path(self, absolute: str) -> pathlib.Path:
+        if self.root_prefix:
+            return self.root_prefix / absolute.lstrip("/")
+        return pathlib.Path(absolute)
+
+    def text_metric(self, absolute: str) -> dict[str, Any]:
+        value, error = read_text(self.path(absolute))
+        if error:
+            return metric(status_for_error(error), note=f"{absolute}: {error}")
+        return metric(AVAILABLE, value.strip())
+
+    def _meminfo(self) -> tuple[dict[str, int] | None, dict[str, Any]]:
+        text, error = read_text(self.path("/proc/meminfo"))
+        if error:
+            return None, metric(status_for_error(error), note=f"/proc/meminfo: {error}")
+        values = parse_key_values(text)
+        # Linux meminfo memory quantities are kB; normalize to bytes.
+        return {key: value * 1024 for key, value in values.items()}, metric(AVAILABLE, values)
+
+    def system(self) -> dict[str, Any]:
+        uname = command(["uname", "-a"])
+        release: dict[str, Any]
+        os_release, error = read_text(self.path("/etc/os-release"))
+        if error:
+            release = metric(status_for_error(error), note=f"/etc/os-release: {error}")
+        else:
+            release = metric(AVAILABLE, {k: v.strip().strip('"') for line in os_release.splitlines() if "=" in line for k, v in [line.split("=", 1)]})
+        uptime_text, uptime_error = read_text(self.path("/proc/uptime"))
+        try:
+            uptime = metric(UNAVAILABLE, note=f"/proc/uptime: {uptime_error}") if uptime_error else metric(AVAILABLE, float(uptime_text.split()[0]))
+        except (ValueError, IndexError):
+            uptime = metric(UNAVAILABLE, note="malformed /proc/uptime")
+        session_type = os.environ.get("XDG_SESSION_TYPE")
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("XDG_SESSION_DESKTOP")
+        known_compositors = {"niri", "kwin_wayland", "sway", "Hyprland", "gnome-shell", "weston"}
+        compositor_names = []
+        try:
+            for pid_path in self.path("/proc").iterdir():
+                if pid_path.name.isdigit():
+                    name, _ = read_text(pid_path / "comm")
+                    if name and name.strip() in known_compositors:
+                        compositor_names.append(name.strip())
+        except OSError:
+            pass
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        asahi_commit = command(["git", "-C", str(repo), "rev-parse", "HEAD"])
+        quickshell_dir = os.environ.get("QUICKSHELL_REPO_DIR")
+        if not quickshell_dir:
+            sibling = repo.parent / "quickshell-"
+            if sibling.is_dir():
+                quickshell_dir = str(sibling)
+        quickshell_commit = command(["git", "-C", quickshell_dir, "rev-parse", "HEAD"]) if quickshell_dir else metric(UNAVAILABLE, note="set QUICKSHELL_REPO_DIR when the separate quickshell- checkout is available")
+        device_model, model_error = read_text(self.path("/proc/device-tree/model"))
+        asahi_hint = "asahi" in platform.release().lower() or "apple" in (device_model or "").lower()
+        if device_model:
+            asahi_hardware = metric(AVAILABLE, device_model.strip().rstrip("\x00"))
+        elif platform.machine() not in ("aarch64", "arm64") or not asahi_hint:
+            asahi_hardware = metric(NOT_APPLICABLE, note="no Apple/Asahi hardware identified in this environment")
+        else:
+            asahi_hardware = metric(status_for_error(model_error), note="device-tree model unavailable")
+        return {
+            "uname": uname,
+            "fedora_asahi_release": release,
+            "architecture": metric(AVAILABLE, platform.machine()),
+            "uptime_seconds": uptime,
+            "session_type": metric(AVAILABLE, session_type) if session_type else metric(UNAVAILABLE, note="XDG_SESSION_TYPE is unset"),
+            "desktop": metric(AVAILABLE, desktop) if desktop else metric(UNAVAILABLE, note="desktop session environment is unset"),
+            "compositor": metric(AVAILABLE, sorted(set(compositor_names))) if compositor_names else metric(UNAVAILABLE, note="known compositor process not found in /proc"),
+            "asahi_hardware": asahi_hardware,
+            "asahi_system_commit": asahi_commit,
+            "quickshell_commit": quickshell_commit,
+        }
+
+    def memory(self) -> dict[str, Any]:
+        mem, source = self._meminfo()
+        if mem is None:
+            failed = {k: source for k in ("mem_total_bytes", "mem_available_bytes", "used_bytes", "cached_bytes", "shmem_bytes", "swap_total_bytes", "swap_used_bytes")}
+        else:
+            total, available = mem.get("MemTotal"), mem.get("MemAvailable")
+            swap_total, swap_free = mem.get("SwapTotal"), mem.get("SwapFree")
+            failed = {
+                "mem_total_bytes": metric(AVAILABLE, total) if total is not None else metric(UNAVAILABLE),
+                "mem_available_bytes": metric(AVAILABLE, available) if available is not None else metric(UNAVAILABLE),
+                "used_bytes": metric(AVAILABLE, max(0, total - available)) if total is not None and available is not None else metric(UNAVAILABLE, note="requires MemTotal and MemAvailable"),
+                "cached_bytes": metric(AVAILABLE, mem.get("Cached")) if "Cached" in mem else metric(UNAVAILABLE),
+                "shmem_bytes": metric(AVAILABLE, mem.get("Shmem")) if "Shmem" in mem else metric(UNAVAILABLE),
+                "swap_total_bytes": metric(AVAILABLE, swap_total) if swap_total is not None else metric(UNAVAILABLE),
+                "swap_used_bytes": metric(AVAILABLE, max(0, swap_total - swap_free)) if swap_total is not None and swap_free is not None else metric(UNAVAILABLE, note="requires SwapTotal and SwapFree"),
+            }
+        zswap_paths = {
+            "enabled": "/sys/kernel/mm/zswap/enabled",
+            "compressor": "/sys/kernel/mm/zswap/compressor",
+            "max_pool_percent": "/sys/kernel/mm/zswap/max_pool_percent",
+            "zpool": "/sys/kernel/mm/zswap/zpool",
+        }
+        zswap = {key: self.text_metric(path) for key, path in zswap_paths.items()}
+        usage = {}
+        for name in ("stored_pages", "pool_total_size", "written_back_pages", "pool_limit_hit", "reject_compress_poor", "reject_alloc_fail", "reject_kmemcache_fail"):
+            usage[name] = self.text_metric(f"/sys/kernel/debug/zswap/{name}")
+        for key, path in (("swappiness", "/proc/sys/vm/swappiness"), ("page_cluster", "/proc/sys/vm/page-cluster"), ("mglru_enabled", "/sys/kernel/mm/lru_gen/enabled"), ("mglru_min_ttl_ms", "/sys/kernel/mm/lru_gen/min_ttl_ms")):
+            failed[key] = self.text_metric(path)
+        return {**failed, "zswap_config": zswap, "zswap_usage": usage}
+
+    def _processes(self) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        proc = self.path("/proc")
+        try:
+            pids = sorted((p for p in proc.iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
+        except PermissionError:
+            return [], {"permission": 1}
+        except OSError:
+            return [], {"unavailable": 1}
+        rows: list[dict[str, Any]] = []
+        counts = {"available": 0, "permission": 0, "unavailable": 0}
+        for pid_dir in pids:
+            pid = int(pid_dir.name)
+            stat_text, stat_error = read_text(pid_dir / "stat")
+            comm = str(pid)
+            minor_faults = major_faults = cpu_ticks = None
+            if stat_text:
+                # comm may contain spaces and parentheses; fields after the last ') ' start at proc stat field 3.
+                tail = stat_text[stat_text.rfind(")") + 2 :].split()
+                try:
+                    comm = stat_text[stat_text.find("(") + 1 : stat_text.rfind(")")]
+                    minor_faults, major_faults = int(tail[7]), int(tail[9])
+                    cpu_ticks = int(tail[11]) + int(tail[12])
+                except (IndexError, ValueError):
+                    pass
+            rollup, error = read_text(pid_dir / "smaps_rollup")
+            fields = parse_key_values(rollup) if rollup else {}
+            pstatus = status_for_error(error) if error else AVAILABLE
+            if pstatus == PERMISSION_REQUIRED:
+                counts["permission"] += 1
+            elif pstatus == UNAVAILABLE:
+                counts["unavailable"] += 1
+            else:
+                counts["available"] += 1
+            row: dict[str, Any] = {"pid": pid, "name": comm}
+            for output, source in (("rss_bytes", "Rss"), ("pss_bytes", "Pss"), ("private_clean_bytes", "Private_Clean"), ("private_dirty_bytes", "Private_Dirty"), ("swap_pss_bytes", "SwapPss")):
+                row[output] = metric(AVAILABLE, fields[source] * 1024) if source in fields else metric(pstatus, note=f"smaps_rollup {source} unavailable" if not error else error)
+            row["minor_page_faults"] = metric(AVAILABLE, minor_faults) if minor_faults is not None else metric(UNAVAILABLE, note=stat_error or "malformed /proc/PID/stat")
+            row["major_page_faults"] = metric(AVAILABLE, major_faults) if major_faults is not None else metric(UNAVAILABLE, note=stat_error or "malformed /proc/PID/stat")
+            row["cpu_ticks"] = metric(AVAILABLE, cpu_ticks) if cpu_ticks is not None else metric(UNAVAILABLE)
+            row["_cpu_start_ticks"] = cpu_ticks
+            rows.append(row)
+        return rows, counts
+
+    @staticmethod
+    def _cpu_counters(text: str | None) -> dict[str, int] | None:
+        if not text:
+            return None
+        line = next((line for line in text.splitlines() if line.startswith("cpu ")), None)
+        if not line:
+            return None
+        try:
+            values = [int(x) for x in line.split()[1:8]]  # exclude guest counters, which are included in user/nice
+            return {"idle": values[3] + (values[4] if len(values) > 4 else 0), "total": sum(values)}
+        except (IndexError, ValueError):
+            return None
+
+    def cpu(self, started: float, proc_start: str | None) -> dict[str, Any]:
+        time.sleep(self.cpu_interval)
+        proc_end, proc_err = read_text(self.path("/proc/stat"))
+        end_time = time.monotonic()
+        a, b = self._cpu_counters(proc_start), self._cpu_counters(proc_end)
+        if a and b and b["total"] > a["total"]:
+            elapsed = max(1e-9, end_time - started)
+            idle = 100.0 * (b["idle"] - a["idle"]) / (b["total"] - a["total"])
+            idle_metric = metric(AVAILABLE, round(max(0.0, min(100.0, idle)), 2), f"sample window {elapsed:.3f}s")
+        else:
+            idle_metric = metric(status_for_error(proc_err), note="unable to derive from /proc/stat")
+        load = self.text_metric("/proc/loadavg")
+        stat, stat_error = read_text(self.path("/proc/stat"))
+        if stat is not None:
+            # ctxt and intr are named lines; parse separately because their values follow the key.
+            ctxt = next((line.split()[1] for line in stat.splitlines() if line.startswith("ctxt ")), None)
+            intr = next((line.split()[1] for line in stat.splitlines() if line.startswith("intr ")), None)
+            counters = {"context_switches": metric(AVAILABLE, int(ctxt)) if ctxt and ctxt.isdigit() else metric(UNAVAILABLE), "interrupts": metric(AVAILABLE, int(intr)) if intr and intr.isdigit() else metric(UNAVAILABLE)}
+        else:
+            counters = {"context_switches": metric(status_for_error(stat_error)), "interrupts": metric(status_for_error(stat_error))}
+        # The process CPU values use per-process ticks sampled before the system interval; retain raw counters
+        # and a lifetime percentage is deliberately not mislabeled as an instantaneous percentage.
+        return {"idle_percent": idle_metric, "loadavg": load, **counters}
+
+    def process_cpu(self, processes: list[dict[str, Any]], started: float) -> None:
+        elapsed = max(1e-9, time.monotonic() - started)
+        ticks_per_second = os.sysconf("SC_CLK_TCK")
+        for process in processes:
+            pid_dir = self.path(f"/proc/{process['pid']}")
+            stat_text, error = read_text(pid_dir / "stat")
+            if stat_text:
+                tail = stat_text[stat_text.rfind(")") + 2 :].split()
+                try:
+                    now_ticks = int(tail[11]) + int(tail[12])
+                    before = process.get("_cpu_start_ticks")
+                    if before is not None:
+                        process["cpu_percent_one_core"] = metric(AVAILABLE, round(max(0, now_ticks - before) * 100.0 / ticks_per_second / elapsed, 2), f"sample window {elapsed:.3f}s")
+                    else:
+                        process["cpu_percent_one_core"] = metric(UNAVAILABLE, note="process tick counter was unavailable at sample start")
+                except (IndexError, ValueError):
+                    process["cpu_percent_one_core"] = metric(UNAVAILABLE, note="malformed /proc/PID/stat")
+            else:
+                process["cpu_percent_one_core"] = metric(status_for_error(error), note="process exited or stat unavailable during sample")
+            process.pop("_cpu_start_ticks", None)
+
+    def cgroup(self) -> dict[str, Any]:
+        cg, error = read_text(self.path("/proc/self/cgroup"))
+        rel = None
+        if cg:
+            for line in cg.splitlines():
+                parts = line.split(":", 2)
+                if len(parts) == 3 and parts[0] == "0":
+                    rel = parts[2].lstrip("/")
+                    break
+        root = self.path("/sys/fs/cgroup")
+        base = root / rel if rel else root
+        if not base.exists():
+            not_applicable = metric(NOT_APPLICABLE, note="cgroup v2 hierarchy not visible")
+            return {
+                "unified": not_applicable,
+                "path": metric(status_for_error(error), note="/proc/self/cgroup unavailable" if error else "cgroup v2 path unavailable"),
+                "memory_current": not_applicable,
+                "memory_stat": not_applicable,
+                "memory_events": not_applicable,
+                "memory_pressure": not_applicable,
+                "cpu_stat": not_applicable,
+                "io_stat": not_applicable,
+            }
+        result: dict[str, Any] = {"unified": metric(AVAILABLE, True), "path": metric(AVAILABLE, "/" + rel if rel else "/")}
+        for key, filename in (("memory_current", "memory.current"), ("memory_stat", "memory.stat"), ("memory_events", "memory.events"), ("memory_pressure", "memory.pressure"), ("cpu_stat", "cpu.stat"), ("io_stat", "io.stat")):
+            value, read_error = read_text(base / filename)
+            if read_error:
+                result[key] = metric(status_for_error(read_error), note=f"{filename}: {read_error}")
+            elif filename in ("memory.stat", "memory.events", "cpu.stat"):
+                result[key] = metric(AVAILABLE, parse_key_values(value))
+            elif filename == "memory.current":
+                try:
+                    result[key] = metric(AVAILABLE, int(value.strip()))
+                except ValueError:
+                    result[key] = metric(UNAVAILABLE, note="malformed memory.current")
+            else:
+                result[key] = metric(AVAILABLE, value.strip())
+        return result
+
+    def pressure(self) -> dict[str, Any]:
+        return {key: self.text_metric(f"/proc/pressure/{key}") for key in ("cpu", "memory", "io")}
+
+    def units(self, scope: str, kind: str) -> dict[str, Any]:
+        args = ["systemctl"]
+        if scope == "user":
+            args.append("--user")
+        args += ["list-units", f"--type={kind}", "--all", "--no-legend", "--no-pager"]
+        result = command(args, timeout=8)
+        if result["status"] != AVAILABLE:
+            return result
+        rows = []
+        for line in result.get("value", "").splitlines():
+            fields = line.split(None, 4)
+            if fields:
+                rows.append({"unit": fields[0], "load": fields[1] if len(fields) > 1 else None, "active": fields[2] if len(fields) > 2 else None, "sub": fields[3] if len(fields) > 3 else None, "description": fields[4] if len(fields) > 4 else None})
+        return metric(AVAILABLE, rows)
+
+    def session(self, processes: list[dict[str, Any]], counts: dict[str, int]) -> dict[str, Any]:
+        return {
+            "processes": metric(AVAILABLE if processes else UNAVAILABLE, processes, f"smaps_rollup read outcomes: {counts}"),
+            "system_services": self.units("system", "service"),
+            "user_services": self.units("user", "service"),
+            "system_timers": self.units("system", "timer"),
+            "user_timers": self.units("user", "timer"),
+            "system_sockets": self.units("system", "socket"),
+            "user_sockets": self.units("user", "socket"),
+            "xdg_autostarts": self.autostarts(),
+            "dbus_activatable_services": self.dbus_services(),
+        }
+
+    def autostarts(self) -> dict[str, Any]:
+        roots = [self.path("/etc/xdg/autostart"), self.path("/usr/share/xdg/autostart"), pathlib.Path.home() / ".config/autostart"]
+        entries = []
+        found = False
+        for root in roots:
+            try:
+                for path in sorted(root.glob("*.desktop")):
+                    found = True
+                    text, error = read_text(path)
+                    if text is not None:
+                        safe = {}
+                        in_desktop_entry = False
+                        for line in text.splitlines():
+                            if line.strip() == "[Desktop Entry]":
+                                in_desktop_entry = True
+                            elif line.startswith("["):
+                                in_desktop_entry = False
+                            elif in_desktop_entry and "=" in line:
+                                key, value = line.split("=", 1)
+                                if key in ("Name", "Hidden", "NoDisplay", "OnlyShowIn", "NotShowIn", "DBusActivatable"):
+                                    safe[key] = value
+                        entries.append({"desktop_id": path.name, "metadata": safe})
+            except PermissionError:
+                continue
+        return metric(AVAILABLE, entries) if found or all(root.exists() for root in roots) else metric(UNAVAILABLE, entries, "XDG autostart directories not found or unreadable")
+
+    def dbus_services(self) -> dict[str, Any]:
+        roots = [self.path("/usr/share/dbus-1/services"), pathlib.Path.home() / ".local/share/dbus-1/services"]
+        files = []
+        for root in roots:
+            try:
+                files.extend(str(p) for p in sorted(root.glob("*.service")))
+            except OSError:
+                continue
+        names = sorted({pathlib.Path(value).name for value in files})
+        return metric(AVAILABLE, names) if names or any(p.exists() for p in roots) else metric(UNAVAILABLE, note="D-Bus service directories unavailable")
+
+    def memory_management(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, path in (("zswap_enabled", "/sys/kernel/mm/zswap/enabled"), ("zswap_compressor", "/sys/kernel/mm/zswap/compressor"), ("zswap_max_pool_percent", "/sys/kernel/mm/zswap/max_pool_percent"), ("swappiness", "/proc/sys/vm/swappiness"), ("page_cluster", "/proc/sys/vm/page-cluster"), ("mglru_enabled", "/sys/kernel/mm/lru_gen/enabled"), ("mglru_min_ttl_ms", "/sys/kernel/mm/lru_gen/min_ttl_ms")):
+            result[key] = self.text_metric(path)
+        result["zswap_usage"] = {name: self.text_metric(f"/sys/kernel/debug/zswap/{name}") for name in ("stored_pages", "pool_total_size", "written_back_pages", "pool_limit_hit", "reject_compress_poor", "reject_alloc_fail")}
+        result["systemd_oomd_active"] = command(["systemctl", "is-active", "systemd-oomd.service"])
+        result["oomctl"] = command(["oomctl", "--no-pager"])
+        return result
+
+    def storage(self) -> dict[str, Any]:
+        return {"findmnt": command(["findmnt", "--json", "--output", "TARGET,SOURCE,FSTYPE,OPTIONS"], timeout=8), "diskstats": self.text_metric("/proc/diskstats")}
+
+    def network(self, session: dict[str, Any]) -> dict[str, Any]:
+        config_paths = [self.path("/etc/NetworkManager/NetworkManager.conf")]
+        try:
+            config_paths += list(self.path("/etc/NetworkManager/conf.d").glob("*.conf")) if self.path("/etc/NetworkManager/conf.d").exists() else []
+        except OSError:
+            pass
+        configs = []
+        for path in config_paths:
+            content, error = read_text(path)
+            if content is not None:
+                section = ""
+                relevant = {}
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("[") and stripped.endswith("]"):
+                        section = stripped[1:-1].lower()
+                    elif "=" in stripped:
+                        key, value = (part.strip() for part in stripped.split("=", 1))
+                        if (section == "main" and key.lower() in ("plugins", "dns", "rc-manager")) or (section == "device" and key.lower() in ("wifi.backend", "wifi.scan-rand-mac-address")):
+                            relevant[f"{section}.{key}"] = value
+                if relevant:
+                    configs.append({"file": path.name, "backend_settings": relevant})
+        modules, mod_error = read_text(self.path("/proc/modules"))
+        wifi_modules = [line.split()[0] for line in modules.splitlines() if line.split() and any(token in line.split()[0].lower() for token in ("brcm", "iwl", "ath", "cfg80211", "mac80211"))] if modules else None
+        related = {}
+        for scope in ("system_services", "user_services"):
+            units = session[scope]
+            if units["status"] != AVAILABLE:
+                related[scope] = units
+            else:
+                related[scope] = metric(AVAILABLE, [row for row in units.get("value", []) if any(token in row["unit"].lower() for token in ("networkmanager", "wpa_supplicant", "iwd", "avahi", "modemmanager", "bluetooth"))])
+        return {
+            "networkmanager_backend_config": metric(AVAILABLE, configs) if configs else metric(UNAVAILABLE, note="no readable NetworkManager configuration found"),
+            "wifi_kernel_modules": metric(AVAILABLE, wifi_modules) if wifi_modules is not None else metric(status_for_error(mod_error), note=mod_error),
+            "networkmanager_state": command(["nmcli", "--terse", "--fields", "RUNNING,VERSION", "general"]),
+            "related_services": related,
+        }
+
+    def audio(self, session: dict[str, Any]) -> dict[str, Any]:
+        system_units = session["system_services"]
+        user_units = session["user_services"]
+        def matching(units: dict[str, Any], tokens: tuple[str, ...]) -> dict[str, Any]:
+            if units["status"] != AVAILABLE:
+                return units
+            rows = [row for row in units.get("value", []) if any(token in row["unit"].lower() for token in tokens)]
+            return metric(AVAILABLE, rows)
+        return {
+            "pipewire_services": matching(user_units, ("pipewire", "wireplumber")),
+            "speakersafetyd_state": matching(system_units, ("speakersafetyd",)),
+            "pw_top": command(["pw-top", "-b", "-n", "1"], timeout=4),
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        proc_start, proc_error = read_text(self.path("/proc/stat"))
+        started = time.monotonic()
+        processes, counts = self._processes()
+        self.process_cpu(processes, started)
+        cpu = self.cpu(started, proc_start)
+        session = self.session(processes, counts)
+        # Per-process CPU is represented as raw lifetime ticks and explicitly marked unavailable as a
+        # delta unless a sampling pair is implemented in a future schema version.
+        return {
+            "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "schema_version": 1,
+            "collector": {"read_only": True, "host_modified": False, "process_smaps_rollup_outcomes": counts},
+            "system": self.system(),
+            "memory": self.memory(),
+            "cgroup_v2": self.cgroup(),
+            "psi": self.pressure(),
+            "cpu": cpu,
+            "session": session,
+            "memory_management": self.memory_management(),
+            "storage": self.storage(),
+            "network": self.network(session),
+            "audio": self.audio(session),
+        }
+
+
+def scalar_samples(snapshot: dict[str, Any]) -> dict[str, float]:
+    paths = (("memory.mem_available_bytes", ("memory", "mem_available_bytes")), ("memory.used_bytes", ("memory", "used_bytes")), ("memory.swap_used_bytes", ("memory", "swap_used_bytes")), ("cpu.idle_percent", ("cpu", "idle_percent")))
+    values = {}
+    for label, (section, key) in paths:
+        item = snapshot.get(section, {}).get(key, {})
+        value = item.get("value") if item.get("status") == AVAILABLE else None
+        if isinstance(value, (int, float)):
+            values[label] = float(value)
+    return values
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runs", type=int, default=1, help="collect repeated snapshots; use 5 for the documented idle protocol")
+    parser.add_argument("--cpu-interval", type=float, default=0.25, help="seconds between system CPU counter reads")
+    parser.add_argument("--output", type=pathlib.Path, help="optional JSON destination; omitted means stdout")
+    args = parser.parse_args()
+    if args.runs < 1 or args.runs > 20:
+        parser.error("--runs must be between 1 and 20")
+    collector = Collector(cpu_interval=args.cpu_interval)
+    snapshots = [collector.snapshot() for _ in range(args.runs)]
+    payload: dict[str, Any] = {"schema_version": 1, "read_only": True, "runs": snapshots}
+    if args.runs > 1:
+        columns: dict[str, list[float]] = {}
+        for snap in snapshots:
+            for name, value in scalar_samples(snap).items():
+                columns.setdefault(name, []).append(value)
+        summary = {}
+        for name, values in columns.items():
+            med = statistics.median(values)
+            summary[name] = {"n": len(values), "median": med, "mad": statistics.median(abs(x - med) for x in values), "min": min(values), "max": max(values)}
+        payload["summary"] = summary
+    rendered = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    if args.output:
+        try:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            print(f"cannot write output: {exc}", file=sys.stderr)
+            return 2
+    else:
+        sys.stdout.write(rendered)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
