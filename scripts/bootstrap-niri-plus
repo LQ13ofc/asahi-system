@@ -62,7 +62,9 @@ def validate_quickshell_source() -> tuple[str, dict]:
     if lock.get("schema_version") != 1 or lock.get("checkout") != "external/quickshell":
         raise RuntimeError("Quickshell lock has an unknown schema or checkout path")
     try:
-        git = ["git", "-c", f"safe.directory={QUICKSHELL_SOURCE}", "-C", str(QUICKSHELL_SOURCE)]
+        git = ["git", "-c", f"safe.directory={QUICKSHELL_SOURCE}",
+               "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+               "-C", str(QUICKSHELL_SOURCE)]
         commit = subprocess.run([*git, "rev-parse", "--verify", "HEAD"],
                                 check=True, text=True, capture_output=True).stdout.strip()
         remote = subprocess.run([*git, "remote", "get-url", "origin"],
@@ -83,7 +85,9 @@ def validate_quickshell_source() -> tuple[str, dict]:
 def validate_system_source() -> tuple[str, str]:
     if not (ROOT / ".git").exists():
         raise RuntimeError("bootstrap requires a Git checkout of LQ13ofc/asahi-system main")
-    git = ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT)]
+    git = ["git", "-c", f"safe.directory={ROOT}",
+           "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+           "-C", str(ROOT)]
     try:
         origin = subprocess.run([*git, "remote", "get-url", "origin"], check=True,
                                 text=True, capture_output=True).stdout.strip()

@@ -394,9 +394,29 @@ class NiriPlusCliTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(remote)], check=True)
             subprocess.run(["git", "-C", str(seed), "push", "-qu", "origin", "main"], check=True)
             subprocess.run(["git", "clone", "-q", str(remote), str(checkout)], check=True)
+            # A user-owned checkout can contain executable hooks and a
+            # repository-local fsmonitor command. Source refresh must never
+            # execute either while invoked by `sudo niri+ install`.
+            hook_marker = root / "post-merge-ran"
+            hook_dir = checkout / ".git/hooks"
+            hook_dir.mkdir(exist_ok=True)
+            post_merge = hook_dir / "post-merge"
+            post_merge.write_text(f"#!/bin/sh\nprintf ran > {hook_marker}\n")
+            post_merge.chmod(0o755)
+            fsmonitor_marker = root / "fsmonitor-ran"
+            fsmonitor = root / "fsmonitor-helper"
+            fsmonitor.write_text(f"#!/bin/sh\nprintf ran > {fsmonitor_marker}\nprintf 'token\\n'\n")
+            fsmonitor.chmod(0o755)
+            subprocess.run(["git", "-C", str(checkout), "config", "core.fsmonitor", str(fsmonitor)], check=True)
+            (seed / "VERSION").write_text("0.1.2\n")
+            subprocess.run(["git", "-C", str(seed), "add", "VERSION"], check=True)
+            subprocess.run(["git", "-C", str(seed), "commit", "-qm", "update"], check=True)
+            subprocess.run(["git", "-C", str(seed), "push", "-qu", "origin", "main"], check=True)
             head = source_update.refresh_source(checkout, expected_repository=str(remote))
             current = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True, text=True, capture_output=True).stdout.strip()
             self.assertEqual(head, current)
+            self.assertFalse(hook_marker.exists(), "source update must disable checkout Git hooks")
+            self.assertFalse(fsmonitor_marker.exists(), "source update must disable repository-local fsmonitor")
 
     def test_reexec_failure_is_reported_without_retrying(self):
         with mock.patch.object(source_update.os, "execve", side_effect=FileNotFoundError("missing CLI")):

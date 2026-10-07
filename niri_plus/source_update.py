@@ -76,6 +76,10 @@ def _owner_identity(source_root: pathlib.Path) -> tuple[int, int, list[int], dic
         "LOGNAME": account.pw_name,
         "GIT_TERMINAL_PROMPT": "0",
         "GCM_INTERACTIVE": "never",
+        # Never execute checkout-controlled hooks or fsmonitor helpers while
+        # refreshing a privileged install from a user-owned worktree.
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
     })
     return account.pw_uid, account.pw_gid, groups, env
 
@@ -110,7 +114,8 @@ def refresh_source(
     if not git_marker.exists():
         raise SourceUpdateError(f"source checkout is not a Git repository: {source_root}")
 
-    git = ["git", "-C", str(source_root)]
+    git = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+           "-c", f"remote.origin.url={expected_repository}", "-C", str(source_root)]
     remote = _run_as_owner(source_root, [*git, "remote", "get-url", "origin"], runner).stdout.strip()
     if _normalize_repository(remote) != _normalize_repository(expected_repository):
         raise SourceUpdateError(f"unexpected origin for Niri+ source checkout: {remote}")
@@ -203,7 +208,9 @@ def inspect_source(
                 "dirty": "unavailable", "version": "unavailable"}
 
     def git(*args: str) -> str | None:
-        command = ["git", "-c", f"safe.directory={source_root}", "-C", str(source_root), *args]
+        command = ["git", "-c", f"safe.directory={source_root}",
+                   "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                   "-C", str(source_root), *args]
         try:
             result = runner(command, check=False, text=True, capture_output=True, timeout=4)
         except (OSError, subprocess.SubprocessError):
