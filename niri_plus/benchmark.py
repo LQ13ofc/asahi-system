@@ -79,11 +79,22 @@ def prepare_niri_core(runner=subprocess.run) -> int:
     if before["enabled"] in {"masked", "masked-runtime"}:
         print("REFUSED: Quickshell was already masked; benchmark will not take ownership of that state.", file=sys.stderr)
         return 2
+    before_qs = _qs_processes()
+    managed_before = [item for item in before_qs if item.get("argv") == QS_EXPECTED]
+    if before["active"] != "active" or len(before_qs) != 1 or len(managed_before) != 1:
+        print(
+            "REFUSED: niri-core preparation requires the normal KNOWN-GOOD Quickshell state "
+            f"(active unit + exactly one managed qs); active={before['active']}, qs={before_qs}.",
+            file=sys.stderr,
+        )
+        return 2
     marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     payload = {
         "schema_version": 1,
         "unit": QS_UNIT,
         "previous_enable_state": before["enabled"],
+        "previous_active_state": before["active"],
+        "previous_qs_pid": managed_before[0]["pid"],
         "prepared_at_unix": time.time(),
         "phase": "preparing",
     }
@@ -98,6 +109,11 @@ def prepare_niri_core(runner=subprocess.run) -> int:
 
     masked = _systemctl(["mask", "--runtime", "--now", QS_UNIT], runner)
     if masked.returncode != 0:
+        # A failed systemctl transaction can still have applied part of the
+        # requested runtime state. Best-effort restore the known-good starting
+        # state before releasing our ownership marker.
+        _systemctl(["unmask", "--runtime", QS_UNIT], runner)
+        _systemctl(["start", QS_UNIT], runner)
         marker.unlink(missing_ok=True)
         print(f"FAILED: runtime mask failed: {(masked.stderr or masked.stdout).strip()}", file=sys.stderr)
         return 2
@@ -106,10 +122,17 @@ def prepare_niri_core(runner=subprocess.run) -> int:
     qs = _qs_processes()
     if after["enabled"] != "masked-runtime" or after["active"] == "active" or qs:
         _systemctl(["unmask", "--runtime", QS_UNIT], runner)
+        restarted = _systemctl(["start", QS_UNIT], runner)
+        restored = _state(runner)
+        restored_qs = _qs_processes()
         marker.unlink(missing_ok=True)
+        detail = (
+            f" restore(active={restored['active']}, enabled={restored['enabled']}, "
+            f"qs={restored_qs}, start_rc={restarted.returncode})"
+        )
         print(
             "FAILED: niri-core preparation did not converge "
-            f"(enabled={after['enabled']}, active={after['active']}, qs={qs}).",
+            f"(enabled={after['enabled']}, active={after['active']}, qs={qs});{detail}",
             file=sys.stderr,
         )
         return 2
