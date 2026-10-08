@@ -389,6 +389,7 @@ def profile_signature(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "niri_pids": [row["pid"] for row in matching("niri")],
         "kwin_wayland_pids": [row["pid"] for row in matching("kwin_wayland")],
         "plasmashell_pids": [row["pid"] for row in matching("plasma")],
+        "polkit_agent_pids": [row["pid"] for row in matching("polkit_agent")],
         "qs_pids": [row["pid"] for row in qs],
         "managed_qs_pids": [row["pid"] for row in qs if _qs_managed(row)],
         "qs_argv": [{"pid": row["pid"], "argv": row.get("argv", [])} for row in qs],
@@ -396,7 +397,7 @@ def profile_signature(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def lightweight_signature(root: pathlib.Path) -> dict[str, Any]:
-    names = {"niri", "kwin_wayland", "plasmashell", "qs"}
+    names = {"niri", "kwin_wayland", "plasmashell", "qs", "lxqt-policykit-"}
     rows = []
     try:
         entries = [entry for entry in (root / "proc").iterdir() if entry.name.isdigit()]
@@ -641,6 +642,7 @@ def validate_profile(
         plasma = len(sample["plasmashell_pids"])
         qs = len(sample["qs_pids"])
         managed = len(sample["managed_qs_pids"])
+        polkit = len(sample.get("polkit_agent_pids", []))
         if profile == "plasma":
             if kwin < 1 or plasma < 1:
                 failures.append("Plasma/KWin were not continuously present")
@@ -653,6 +655,8 @@ def validate_profile(
                 failures.append("Niri was not continuously present")
             if kwin != 0 or plasma != 0:
                 failures.append("Plasma/KWin appeared during niri-core measurement")
+            if polkit < 1:
+                failures.append("PolicyKit agent was not continuously present in niri-core")
             if qs != 0:
                 failures.append("Quickshell appeared during niri-core measurement")
         elif profile == "niri-quickshell":
@@ -660,6 +664,8 @@ def validate_profile(
                 failures.append("Niri was not continuously present")
             if kwin != 0 or plasma != 0:
                 failures.append("Plasma/KWin appeared during niri-quickshell measurement")
+            if polkit < 1:
+                failures.append("PolicyKit agent was not continuously present in niri-quickshell")
             if qs != 1 or managed != 1:
                 failures.append("expected exactly one managed Quickshell process throughout the window")
         else:
