@@ -96,6 +96,27 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(item["major_page_faults"]["value"], 2)
         self.assertGreaterEqual(outcomes["available"], 1)
 
+    def test_profile_validation_failure_does_not_write_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = pathlib.Path(temp) / "invalid-result.json"
+            failed = {
+                "profile_validation": {
+                    "status": collector_module.benchmark_metrics.PROFILE_FAIL,
+                    "evidence": {"failures": ["wrong session"]},
+                }
+            }
+            argv = [
+                "collect-performance-baseline",
+                "--profile", "niri-core",
+                "--runs", "1",
+                "--window", "1",
+                "--output", str(output),
+            ]
+            with mock.patch.object(collector_module.sys, "argv", argv), \
+                 mock.patch.object(collector_module.Collector, "snapshot", return_value=failed):
+                self.assertEqual(collector_module.main(), 3)
+            self.assertFalse(output.exists())
+
     def test_cloud_architecture_and_schema_are_partial_and_read_only(self):
         before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
         with mock.patch.object(collector_module.platform, "machine", return_value="x86_64"), \
