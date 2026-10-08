@@ -260,6 +260,8 @@ def attach_process_deltas(
                         "voluntary_context_switches_delta", "nonvoluntary_context_switches_delta"):
                 row[key] = metric(UNAVAILABLE, note="process did not exist at observation start")
             row["cpu_percent_one_core_delta"] = metric(UNAVAILABLE, note="process did not exist at observation start")
+            row.pop("_identity", None)
+            row.pop("_counters", None)
             continue
         a, b = start["_counters"], row["_counters"]
         cpu_ticks = _delta(a["cpu_ticks"], b["cpu_ticks"])
