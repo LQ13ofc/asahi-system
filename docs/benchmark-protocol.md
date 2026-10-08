@@ -170,7 +170,9 @@ O JSON separa quatro perspectivas principais:
 - `memory_scopes.session`: footprint da sessão;
 - `session.processes`: métricas por PID;
 - `components`: views como Niri, Quickshell, PipeWire, WirePlumber,
-  NetworkManager e xwayland-satellite.
+  NetworkManager e xwayland-satellite;
+- `systemd_user_cgroup`: cgroup do manager `systemd --user`, separado do PSS;
+- `quickshell_cgroup`: cgroup específico do unit Quickshell.
 
 O **PSS agregado da sessão** é a soma de PSS dos PIDs únicos do snapshot final
 cujo UID real é o usuário do benchmark, excluindo o collector e sua cadeia de
