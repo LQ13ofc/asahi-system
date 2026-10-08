@@ -12,7 +12,7 @@ O desenho e pesquisa de pacotes da sessão Niri estão em [`docs/niri-phase-b.md
 
 ## Benchmark read-only
 
-O protocolo idle/A-B está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md); a classificação observacional dos serviços do snapshot está em [`docs/service-classification.md`](docs/service-classification.md). Após o bootstrap, `niri+ benchmark` é a interface pública para o coletor read-only interno. Ele produz JSON parcial por métrica e não altera serviços, sysctls ou configuração do sistema. Nenhuma captura Cloud x86_64 substitui teste no M1.
+O protocolo A/B/C está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md), e a auditoria estática do custo idle do `asahi-system` + Quickshell pinado está em [`docs/idle-performance-static-audit.md`](docs/idle-performance-static-audit.md). A classificação observacional dos serviços do snapshot continua em [`docs/service-classification.md`](docs/service-classification.md). `niri+ benchmark --profile plasma|niri-core|niri-quickshell` usa o collector existente com validação fail-closed e deltas numa janela de observação. A coleta é read-only; somente a preparação explícita de `niri-core` usa um mask **runtime** reversível do unit Quickshell, com restore dedicado e sem editar configuração persistente. Nenhuma captura Cloud x86_64 substitui teste no M1.
 
 ## Validação no Cloud
 

@@ -17,6 +17,13 @@ import statistics
 from typing import Any
 
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from niri_plus import benchmark_metrics
+
+
 AVAILABLE = "AVAILABLE"
 UNAVAILABLE = "UNAVAILABLE"
 PERMISSION_REQUIRED = "PERMISSION_REQUIRED"
@@ -78,9 +85,14 @@ def command(args: list[str], timeout: float = 4) -> dict[str, Any]:
 class Collector:
     """Collect from the host; root_prefix exists for isolated tests only."""
 
-    def __init__(self, root_prefix: pathlib.Path | None = None, cpu_interval: float = 0.25):
+    def __init__(self, root_prefix: pathlib.Path | None = None, cpu_interval: float = 0.25,
+                 observation_window: float | None = None, profile_sample_period: float = 0.5):
         self.root_prefix = root_prefix
+        # cpu_interval remains a compatibility hook for isolated tests. Real benchmark
+        # invocations pass observation_window explicitly and default to a 10 s delta window.
         self.cpu_interval = max(0.0, cpu_interval)
+        self.observation_window = max(0.0, self.cpu_interval if observation_window is None else observation_window)
+        self.profile_sample_period = max(0.2, profile_sample_period)
 
     def path(self, absolute: str) -> pathlib.Path:
         if self.root_prefix:
@@ -457,23 +469,44 @@ class Collector:
             "pw_top": command(["pw-top", "-b", "-n", "1"], timeout=4),
         }
 
-    def snapshot(self) -> dict[str, Any]:
-        proc_start, proc_error = read_text(self.path("/proc/stat"))
-        started = time.monotonic()
-        processes, counts = self._processes()
-        self.process_cpu(processes, started)
-        cpu = self.cpu(started, proc_start)
+    def snapshot(self, profile: str | None = None) -> dict[str, Any]:
+        observation = benchmark_metrics.observe(
+            root_prefix=self.root_prefix,
+            duration=self.observation_window,
+            sample_period=self.profile_sample_period,
+            profile=profile,
+        )
+        processes = observation["processes"]
+        counts = observation["process_read_outcomes"]["end"]
         session = self.session(processes, counts)
-        # Per-process CPU is represented as raw lifetime ticks and explicitly marked unavailable as a
-        # delta unless a sampling pair is implemented in a future schema version.
+        cpu = {
+            **observation["cpu_delta"],
+            "loadavg": self.text_metric("/proc/loadavg"),
+        }
         return {
             "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "schema_version": 1,
-            "collector": {"read_only": True, "host_modified": False, "process_smaps_rollup_outcomes": counts},
+            "schema_version": 2,
+            "profile": profile,
+            "profile_validation": observation["profile_validation"],
+            "collector": {
+                "read_only": True,
+                "host_modified": False,
+                "observation_window_seconds": observation["observation_window_seconds"],
+                "profile_sample_period_seconds": self.profile_sample_period,
+                "process_smaps_rollup_outcomes": counts,
+            },
             "system": self.system(),
             "memory": self.memory(),
+            "memory_scopes": observation["memory_scopes"],
+            "components": observation["components"],
             "cgroup_v2": self.cgroup(),
-            "psi": self.pressure(),
+            "systemd_user_cgroup": observation["systemd_user_cgroup"],
+            "quickshell_cgroup": observation["quickshell_cgroup"],
+            "psi": {
+                "start": observation["psi_start"],
+                "end": observation["psi_end"],
+                "delta": observation["psi_delta"],
+            },
             "cpu": cpu,
             "session": session,
             "memory_management": self.memory_management(),
@@ -482,39 +515,106 @@ class Collector:
             "audio": self.audio(session),
         }
 
+def _metric_number(snapshot: dict[str, Any], path: tuple[str, ...]) -> float | None:
+    value: Any = snapshot
+    for part in path:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    if isinstance(value, dict) and value.get("status") == AVAILABLE and isinstance(value.get("value"), (int, float)):
+        return float(value["value"])
+    return None
+
 
 def scalar_samples(snapshot: dict[str, Any]) -> dict[str, float]:
-    paths = (("memory.mem_available_bytes", ("memory", "mem_available_bytes")), ("memory.used_bytes", ("memory", "used_bytes")), ("memory.swap_used_bytes", ("memory", "swap_used_bytes")), ("cpu.idle_percent", ("cpu", "idle_percent")))
-    values = {}
-    for label, (section, key) in paths:
-        item = snapshot.get(section, {}).get(key, {})
-        value = item.get("value") if item.get("status") == AVAILABLE else None
-        if isinstance(value, (int, float)):
-            values[label] = float(value)
-    return values
-
+    paths = {
+        "memory.mem_available_bytes": ("memory", "mem_available_bytes"),
+        "memory.swap_used_bytes": ("memory", "swap_used_bytes"),
+        "memory.session_pss_bytes": ("memory_scopes", "session", "pss_bytes"),
+        "memory.session_swap_pss_bytes": ("memory_scopes", "session", "swap_pss_bytes"),
+        "cpu.system_busy_percent_delta": ("cpu", "busy_percent_delta"),
+        "cpu.system_idle_percent_delta": ("cpu", "idle_percent_delta"),
+    }
+    for component in ("niri", "quickshell", "pipewire", "wireplumber", "networkmanager", "xwayland_satellite"):
+        paths[f"components.{component}.pss_bytes"] = ("components", component, "pss_bytes")
+        paths[f"components.{component}.cpu_seconds_delta"] = ("components", component, "cpu_seconds_delta")
+    result = {}
+    for label, path in paths.items():
+        value = _metric_number(snapshot, path)
+        if value is not None:
+            result[label] = value
+    return result
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runs", type=int, default=1, help="collect repeated snapshots; use 5 for the documented idle protocol")
-    parser.add_argument("--cpu-interval", type=float, default=0.25, help="seconds between system CPU counter reads")
-    parser.add_argument("--output", type=pathlib.Path, help="optional JSON destination; omitted means stdout")
+    parser.add_argument("--profile", required=True, choices=("plasma", "niri-core", "niri-quickshell"),
+                        help="requested session profile; the collector validates it against the live host")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="collect repeated snapshots; use 5 for the documented idle protocol")
+    parser.add_argument("--window", type=float, default=10.0,
+                        help="seconds in each CPU/fault/I/O delta observation window")
+    parser.add_argument("--profile-sample-period", type=float, default=0.5,
+                        help="seconds between lightweight profile-presence checks during the window")
+    parser.add_argument("--output", type=pathlib.Path,
+                        help="optional JSON destination; omitted means stdout")
     args = parser.parse_args()
     if args.runs < 1 or args.runs > 20:
         parser.error("--runs must be between 1 and 20")
-    collector = Collector(cpu_interval=args.cpu_interval)
-    snapshots = [collector.snapshot() for _ in range(args.runs)]
-    payload: dict[str, Any] = {"schema_version": 1, "read_only": True, "runs": snapshots}
+    if args.window < 1 or args.window > 300:
+        parser.error("--window must be between 1 and 300 seconds")
+    if args.profile_sample_period < 0.2 or args.profile_sample_period > args.window:
+        parser.error("--profile-sample-period must be between 0.2 seconds and --window")
+
+    collector = Collector(observation_window=args.window, profile_sample_period=args.profile_sample_period)
+    snapshots = []
+    for run_index in range(args.runs):
+        snapshot = collector.snapshot(args.profile)
+        snapshots.append(snapshot)
+        if snapshot["profile_validation"]["status"] != benchmark_metrics.PROFILE_OK:
+            diagnostic = {
+                "schema_version": 2,
+                "profile": args.profile,
+                "failed_run": run_index + 1,
+                "profile_validation": snapshot["profile_validation"],
+            }
+            print(json.dumps(diagnostic, indent=2, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+            print("profile validation failed; no benchmark result was written", file=sys.stderr)
+            return 3
+
+    payload: dict[str, Any] = {
+        "schema_version": 2,
+        "read_only": True,
+        "profile": args.profile,
+        "profile_validation": {
+            "status": benchmark_metrics.PROFILE_OK,
+            "runs": [snapshot["profile_validation"]["evidence"] for snapshot in snapshots],
+        },
+        "aggregation": {
+            "system_wide": "MemAvailable/swap and PSI come from kernel system-wide interfaces.",
+            "session": snapshots[0]["memory_scopes"]["session"]["definition"] if snapshots else "",
+            "per_process": "Memory comes from one smaps_rollup per PID; CPU/fault/I/O values are counter deltas across the same observation window.",
+            "components": "Component aggregates are views over unique process PIDs and are not added to session PSS.",
+            "cgroups": "cgroup memory.current is reported separately and is never added to PSS; cgroup deltas capture short-lived children.",
+        },
+        "runs": snapshots,
+    }
     if args.runs > 1:
         columns: dict[str, list[float]] = {}
-        for snap in snapshots:
-            for name, value in scalar_samples(snap).items():
+        for snapshot in snapshots:
+            for name, value in scalar_samples(snapshot).items():
                 columns.setdefault(name, []).append(value)
         summary = {}
         for name, values in columns.items():
             med = statistics.median(values)
-            summary[name] = {"n": len(values), "median": med, "mad": statistics.median(abs(x - med) for x in values), "min": min(values), "max": max(values)}
+            summary[name] = {
+                "n": len(values),
+                "median": med,
+                "mad": statistics.median(abs(value - med) for value in values),
+                "min": min(values),
+                "max": max(values),
+            }
         payload["summary"] = summary
+
     rendered = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     if args.output:
         try:
