@@ -468,6 +468,50 @@ class NiriPlusCliTests(unittest.TestCase):
             ]],
         )
 
+    def test_quickshell_rpm_lock_comparison_preserves_real_mismatches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = pathlib.Path(temp) / "data"
+            integration = base / "integration"
+            integration.mkdir(parents=True)
+            expected_commit = "0" * 40
+            repository = "https://github.com/LQ13ofc/quickshell-.git"
+            (integration / "quickshell.lock.json").write_text(json.dumps({
+                "schema_version": 1,
+                "repository": repository,
+                "commit": expected_commit,
+                "engine": {
+                    "nevra": "quickshell-0:0.3.1-2.fc44",
+                    "architecture": "aarch64",
+                    "compatibility": "M1_REQUIRED",
+                },
+            }))
+
+            checkout = pathlib.Path(temp) / "quickshell"
+            checkout.mkdir()
+
+            cases = {
+                "explicit zero epoch": ("0:0.3.1-2.fc44.aarch64", host.OK),
+                "non-zero epoch": ("1:0.3.1-2.fc44.aarch64", host.WARNING),
+                "different version": ("0:0.3.2-2.fc44.aarch64", host.WARNING),
+                "different release": ("0:0.3.1-3.fc44.aarch64", host.WARNING),
+                "different arch": ("0:0.3.1-2.fc44.x86_64", host.WARNING),
+            }
+
+            for label, (installed, expected_status) in cases.items():
+                with self.subTest(label=label), \
+                     mock.patch.object(quickshell, "checkout_path", return_value=checkout), \
+                     mock.patch.object(quickshell, "_runtime_snapshot", return_value={
+                         "status": host.OK,
+                         "repository": repository,
+                         "commit": expected_commit,
+                     }), \
+                     mock.patch.object(quickshell, "_qs_version", return_value=(host.OK, "Quickshell 0.3.1")), \
+                     mock.patch.object(quickshell, "_rpm_version", return_value=(host.OK, installed)), \
+                     mock.patch.object(quickshell, "_unit_state", return_value=(host.OK, "active")), \
+                     mock.patch.object(quickshell, "_runtime_link_status", return_value=host.OK):
+                    info = quickshell.report(root=pathlib.Path(temp), base=base)
+                self.assertEqual(info["package_status"], expected_status)
+
     def test_quickshell_report_detects_pinned_and_diverged_checkouts(self):
         with tempfile.TemporaryDirectory() as temp:
             base = pathlib.Path(temp) / "data"
