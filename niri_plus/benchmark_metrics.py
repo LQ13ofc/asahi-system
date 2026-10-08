@@ -416,19 +416,28 @@ def observe_timeline(root: pathlib.Path, duration: float, sample_period: float) 
 
 
 def systemd_user_unit(unit: str) -> dict[str, Any]:
-    shown = command([
-        "systemctl", "--user", "show", unit,
-        "--property=ActiveState,SubState,Result,NRestarts,ExecMainPID,ControlGroup",
-    ])
-    enabled = command(["systemctl", "--user", "is-enabled", unit])
+    if not shutil.which("systemctl"):
+        return {"probe_status": UNAVAILABLE, "EnableState": UNAVAILABLE}
+    try:
+        shown = subprocess.run(
+            ["systemctl", "--user", "show", unit,
+             "--property=ActiveState,SubState,Result,NRestarts,ExecMainPID,ControlGroup"],
+            text=True, capture_output=True, check=False, timeout=4,
+        )
+        # is-enabled intentionally returns non-zero for masked/disabled states;
+        # stdout is still the authoritative state and must not be discarded.
+        enabled = subprocess.run(
+            ["systemctl", "--user", "is-enabled", unit],
+            text=True, capture_output=True, check=False, timeout=4,
+        )
+    except PermissionError:
+        return {"probe_status": PERMISSION_REQUIRED, "EnableState": UNAVAILABLE}
+    except (OSError, subprocess.TimeoutExpired):
+        return {"probe_status": UNAVAILABLE, "EnableState": UNAVAILABLE}
     values: dict[str, Any] = {}
-    if shown.get("status") == AVAILABLE:
-        raw = shown["value"]["stdout"]
-        values.update(line.split("=", 1) for line in raw.splitlines() if "=" in line)
-    values["EnableState"] = (
-        enabled["value"]["stdout"] if enabled.get("status") == AVAILABLE else "UNAVAILABLE"
-    )
-    values["probe_status"] = shown.get("status", UNAVAILABLE)
+    values.update(line.split("=", 1) for line in (shown.stdout or "").splitlines() if "=" in line)
+    values["EnableState"] = (enabled.stdout or "").strip() or "UNAVAILABLE"
+    values["probe_status"] = AVAILABLE if shown.returncode == 0 else UNAVAILABLE
     return values
 
 
