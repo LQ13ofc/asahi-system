@@ -30,13 +30,14 @@ else:
     MODULE_ROOT = REPO_ROOT
 sys.path.insert(0, str(MODULE_ROOT))
 
-from niri_plus import benchmark_metrics
+from niri_plus import benchmark_metrics, memory_report
 
 
 AVAILABLE = "AVAILABLE"
 UNAVAILABLE = "UNAVAILABLE"
 PERMISSION_REQUIRED = "PERMISSION_REQUIRED"
 NOT_APPLICABLE = "NOT_APPLICABLE"
+NOT_ACCOUNTED = "NOT_ACCOUNTED"
 
 
 def metric(status: str, value: Any = None, note: str | None = None) -> dict[str, Any]:
@@ -205,20 +206,55 @@ class Collector:
 
     def memory(self) -> dict[str, Any]:
         mem, source = self._meminfo()
+        keys = {
+            "mem_total_bytes": "MemTotal",
+            "mem_available_bytes": "MemAvailable",
+            "mem_free_bytes": "MemFree",
+            "buffers_bytes": "Buffers",
+            "cached_bytes": "Cached",
+            "shmem_bytes": "Shmem",
+            "sreclaimable_bytes": "SReclaimable",
+            "sunreclaim_bytes": "SUnreclaim",
+            "slab_bytes": "Slab",
+            "anon_pages_bytes": "AnonPages",
+            "mapped_bytes": "Mapped",
+            "kernel_stack_bytes": "KernelStack",
+            "page_tables_bytes": "PageTables",
+            "unevictable_bytes": "Unevictable",
+            "active_bytes": "Active",
+            "inactive_bytes": "Inactive",
+            "swap_total_bytes": "SwapTotal",
+            "swap_free_bytes": "SwapFree",
+        }
         if mem is None:
-            failed = {k: source for k in ("mem_total_bytes", "mem_available_bytes", "used_bytes", "cached_bytes", "shmem_bytes", "swap_total_bytes", "swap_used_bytes")}
+            values = {name: source for name in keys}
+            used = source
+            swap_used = source
+            kernel_slab = source
         else:
             total, available = mem.get("MemTotal"), mem.get("MemAvailable")
             swap_total, swap_free = mem.get("SwapTotal"), mem.get("SwapFree")
-            failed = {
-                "mem_total_bytes": metric(AVAILABLE, total) if total is not None else metric(UNAVAILABLE),
-                "mem_available_bytes": metric(AVAILABLE, available) if available is not None else metric(UNAVAILABLE),
-                "used_bytes": metric(AVAILABLE, max(0, total - available)) if total is not None and available is not None else metric(UNAVAILABLE, note="requires MemTotal and MemAvailable"),
-                "cached_bytes": metric(AVAILABLE, mem.get("Cached")) if "Cached" in mem else metric(UNAVAILABLE),
-                "shmem_bytes": metric(AVAILABLE, mem.get("Shmem")) if "Shmem" in mem else metric(UNAVAILABLE),
-                "swap_total_bytes": metric(AVAILABLE, swap_total) if swap_total is not None else metric(UNAVAILABLE),
-                "swap_used_bytes": metric(AVAILABLE, max(0, swap_total - swap_free)) if swap_total is not None and swap_free is not None else metric(UNAVAILABLE, note="requires SwapTotal and SwapFree"),
+            values = {
+                name: metric(AVAILABLE, mem[key]) if key in mem and mem[key] >= 0 else metric(UNAVAILABLE, note=f"{key} missing or negative in /proc/meminfo")
+                for name, key in keys.items()
             }
+            used = (
+                metric(AVAILABLE, total - available)
+                if total is not None and available is not None and 0 <= available <= total
+                else metric(UNAVAILABLE, note="requires 0 <= MemAvailable <= MemTotal")
+            )
+            swap_used = (
+                metric(AVAILABLE, swap_total - swap_free)
+                if swap_total is not None and swap_free is not None and 0 <= swap_free <= swap_total
+                else metric(UNAVAILABLE, note="requires 0 <= SwapFree <= SwapTotal")
+            )
+            slab_parts = (mem.get("SReclaimable"), mem.get("SUnreclaim"))
+            if "Slab" in mem and mem["Slab"] >= 0:
+                kernel_slab = metric(AVAILABLE, mem["Slab"])
+            elif all(value is not None and value >= 0 for value in slab_parts):
+                kernel_slab = metric(AVAILABLE, sum(slab_parts), "derived from SReclaimable + SUnreclaim")
+            else:
+                kernel_slab = metric(UNAVAILABLE, note="requires Slab or both slab component counters")
         zswap_paths = {
             "enabled": "/sys/kernel/mm/zswap/enabled",
             "compressor": "/sys/kernel/mm/zswap/compressor",
@@ -229,9 +265,48 @@ class Collector:
         usage = {}
         for name in ("stored_pages", "pool_total_size", "written_back_pages", "pool_limit_hit", "reject_compress_poor", "reject_alloc_fail", "reject_kmemcache_fail"):
             usage[name] = self.text_metric(f"/sys/kernel/debug/zswap/{name}")
-        for key, path in (("swappiness", "/proc/sys/vm/swappiness"), ("page_cluster", "/proc/sys/vm/page-cluster"), ("mglru_enabled", "/sys/kernel/mm/lru_gen/enabled"), ("mglru_min_ttl_ms", "/sys/kernel/mm/lru_gen/min_ttl_ms")):
-            failed[key] = self.text_metric(path)
-        return {**failed, "zswap_config": zswap, "zswap_usage": usage}
+        management = {
+            key: self.text_metric(path)
+            for key, path in (("swappiness", "/proc/sys/vm/swappiness"), ("page_cluster", "/proc/sys/vm/page-cluster"), ("mglru_enabled", "/sys/kernel/mm/lru_gen/enabled"), ("mglru_min_ttl_ms", "/sys/kernel/mm/lru_gen/min_ttl_ms"))
+        }
+        return {
+            **values,
+            "used_bytes": used,
+            "swap_used_bytes": swap_used,
+            "kernel_slab_bytes": kernel_slab,
+            "meminfo_semantics": metric(AVAILABLE, {
+                "used_bytes": "MemTotal - MemAvailable; estimate of memory unavailable for new allocations, not process PSS",
+                "non_additive_fields": ["Cached", "Shmem", "Mapped", "AnonPages", "SReclaimable", "SUnreclaim", "Slab", "Active", "Inactive"],
+                "slab": "Slab is the total; SReclaimable and SUnreclaim are its components and must not be added to Slab",
+            }),
+            "zswap_config": zswap,
+            "zswap_usage": usage,
+            "swappiness": management["swappiness"],
+            "page_cluster": management["page_cluster"],
+            "mglru_enabled": management["mglru_enabled"],
+            "mglru_min_ttl_ms": management["mglru_min_ttl_ms"],
+        }
+
+    def memory_diagnostic(self) -> dict[str, Any]:
+        observation = benchmark_metrics.observe(
+            root_prefix=self.root_prefix,
+            duration=self.observation_window,
+            sample_period=self.profile_sample_period,
+            profile=None,
+        )
+        root = self.root_prefix or pathlib.Path("/")
+        drm = benchmark_metrics.drm_fdinfo_snapshot(root, observation["processes"])
+        return memory_report.build_memory_diagnostic(
+            collected_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            system=self.system(),
+            observation=observation,
+            memory=self.memory(),
+            cgroup_v2=self.cgroup(),
+            systemd_user_cgroup=observation["systemd_user_cgroup"],
+            quickshell_cgroup=observation["quickshell_cgroup"],
+            memory_management=self.memory_management(),
+            drm=drm,
+        )
 
     def cgroup(self) -> dict[str, Any]:
         cg, error = read_text(self.path("/proc/self/cgroup"))
@@ -424,6 +499,9 @@ class Collector:
         processes = observation["processes"]
         counts = observation["process_read_outcomes"]["end"]
         session = self.session(processes, counts)
+        graphics_memory = benchmark_metrics.drm_fdinfo_snapshot(
+            self.root_prefix or pathlib.Path("/"), processes
+        )
         cpu = {
             **observation["cpu_delta"],
             "loadavg": self.text_metric("/proc/loadavg"),
@@ -446,6 +524,10 @@ class Collector:
             "memory": self.memory(),
             "memory_scopes": observation["memory_scopes"],
             "components": observation["components"],
+            "graphics_memory": {
+                "drm_fdinfo": graphics_memory,
+                "accounting_note": "DRM counters are optional driver reports and may refer to buffers backed by system DRAM; never add them to PSS or global memory.",
+            },
             "cgroup_v2": self.cgroup(),
             "systemd_user_cgroup": observation["systemd_user_cgroup"],
             "quickshell_cgroup": observation["quickshell_cgroup"],
@@ -475,8 +557,28 @@ def _metric_number(snapshot: dict[str, Any], path: tuple[str, ...]) -> float | N
 
 def scalar_samples(snapshot: dict[str, Any]) -> dict[str, float]:
     paths = {
+        "memory.mem_total_bytes": ("memory", "mem_total_bytes"),
         "memory.mem_available_bytes": ("memory", "mem_available_bytes"),
+        "memory.used_bytes": ("memory", "used_bytes"),
+        "memory.mem_free_bytes": ("memory", "mem_free_bytes"),
+        "memory.buffers_bytes": ("memory", "buffers_bytes"),
+        "memory.cached_bytes": ("memory", "cached_bytes"),
+        "memory.shmem_bytes": ("memory", "shmem_bytes"),
+        "memory.slab_bytes": ("memory", "slab_bytes"),
+        "memory.sreclaimable_bytes": ("memory", "sreclaimable_bytes"),
+        "memory.sunreclaim_bytes": ("memory", "sunreclaim_bytes"),
+        "memory.anon_pages_bytes": ("memory", "anon_pages_bytes"),
+        "memory.mapped_bytes": ("memory", "mapped_bytes"),
+        "memory.kernel_stack_bytes": ("memory", "kernel_stack_bytes"),
+        "memory.page_tables_bytes": ("memory", "page_tables_bytes"),
+        "memory.unevictable_bytes": ("memory", "unevictable_bytes"),
+        "memory.active_bytes": ("memory", "active_bytes"),
+        "memory.inactive_bytes": ("memory", "inactive_bytes"),
+        "memory.swap_total_bytes": ("memory", "swap_total_bytes"),
+        "memory.swap_free_bytes": ("memory", "swap_free_bytes"),
         "memory.swap_used_bytes": ("memory", "swap_used_bytes"),
+        "memory.kernel_stack_bytes": ("memory", "kernel_stack_bytes"),
+        "memory.page_tables_bytes": ("memory", "page_tables_bytes"),
         "memory.session_pss_bytes": ("memory_scopes", "session", "pss_bytes"),
         "memory.session_swap_pss_bytes": ("memory_scopes", "session", "swap_pss_bytes"),
         "cpu.system_busy_percent_delta": ("cpu", "busy_percent_delta"),
@@ -490,6 +592,11 @@ def scalar_samples(snapshot: dict[str, Any]) -> dict[str, float]:
         value = _metric_number(snapshot, path)
         if value is not None:
             result[label] = value
+    drm = snapshot.get("graphics_memory", {}).get("drm_fdinfo", {})
+    drm_value = drm.get("value", {}) if drm.get("status") == AVAILABLE else {}
+    for region, value in drm_value.get("resident_bytes_by_region", {}).items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            result[f"graphics.drm_resident.{region}_bytes"] = float(value)
     return result
 
 
@@ -512,6 +619,69 @@ def write_output_atomic(destination: pathlib.Path, rendered: str) -> None:
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise
+
+
+def collect_memory_series(
+    *,
+    window: float,
+    sample_period: float,
+    include_60_minutes: bool = False,
+    output: pathlib.Path | None = None,
+    collector_factory=None,
+    sleeper=time.sleep,
+    monotonic=time.monotonic,
+    emit=print,
+) -> dict[str, Any]:
+    """Take finite snapshots at elapsed 0/5/15/30 minutes (optionally 60)."""
+    schedule = [0, 5 * 60, 15 * 60, 30 * 60]
+    if include_60_minutes:
+        schedule.append(60 * 60)
+    factory = collector_factory or (lambda: Collector(observation_window=window, profile_sample_period=sample_period))
+    started = monotonic()
+    samples: list[dict[str, Any]] = []
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "mode": "memory-longitudinal",
+        "read_only": True,
+        "host_modified": False,
+        "schedule_seconds": schedule,
+        "complete": False,
+        "samples": samples,
+    }
+    for index, scheduled in enumerate(schedule):
+        wait_seconds = scheduled - (monotonic() - started)
+        if wait_seconds > 0:
+            emit(f"Next memory sample in {wait_seconds:.0f} seconds (scheduled +{scheduled}s).")
+            sleeper(wait_seconds)
+        diagnostic = factory().memory_diagnostic()
+        sample = {
+            "index": index,
+            "scheduled_offset_seconds": scheduled,
+            "elapsed_seconds": max(0.0, monotonic() - started),
+            "diagnostic": diagnostic,
+        }
+        samples.append(sample)
+        payload["trend_analysis"] = memory_report.analyze_memory_series(samples)
+        if index + 1 == len(schedule):
+            payload["complete"] = True
+        if output:
+            write_output_atomic(output, json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+        emit(f"\nSample {index + 1}/{len(schedule)} at +{sample['elapsed_seconds']:.0f}s")
+        emit(memory_report.render_memory_report(diagnostic))
+    if output:
+        emit(f"\nLongitudinal JSON updated: {output}")
+    emit("\nTrend assessment")
+    emit(json.dumps(payload.get("trend_analysis", {}), indent=2, ensure_ascii=False, sort_keys=True))
+    return payload
+
+
+def collect_memory_diagnostic(*, window: float, sample_period: float, output: pathlib.Path | None = None) -> dict[str, Any]:
+    diagnostic = Collector(observation_window=window, profile_sample_period=sample_period).memory_diagnostic()
+    print(memory_report.render_memory_report(diagnostic))
+    if output:
+        write_output_atomic(output, json.dumps(diagnostic, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+        print(f"\nJSON snapshot written: {output}")
+    return diagnostic
 
 
 def _self_proc_metrics() -> dict[str, Any]:
@@ -618,15 +788,55 @@ def main() -> int:
                         help="requested session profile; the collector validates it against the live host")
     mode.add_argument("--diagnose-overhead", action="store_true",
                       help="run a separate, read-only diagnostic of this collector's observer overhead")
+    mode.add_argument("--memory-diagnostic", action="store_true",
+                      help="print a read-only global/process/cgroup memory accounting report")
+    mode.add_argument("--memory-series", action="store_true",
+                      help="take finite memory snapshots at 0, 5, 15, and 30 minutes")
     parser.add_argument("--runs", type=int, default=1,
                         help="collect repeated snapshots; use 5 for the documented idle protocol")
     parser.add_argument("--window", type=float, default=10.0,
                         help="seconds in each CPU/fault/I/O delta observation window")
     parser.add_argument("--profile-sample-period", type=float, default=0.5,
                         help="seconds between lightweight profile-presence checks during the window")
+    parser.add_argument("--memory-window", type=float, default=2.0,
+                        help="seconds used to measure process CPU during a memory diagnostic")
+    parser.add_argument("--memory-sample-period", type=float, default=0.5,
+                        help="seconds between lightweight samples during a memory diagnostic window")
+    parser.add_argument("--include-60-minutes", action="store_true",
+                        help="add a final +60 minute snapshot to --memory-series")
     parser.add_argument("--output", type=pathlib.Path,
-                        help="optional JSON destination; omitted means stdout")
+                        help="optional JSON destination; memory modes still print human-readable reports")
     args = parser.parse_args()
+    if args.include_60_minutes and not args.memory_series:
+        parser.error("--include-60-minutes requires --memory-series")
+    if args.memory_diagnostic or args.memory_series:
+        window = args.memory_window
+        sample_period = args.memory_sample_period
+        if window < 0.5 or window > 15:
+            parser.error("memory observation window must be between 0.5 and 15 seconds")
+        if sample_period < 0.2 or sample_period > window:
+            parser.error("memory sample period must be between 0.2 seconds and the memory observation window")
+        if args.memory_series:
+            try:
+                collect_memory_series(
+                    window=window,
+                    sample_period=sample_period,
+                    include_60_minutes=args.include_60_minutes,
+                    output=args.output,
+                )
+            except KeyboardInterrupt:
+                print("Interrupted; the JSON destination contains all completed samples.", file=sys.stderr)
+                return 130
+            except OSError as exc:
+                print(f"cannot finish memory series/output: {exc}", file=sys.stderr)
+                return 2
+        else:
+            try:
+                collect_memory_diagnostic(window=window, sample_period=sample_period, output=args.output)
+            except OSError as exc:
+                print(f"cannot write memory diagnostic output: {exc}", file=sys.stderr)
+                return 2
+        return 0
     if args.runs < 1 or args.runs > 20:
         parser.error("--runs must be between 1 and 20")
     if args.window < 1 or args.window > 300:

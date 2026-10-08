@@ -280,6 +280,28 @@ class NiriPlusCliTests(unittest.TestCase):
         self.assertEqual(calls, [[sys.executable, str(ROOT / "scripts/collect-performance-baseline"),
                                   "--diagnose-overhead", "--runs", "3", "--output", "overhead.json"]])
 
+    def test_memory_command_forwards_to_existing_collector_without_root_or_host_mutation(self):
+        calls = []
+        def runner(args, check=False):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0)
+        with mock.patch.object(benchmark, "data_dir", return_value=ROOT):
+            self.assertEqual(benchmark.run_memory_diagnostic(
+                "memory.json", 2, 0.5, series=True, include_60_minutes=True, runner=runner
+            ), 0)
+        self.assertEqual(calls, [[sys.executable, str(ROOT / "scripts/collect-performance-baseline"),
+                                  "--memory-series", "--memory-window", "2", "--memory-sample-period", "0.5",
+                                  "--include-60-minutes", "--output", "memory.json"]])
+
+    def test_memory_cli_validates_series_flags_and_forwards_json(self):
+        with mock.patch.object(benchmark, "run_memory_diagnostic", return_value=0) as memory_mock:
+            self.assertEqual(cli.main(["memory", "--series", "--include-60-minutes",
+                                       "--window", "2", "--sample-period", "0.5",
+                                       "--json-output", "memory.json"]), 0)
+        memory_mock.assert_called_once_with("memory.json", 2.0, 0.5, True, True)
+        with self.assertRaises(SystemExit):
+            cli.main(["memory", "--include-60-minutes"])
+
     def test_benchmark_compare_cli_forwards_three_profiles_offline(self):
         with mock.patch.object(benchmark, "compare_benchmarks", return_value=0) as compare_mock:
             self.assertEqual(cli.main([

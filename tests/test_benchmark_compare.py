@@ -64,10 +64,26 @@ def run(profile, available, session_pss, quickshell_pss=0, *, niri_version="Niri
             "asahi_system_commit": command("58d7f45ec244900e69bbee7e927cdea3aa53e7f1"),
         },
         "memory": {
+            "mem_total_bytes": metric(1024),
             "mem_available_bytes": metric(available),
             "used_bytes": metric(500 - available),
+            "mem_free_bytes": metric(20),
+            "buffers_bytes": metric(5),
+            "cached_bytes": metric(30),
+            "shmem_bytes": metric(4),
+            "sreclaimable_bytes": metric(2),
+            "sunreclaim_bytes": metric(1),
+            "slab_bytes": metric(3),
+            "anon_pages_bytes": metric(60),
+            "mapped_bytes": metric(8),
+            "kernel_stack_bytes": metric(1),
+            "page_tables_bytes": metric(1),
+            "unevictable_bytes": metric(0),
+            "active_bytes": metric(100),
+            "inactive_bytes": metric(200),
             "swap_used_bytes": metric(0),
         },
+        "graphics_memory": {"drm_fdinfo": metric({"resident_bytes_by_region": {"memory": 9}})},
         "memory_scopes": {
             "session": {
                 "pss_bytes": metric(None, "UNAVAILABLE") if missing_pss else metric(session_pss),
@@ -242,6 +258,14 @@ class BenchmarkCompareTests(unittest.TestCase):
         self.assertIn("memory.session_pss_bytes", text)
         self.assertIn("PSS and cgroup memory remain separate", text)
         self.assertIn("B niri core to C niri quickshell", text)
+
+    def test_comparator_exposes_non_additive_meminfo_and_optional_drm_fields(self):
+        run = self.core["runs"][0]
+        for name in ("memory.buffers_bytes", "memory.slab_bytes", "memory.active_bytes", "memory.inactive_bytes"):
+            path, _unit = compare.METRIC_PATHS[name]
+            self.assertIsNotNone(compare._walk(run, path), name)
+        drm_path, _unit = compare.METRIC_PATHS["graphics.drm_resident_system_memory_bytes"]
+        self.assertEqual(compare._walk(run, drm_path), 9)
 
     def test_atomic_report_write_preserves_existing_report_on_replace_failure(self):
         with tempfile.TemporaryDirectory() as temp:
