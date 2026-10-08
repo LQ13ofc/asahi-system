@@ -107,7 +107,7 @@ colete:
 niri+ benchmark --profile niri-core --runs 5 --window 10 --output ~/benchmark-niri-core.json
 ```
 
-O validator exige Niri presente e `qs == 0` em todas as amostras da janela,
+O validator exige Niri e o agente PolicyKit presentes, `qs == 0` em todas as amostras da janela,
 além do mask runtime/inatividade no início e no fim. Se Quickshell aparecer
 durante a janela, o run é inválido.
 
@@ -134,6 +134,7 @@ O validator exige durante toda a janela:
 
 - Niri presente;
 - Plasma/KWin ausentes;
+- agente PolicyKit presente;
 - exatamente um `qs`;
 - o argv gerenciado esperado:
   `/usr/bin/qs --path /usr/local/share/niri-plus/quickshell/shell.qml`;
