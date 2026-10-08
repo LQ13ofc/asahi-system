@@ -172,51 +172,85 @@ def parse_cgroup(text: str | None) -> str | None:
     return None
 
 
-def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     proc = root / "proc"
+    scan_started = time.perf_counter()
+    timing = {"proc_file_reads": 0, "smaps_rollup_reads": 0}
+    seconds = {"proc_read_wall_seconds": 0.0, "smaps_rollup_wall_seconds": 0.0}
+
+    def read_proc(path: pathlib.Path, *, smaps_rollup: bool = False):
+        started = time.perf_counter()
+        result = read_text(path)
+        elapsed = time.perf_counter() - started
+        timing["proc_file_reads"] += 1
+        seconds["proc_read_wall_seconds"] += elapsed
+        if smaps_rollup:
+            timing["smaps_rollup_reads"] += 1
+            seconds["smaps_rollup_wall_seconds"] += elapsed
+        return result
+
     rows: list[dict[str, Any]] = []
-    outcomes = {"available": 0, "permission": 0, "unavailable": 0}
+    outcomes = {
+        "available": 0,
+        "permission": 0,
+        "unavailable": 0,
+        "stat_permission": 0,
+        "identity_changed": 0,
+        "stat_unavailable": 0,
+        "pids_seen": 0,
+        "rows_included": 0,
+        "enumeration_available": 1,
+    }
     try:
         pid_dirs = sorted((p for p in proc.iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
     except PermissionError:
-        return rows, {"available": 0, "permission": 1, "unavailable": 0}
+        outcomes.update(enumeration_available=0, permission=1)
+        outcomes.update(timing)
+        outcomes.update(seconds)
+        outcomes["scan_wall_seconds"] = time.perf_counter() - scan_started
+        return rows, outcomes
     except OSError:
-        return rows, {"available": 0, "permission": 0, "unavailable": 1}
+        outcomes.update(enumeration_available=0, unavailable=1)
+        outcomes.update(timing)
+        outcomes.update(seconds)
+        outcomes["scan_wall_seconds"] = time.perf_counter() - scan_started
+        return rows, outcomes
+    outcomes["pids_seen"] = len(pid_dirs)
 
     for pid_dir in pid_dirs:
         pid = int(pid_dir.name)
-        stat_text, stat_error = read_text(pid_dir / "stat")
+        stat_text, stat_error = read_proc(pid_dir / "stat")
         parsed = parse_proc_stat(stat_text or "")
         if not parsed:
+            if stat_error and "Permission denied" in stat_error:
+                outcomes["stat_permission"] += 1
+            else:
+                outcomes["stat_unavailable"] += 1
             continue
         open_ = (stat_text or "").find("(")
         close = (stat_text or "").rfind(")")
         name = (stat_text or "")[open_ + 1 : close] if open_ >= 0 and close > open_ else str(pid)
-        cmdline_raw, _ = read_text(pid_dir / "cmdline")
+        cmdline_raw, _ = read_proc(pid_dir / "cmdline")
         if cmdline_raw is not None:
             argv = [part for part in cmdline_raw.split("\x00") if part]
         else:
             argv = []
-        status_text, _ = read_text(pid_dir / "status")
+        status_text, _ = read_proc(pid_dir / "status")
         status_values = parse_proc_status(status_text)
-        cgroup_text, _ = read_text(pid_dir / "cgroup")
-        io_text, io_error = read_text(pid_dir / "io")
+        cgroup_text, _ = read_proc(pid_dir / "cgroup")
+        io_text, io_error = read_proc(pid_dir / "io")
         io_values = parse_proc_io(io_text)
 
-        rollup_text, rollup_error = read_text(pid_dir / "smaps_rollup")
+        rollup_text, rollup_error = read_proc(pid_dir / "smaps_rollup", smaps_rollup=True)
         smaps = parse_smaps_rollup(rollup_text)
         smaps_status = error_status(rollup_error) if rollup_error else AVAILABLE
-        if smaps_status == AVAILABLE:
-            outcomes["available"] += 1
-        elif smaps_status == PERMISSION_REQUIRED:
-            outcomes["permission"] += 1
-        else:
-            outcomes["unavailable"] += 1
-
         def smaps_metric(source: str) -> dict[str, Any]:
             if source in smaps:
                 return metric(AVAILABLE, smaps[source])
-            return metric(smaps_status, note=rollup_error or f"{source} unavailable")
+            return metric(
+                smaps_status if rollup_error else UNAVAILABLE,
+                note=rollup_error or f"{source} missing from smaps_rollup",
+            )
 
         row = {
             "pid": pid,
@@ -249,7 +283,31 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
                 "nonvoluntary_context_switches": status_values.get("nonvoluntary_ctxt_switches"),
             },
         }
+        # procfs paths are keyed by PID and may be rebound after a short-lived
+        # process exits. Re-read stat after the other per-process files and
+        # discard the row if the process start-time identity changed.
+        final_stat_text, final_stat_error = read_proc(pid_dir / "stat")
+        final_stat = parse_proc_stat(final_stat_text or "")
+        if not final_stat:
+            if final_stat_error and "Permission denied" in final_stat_error:
+                outcomes["stat_permission"] += 1
+            else:
+                outcomes["stat_unavailable"] += 1
+            continue
+        if final_stat["start_time_ticks"] != parsed["start_time_ticks"]:
+            outcomes["identity_changed"] += 1
+            continue
+        if smaps_status == AVAILABLE:
+            outcomes["available"] += 1
+        elif smaps_status == PERMISSION_REQUIRED:
+            outcomes["permission"] += 1
+        else:
+            outcomes["unavailable"] += 1
         rows.append(row)
+    outcomes["rows_included"] = len(rows)
+    outcomes.update(timing)
+    outcomes.update(seconds)
+    outcomes["scan_wall_seconds"] = time.perf_counter() - scan_started
     return rows, outcomes
 
 
@@ -304,29 +362,47 @@ def attach_process_deltas(
 
 def system_cpu_counters(root: pathlib.Path) -> dict[str, int] | None:
     text, _ = read_text(root / "proc/stat")
-    line = next((line for line in (text or "").splitlines() if line.startswith("cpu ")), None)
+    lines = (text or "").splitlines()
+    line = next((line for line in lines if line.startswith("cpu ")), None)
     if not line:
         return None
     try:
         fields = [int(value) for value in line.split()[1:9]]  # through steal; guest counters remain excluded
     except ValueError:
         return None
-    idle = fields[3] + fields[4]
-    return {"total": sum(fields), "idle": idle}
+    if len(fields) < 4:
+        return None
+    named_counters = {}
+    for key in ("ctxt", "intr"):
+        match = next((entry.split() for entry in lines if entry.startswith(key + " ")), None)
+        if match and len(match) >= 2 and match[1].isdigit():
+            named_counters[key] = int(match[1])
+    idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+    return {"total": sum(fields), "idle": idle, **named_counters}
 
 
 def system_cpu_delta(before: dict[str, int] | None, after: dict[str, int] | None, elapsed: float) -> dict[str, Any]:
     if not before or not after:
-        return {"idle_percent_delta": metric(UNAVAILABLE), "busy_percent_delta": metric(UNAVAILABLE)}
+        return {
+            "idle_percent_delta": metric(UNAVAILABLE),
+            "busy_percent_delta": metric(UNAVAILABLE),
+            "context_switches_delta": metric(UNAVAILABLE),
+            "interrupts_delta": metric(UNAVAILABLE),
+        }
+    result = {}
     total = after["total"] - before["total"]
     idle = after["idle"] - before["idle"]
     if total <= 0 or idle < 0:
-        return {"idle_percent_delta": metric(UNAVAILABLE), "busy_percent_delta": metric(UNAVAILABLE)}
-    idle_percent = max(0.0, min(100.0, 100.0 * idle / total))
-    return {
-        "idle_percent_delta": metric(AVAILABLE, idle_percent, f"observation window {elapsed:.3f}s"),
-        "busy_percent_delta": metric(AVAILABLE, 100.0 - idle_percent, f"observation window {elapsed:.3f}s"),
-    }
+        result["idle_percent_delta"] = metric(UNAVAILABLE)
+        result["busy_percent_delta"] = metric(UNAVAILABLE)
+    else:
+        idle_percent = max(0.0, min(100.0, 100.0 * idle / total))
+        result["idle_percent_delta"] = metric(AVAILABLE, idle_percent, f"observation window {elapsed:.3f}s")
+        result["busy_percent_delta"] = metric(AVAILABLE, 100.0 - idle_percent, f"observation window {elapsed:.3f}s")
+    for source, output in (("ctxt", "context_switches_delta"), ("intr", "interrupts_delta")):
+        delta = _delta(before.get(source), after.get(source))
+        result[output] = metric(AVAILABLE, delta, f"observation window {elapsed:.3f}s") if delta is not None else metric(UNAVAILABLE, note=f"{source} unavailable or counter reset")
+    return result
 
 
 def parse_psi(text: str | None) -> dict[str, dict[str, float | int]]:
@@ -407,12 +483,19 @@ def lightweight_signature(root: pathlib.Path) -> dict[str, Any]:
         stat, _ = read_text(entry / "stat")
         if not stat:
             continue
+        parsed_before = parse_proc_stat(stat)
+        if parsed_before is None:
+            continue
         open_, close = stat.find("("), stat.rfind(")")
         name = stat[open_ + 1 : close] if open_ >= 0 and close > open_ else ""
         if name not in names and not name.startswith("lxqt-policykit"):
             continue
         raw, _ = read_text(entry / "cmdline")
         argv = [part for part in (raw or "").split("\x00") if part]
+        final_stat, _ = read_text(entry / "stat")
+        parsed_after = parse_proc_stat(final_stat or "")
+        if parsed_after is None or parsed_after["start_time_ticks"] != parsed_before["start_time_ticks"]:
+            continue
         rows.append({"pid": int(entry.name), "name": name, "argv": argv})
     return profile_signature(rows)
 
@@ -627,6 +710,42 @@ def aggregate_scopes(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[s
     return session, components
 
 
+def apply_process_coverage(
+    session: dict[str, Any],
+    components: dict[str, Any],
+    outcomes: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep empty/partial process scans from masquerading as zero PSS."""
+    reasons = []
+    if not outcomes.get("enumeration_available", 0):
+        reasons.append("cannot enumerate /proc")
+    if outcomes.get("stat_permission", 0):
+        reasons.append(f"permission denied reading stat for {outcomes['stat_permission']} process(es)")
+    if outcomes.get("stat_unavailable", 0):
+        reasons.append(f"stat unavailable for {outcomes['stat_unavailable']} process(es)")
+    if outcomes.get("identity_changed", 0):
+        reasons.append(f"PID identity changed during scan for {outcomes['identity_changed']} process(es)")
+    if outcomes.get("permission", 0):
+        reasons.append(f"permission denied reading smaps_rollup for {outcomes['permission']} process(es)")
+    if outcomes.get("unavailable", 0):
+        reasons.append(f"smaps_rollup unavailable for {outcomes['unavailable']} process(es)")
+    coverage = metric(AVAILABLE if not reasons else UNAVAILABLE, {
+        "pids_seen": outcomes.get("pids_seen", 0),
+        "rows_included": outcomes.get("rows_included", 0),
+        "identity_changed": outcomes.get("identity_changed", 0),
+        "stat_permission": outcomes.get("stat_permission", 0),
+        "stat_unavailable": outcomes.get("stat_unavailable", 0),
+        "smaps_permission": outcomes.get("permission", 0),
+        "smaps_unavailable": outcomes.get("unavailable", 0),
+    }, "; ".join(reasons) if reasons else "all enumerated process identities were stable")
+    if reasons:
+        aggregate_names = ("pss_bytes", "rss_bytes", "private_clean_bytes", "private_dirty_bytes", "swap_pss_bytes")
+        for aggregate in (session, *components.values()):
+            for name in aggregate_names:
+                aggregate[name] = metric(UNAVAILABLE, note="incomplete process scan: " + "; ".join(reasons))
+    return coverage
+
+
 def validate_profile(
     profile: str | None,
     timeline: list[dict[str, Any]],
@@ -721,12 +840,12 @@ def observe(
     except (ValueError, OSError):
         ticks_per_second = 100
 
-    before_rows, before_outcomes = process_snapshot(root, ticks_per_second)
-    cpu_before = system_cpu_counters(root)
-    psi_before = psi_snapshot(root)
-
     real_host = root_prefix is None
     unit_before = systemd_user_unit(QS_UNIT) if real_host else {"probe_status": NOT_APPLICABLE, "EnableState": NOT_APPLICABLE}
+
+    process_observation_started = time.monotonic()
+    before_rows, before_outcomes = process_snapshot(root, ticks_per_second)
+
     cgroup_before = (
         cgroup_snapshot(root, unit_before.get("ControlGroup"))
         if real_host else cgroup_snapshot(root, None)
@@ -734,14 +853,16 @@ def observe(
     user_manager_path = systemd_user_manager_cgroup() if real_host else None
     user_manager_before = cgroup_snapshot(root, user_manager_path)
 
-    started = time.monotonic()
+    # Mantenha os contadores do sistema fora das varreduras caras de /proc/PID.
+    # Os dois snapshots de processo cobrem o run inteiro e usam duração própria
+    # para calcular porcentagens de CPU por processo.
+    cpu_window_started = time.monotonic()
+    cpu_before = system_cpu_counters(root)
+    psi_before = psi_snapshot(root)
     timeline = observe_timeline(root, max(0.0, duration), sample_period)
-    elapsed = max(0.0, time.monotonic() - started)
-
-    after_rows, after_outcomes = process_snapshot(root, ticks_per_second)
     cpu_after = system_cpu_counters(root)
     psi_after = psi_snapshot(root)
-    attach_process_deltas(before_rows, after_rows, elapsed, ticks_per_second)
+    elapsed = max(0.0, time.monotonic() - cpu_window_started)
 
     unit_after = systemd_user_unit(QS_UNIT) if real_host else {"probe_status": NOT_APPLICABLE, "EnableState": NOT_APPLICABLE}
     cgroup_after = (
@@ -749,19 +870,37 @@ def observe(
         if real_host else cgroup_snapshot(root, None)
     )
     user_manager_after = cgroup_snapshot(root, user_manager_path)
+
+    after_rows, after_outcomes = process_snapshot(root, ticks_per_second)
+    process_elapsed = max(0.0, time.monotonic() - process_observation_started)
+    attach_process_deltas(before_rows, after_rows, process_elapsed, ticks_per_second)
+
     session, components = aggregate_scopes(after_rows)
+    process_coverage = apply_process_coverage(session, components, after_outcomes)
     validation = validate_profile(profile, timeline, unit_before, unit_after)
 
     return {
         "observation_window_seconds": elapsed,
+        "process_observation_window_seconds": process_elapsed,
         "profile_validation": validation,
         "processes": after_rows,
         "process_read_outcomes": {
             "start": before_outcomes,
             "end": after_outcomes,
         },
+        "process_scan_timings": {
+            "start": {
+                key: before_outcomes[key]
+                for key in ("scan_wall_seconds", "proc_file_reads", "proc_read_wall_seconds", "smaps_rollup_reads", "smaps_rollup_wall_seconds")
+            },
+            "end": {
+                key: after_outcomes[key]
+                for key in ("scan_wall_seconds", "proc_file_reads", "proc_read_wall_seconds", "smaps_rollup_reads", "smaps_rollup_wall_seconds")
+            },
+        },
         "memory_scopes": {
             "session": session,
+            "process_scan_coverage": process_coverage,
             "aggregation_rule": (
                 "System-wide memory comes from /proc/meminfo. Session PSS is the sum of unique "
                 "final-sample user-session PIDs only. Per-process and component views are reported "

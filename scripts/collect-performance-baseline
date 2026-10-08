@@ -9,11 +9,13 @@ import json
 import os
 import pathlib
 import platform
+import resource
 import shutil
 import subprocess
 import sys
-import time
 import statistics
+import time
+import tempfile
 from typing import Any
 
 
@@ -85,13 +87,10 @@ def command(args: list[str], timeout: float = 4) -> dict[str, Any]:
 class Collector:
     """Collect from the host; root_prefix exists for isolated tests only."""
 
-    def __init__(self, root_prefix: pathlib.Path | None = None, cpu_interval: float = 0.25,
-                 observation_window: float | None = None, profile_sample_period: float = 0.5):
+    def __init__(self, root_prefix: pathlib.Path | None = None, observation_window: float = 10.0,
+                 profile_sample_period: float = 0.5):
         self.root_prefix = root_prefix
-        # cpu_interval remains a compatibility hook for isolated tests. Real benchmark
-        # invocations pass observation_window explicitly and default to a 10 s delta window.
-        self.cpu_interval = max(0.0, cpu_interval)
-        self.observation_window = max(0.0, self.cpu_interval if observation_window is None else observation_window)
+        self.observation_window = max(0.0, observation_window)
         self.profile_sample_period = max(0.2, profile_sample_period)
 
     def path(self, absolute: str) -> pathlib.Path:
@@ -140,6 +139,30 @@ class Collector:
             pass
         repo = pathlib.Path(__file__).resolve().parent.parent
         asahi_commit = command(["git", "-C", str(repo), "rev-parse", "HEAD"])
+        version_path = self.path("/usr/local/share/niri-plus/VERSION")
+        version_text, _ = read_text(version_path)
+        if version_text is None:
+            source_version, source_error = read_text(repo / "VERSION")
+            niri_plus_version = metric(AVAILABLE, source_version.strip()) if source_version else metric(status_for_error(source_error), note=source_error)
+        else:
+            niri_plus_version = metric(AVAILABLE, version_text.strip())
+        lock_path = repo / "integration/quickshell.lock.json"
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            expected_qs_commit = lock.get("commit")
+            if not isinstance(expected_qs_commit, str) or len(expected_qs_commit) != 40:
+                expected_qs_commit = None
+        except (OSError, ValueError, json.JSONDecodeError):
+            expected_qs_commit = None
+        runtime_qs_snapshot = self.path("/usr/local/share/niri-plus/quickshell.snapshot.json")
+        try:
+            installed_qs_commit = json.loads(runtime_qs_snapshot.read_text(encoding="utf-8")).get("commit")
+            if not isinstance(installed_qs_commit, str) or len(installed_qs_commit) != 40:
+                installed_qs_commit = None
+        except (OSError, ValueError, json.JSONDecodeError):
+            installed_qs_commit = None
+        niri_version = command(["niri", "--version"])
+        quickshell_version = command(["qs", "--version"])
         quickshell_dir = os.environ.get("QUICKSHELL_REPO_DIR")
         if not quickshell_dir:
             sibling = repo.parent / "quickshell-"
@@ -158,12 +181,18 @@ class Collector:
             "uname": uname,
             "fedora_asahi_release": release,
             "architecture": metric(AVAILABLE, platform.machine()),
+            "page_size_bytes": metric(AVAILABLE, int(os.sysconf("SC_PAGE_SIZE"))),
             "uptime_seconds": uptime,
             "session_type": metric(AVAILABLE, session_type) if session_type else metric(UNAVAILABLE, note="XDG_SESSION_TYPE is unset"),
             "desktop": metric(AVAILABLE, desktop) if desktop else metric(UNAVAILABLE, note="desktop session environment is unset"),
             "compositor": metric(AVAILABLE, sorted(set(compositor_names))) if compositor_names else metric(UNAVAILABLE, note="known compositor process not found in /proc"),
             "asahi_hardware": asahi_hardware,
             "asahi_system_commit": asahi_commit,
+            "niri_plus_version": niri_plus_version,
+            "niri_compositor_version": niri_version,
+            "quickshell_version": quickshell_version,
+            "quickshell_expected_commit": metric(AVAILABLE, expected_qs_commit) if expected_qs_commit else metric(UNAVAILABLE, note="Quickshell lock unavailable or malformed"),
+            "quickshell_installed_commit": metric(AVAILABLE, installed_qs_commit) if installed_qs_commit else metric(UNAVAILABLE, note="installed Quickshell snapshot manifest unavailable"),
             "quickshell_commit": quickshell_commit,
         }
 
@@ -196,107 +225,6 @@ class Collector:
         for key, path in (("swappiness", "/proc/sys/vm/swappiness"), ("page_cluster", "/proc/sys/vm/page-cluster"), ("mglru_enabled", "/sys/kernel/mm/lru_gen/enabled"), ("mglru_min_ttl_ms", "/sys/kernel/mm/lru_gen/min_ttl_ms")):
             failed[key] = self.text_metric(path)
         return {**failed, "zswap_config": zswap, "zswap_usage": usage}
-
-    def _processes(self) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        proc = self.path("/proc")
-        try:
-            pids = sorted((p for p in proc.iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
-        except PermissionError:
-            return [], {"permission": 1}
-        except OSError:
-            return [], {"unavailable": 1}
-        rows: list[dict[str, Any]] = []
-        counts = {"available": 0, "permission": 0, "unavailable": 0}
-        for pid_dir in pids:
-            pid = int(pid_dir.name)
-            stat_text, stat_error = read_text(pid_dir / "stat")
-            comm = str(pid)
-            minor_faults = major_faults = cpu_ticks = None
-            if stat_text:
-                # comm may contain spaces and parentheses; fields after the last ') ' start at proc stat field 3.
-                tail = stat_text[stat_text.rfind(")") + 2 :].split()
-                try:
-                    comm = stat_text[stat_text.find("(") + 1 : stat_text.rfind(")")]
-                    minor_faults, major_faults = int(tail[7]), int(tail[9])
-                    cpu_ticks = int(tail[11]) + int(tail[12])
-                except (IndexError, ValueError):
-                    pass
-            rollup, error = read_text(pid_dir / "smaps_rollup")
-            fields = parse_key_values(rollup) if rollup else {}
-            pstatus = status_for_error(error) if error else AVAILABLE
-            if pstatus == PERMISSION_REQUIRED:
-                counts["permission"] += 1
-            elif pstatus == UNAVAILABLE:
-                counts["unavailable"] += 1
-            else:
-                counts["available"] += 1
-            row: dict[str, Any] = {"pid": pid, "name": comm}
-            for output, source in (("rss_bytes", "Rss"), ("pss_bytes", "Pss"), ("private_clean_bytes", "Private_Clean"), ("private_dirty_bytes", "Private_Dirty"), ("swap_pss_bytes", "SwapPss")):
-                row[output] = metric(AVAILABLE, fields[source] * 1024) if source in fields else metric(pstatus, note=f"smaps_rollup {source} unavailable" if not error else error)
-            row["minor_page_faults"] = metric(AVAILABLE, minor_faults) if minor_faults is not None else metric(UNAVAILABLE, note=stat_error or "malformed /proc/PID/stat")
-            row["major_page_faults"] = metric(AVAILABLE, major_faults) if major_faults is not None else metric(UNAVAILABLE, note=stat_error or "malformed /proc/PID/stat")
-            row["cpu_ticks"] = metric(AVAILABLE, cpu_ticks) if cpu_ticks is not None else metric(UNAVAILABLE)
-            row["_cpu_start_ticks"] = cpu_ticks
-            rows.append(row)
-        return rows, counts
-
-    @staticmethod
-    def _cpu_counters(text: str | None) -> dict[str, int] | None:
-        if not text:
-            return None
-        line = next((line for line in text.splitlines() if line.startswith("cpu ")), None)
-        if not line:
-            return None
-        try:
-            values = [int(x) for x in line.split()[1:8]]  # exclude guest counters, which are included in user/nice
-            return {"idle": values[3] + (values[4] if len(values) > 4 else 0), "total": sum(values)}
-        except (IndexError, ValueError):
-            return None
-
-    def cpu(self, started: float, proc_start: str | None) -> dict[str, Any]:
-        time.sleep(self.cpu_interval)
-        proc_end, proc_err = read_text(self.path("/proc/stat"))
-        end_time = time.monotonic()
-        a, b = self._cpu_counters(proc_start), self._cpu_counters(proc_end)
-        if a and b and b["total"] > a["total"]:
-            elapsed = max(1e-9, end_time - started)
-            idle = 100.0 * (b["idle"] - a["idle"]) / (b["total"] - a["total"])
-            idle_metric = metric(AVAILABLE, round(max(0.0, min(100.0, idle)), 2), f"sample window {elapsed:.3f}s")
-        else:
-            idle_metric = metric(status_for_error(proc_err), note="unable to derive from /proc/stat")
-        load = self.text_metric("/proc/loadavg")
-        stat, stat_error = read_text(self.path("/proc/stat"))
-        if stat is not None:
-            # ctxt and intr are named lines; parse separately because their values follow the key.
-            ctxt = next((line.split()[1] for line in stat.splitlines() if line.startswith("ctxt ")), None)
-            intr = next((line.split()[1] for line in stat.splitlines() if line.startswith("intr ")), None)
-            counters = {"context_switches": metric(AVAILABLE, int(ctxt)) if ctxt and ctxt.isdigit() else metric(UNAVAILABLE), "interrupts": metric(AVAILABLE, int(intr)) if intr and intr.isdigit() else metric(UNAVAILABLE)}
-        else:
-            counters = {"context_switches": metric(status_for_error(stat_error)), "interrupts": metric(status_for_error(stat_error))}
-        # The process CPU values use per-process ticks sampled before the system interval; retain raw counters
-        # and a lifetime percentage is deliberately not mislabeled as an instantaneous percentage.
-        return {"idle_percent": idle_metric, "loadavg": load, **counters}
-
-    def process_cpu(self, processes: list[dict[str, Any]], started: float) -> None:
-        elapsed = max(1e-9, time.monotonic() - started)
-        ticks_per_second = os.sysconf("SC_CLK_TCK")
-        for process in processes:
-            pid_dir = self.path(f"/proc/{process['pid']}")
-            stat_text, error = read_text(pid_dir / "stat")
-            if stat_text:
-                tail = stat_text[stat_text.rfind(")") + 2 :].split()
-                try:
-                    now_ticks = int(tail[11]) + int(tail[12])
-                    before = process.get("_cpu_start_ticks")
-                    if before is not None:
-                        process["cpu_percent_one_core"] = metric(AVAILABLE, round(max(0, now_ticks - before) * 100.0 / ticks_per_second / elapsed, 2), f"sample window {elapsed:.3f}s")
-                    else:
-                        process["cpu_percent_one_core"] = metric(UNAVAILABLE, note="process tick counter was unavailable at sample start")
-                except (IndexError, ValueError):
-                    process["cpu_percent_one_core"] = metric(UNAVAILABLE, note="malformed /proc/PID/stat")
-            else:
-                process["cpu_percent_one_core"] = metric(status_for_error(error), note="process exited or stat unavailable during sample")
-            process.pop("_cpu_start_ticks", None)
 
     def cgroup(self) -> dict[str, Any]:
         cg, error = read_text(self.path("/proc/self/cgroup"))
@@ -355,9 +283,19 @@ class Collector:
                 rows.append({"unit": fields[0], "load": fields[1] if len(fields) > 1 else None, "active": fields[2] if len(fields) > 2 else None, "sub": fields[3] if len(fields) > 3 else None, "description": fields[4] if len(fields) > 4 else None})
         return metric(AVAILABLE, rows)
 
-    def session(self, processes: list[dict[str, Any]], counts: dict[str, int]) -> dict[str, Any]:
+    def session(self, processes: list[dict[str, Any]], counts: dict[str, Any]) -> dict[str, Any]:
+        complete = (
+            counts.get("enumeration_available", 0) == 1
+            and counts.get("identity_changed", 0) == 0
+            and counts.get("stat_permission", 0) == 0
+            and counts.get("stat_unavailable", 0) == 0
+        )
         return {
-            "processes": metric(AVAILABLE if processes else UNAVAILABLE, processes, f"smaps_rollup read outcomes: {counts}"),
+            "processes": metric(
+                AVAILABLE if processes and complete else UNAVAILABLE,
+                processes,
+                f"process scan outcomes: {counts}",
+            ),
             "system_services": self.units("system", "service"),
             "user_services": self.units("user", "service"),
             "system_timers": self.units("system", "timer"),
@@ -492,8 +430,10 @@ class Collector:
                 "read_only": True,
                 "host_modified": False,
                 "observation_window_seconds": observation["observation_window_seconds"],
+                "process_observation_window_seconds": observation["process_observation_window_seconds"],
                 "profile_sample_period_seconds": self.profile_sample_period,
                 "process_smaps_rollup_outcomes": counts,
+                "process_scans": observation["process_scan_timings"],
             },
             "system": self.system(),
             "memory": self.memory(),
@@ -545,10 +485,132 @@ def scalar_samples(snapshot: dict[str, Any]) -> dict[str, float]:
             result[label] = value
     return result
 
+
+def write_output_atomic(destination: pathlib.Path, rendered: str) -> None:
+    """Write a complete private JSON result or leave the previous result intact."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    temp_path = pathlib.Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(rendered)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp_path, destination)
+        directory_fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _self_proc_metrics() -> dict[str, Any]:
+    smaps, smaps_error = read_text(pathlib.Path("/proc/self/smaps_rollup"))
+    io, io_error = read_text(pathlib.Path("/proc/self/io"))
+    values = parse_key_values(smaps or "")
+    io_values = benchmark_metrics.parse_proc_io(io)
+    return {
+        "pss_bytes": metric(AVAILABLE, values["Pss"] * 1024) if "Pss" in values else metric(status_for_error(smaps_error), note=smaps_error or "Pss unavailable"),
+        "io_read_bytes": metric(AVAILABLE, io_values["read_bytes"]) if "read_bytes" in io_values else metric(status_for_error(io_error), note=io_error or "read_bytes unavailable"),
+        "io_write_bytes": metric(AVAILABLE, io_values["write_bytes"]) if "write_bytes" in io_values else metric(status_for_error(io_error), note=io_error or "write_bytes unavailable"),
+    }
+
+
+def diagnose_collector_overhead(runs: int) -> dict[str, Any]:
+    """Measure the collector itself separately; never subtract these estimates."""
+    collector = Collector(observation_window=0, profile_sample_period=0.2)
+    samples: list[dict[str, Any]] = []
+    original_run = subprocess.run
+    for index in range(runs):
+        commands: dict[str, dict[str, Any]] = {}
+
+        def measured_run(args, *positional, **kwargs):
+            started = time.perf_counter()
+            try:
+                return original_run(args, *positional, **kwargs)
+            finally:
+                elapsed = time.perf_counter() - started
+                argv = args if isinstance(args, (list, tuple)) else [str(args)]
+                executable = pathlib.Path(str(argv[0])).name if argv else "unknown"
+                entry = commands.setdefault(executable, {"count": 0, "wall_seconds": 0.0})
+                entry["count"] += 1
+                entry["wall_seconds"] += elapsed
+
+        subprocess.run = measured_run
+        try:
+            before_usage = resource.getrusage(resource.RUSAGE_SELF)
+            before_self = _self_proc_metrics()
+            started = time.perf_counter()
+            try:
+                snapshot = collector.snapshot(profile=None)
+            finally:
+                elapsed = time.perf_counter() - started
+                after_usage = resource.getrusage(resource.RUSAGE_SELF)
+                after_self = _self_proc_metrics()
+        finally:
+            subprocess.run = original_run
+        process_cpu = (after_usage.ru_utime - before_usage.ru_utime) + (after_usage.ru_stime - before_usage.ru_stime)
+        scans = snapshot["collector"]["process_scans"]
+        samples.append({
+            "run": index + 1,
+            "wall_seconds": elapsed,
+            "process_cpu_seconds": process_cpu,
+            "process_cpu_percent_of_one_core": 100.0 * process_cpu / max(elapsed, 1e-9),
+            "self_memory": {"before": before_self, "after": after_self},
+            "self_io_delta_bytes": {
+                key: metric(AVAILABLE, after_self[key]["value"] - before_self[key]["value"])
+                if before_self[key]["status"] == after_self[key]["status"] == AVAILABLE
+                else metric(UNAVAILABLE)
+                for key in ("io_read_bytes", "io_write_bytes")
+            },
+            "resource_usage_delta": {
+                "minor_page_faults": after_usage.ru_minflt - before_usage.ru_minflt,
+                "major_page_faults": after_usage.ru_majflt - before_usage.ru_majflt,
+                "voluntary_context_switches": after_usage.ru_nvcsw - before_usage.ru_nvcsw,
+                "nonvoluntary_context_switches": after_usage.ru_nivcsw - before_usage.ru_nivcsw,
+                "maxrss_kib_high_water_before": before_usage.ru_maxrss,
+                "maxrss_kib_high_water_after": after_usage.ru_maxrss,
+            },
+            "process_scans": scans,
+            "subprocesses": commands,
+            "read_only": snapshot["collector"]["read_only"] and not snapshot["collector"]["host_modified"],
+        })
+    numeric = ("wall_seconds", "process_cpu_seconds", "process_cpu_percent_of_one_core")
+    summary = {}
+    for key in numeric:
+        values = [float(sample[key]) for sample in samples]
+        median = statistics.median(values)
+        summary[key] = {
+            "n": len(values),
+            "median": median,
+            "mad": statistics.median(abs(value - median) for value in values),
+            "min": min(values),
+            "max": max(values),
+        }
+    return {
+        "schema_version": 1,
+        "mode": "collector-overhead-diagnostic",
+        "read_only": True,
+        "subtracted_from_benchmark": False,
+        "note": (
+            "Diagnostic runs use zero idle observation time and measure collector CPU/wall time, "
+            "process scan reads, subprocess costs, self PSS, I/O and resource counters. This is an "
+            "instrumentation diagnostic, not an estimate to subtract from desktop measurements."
+        ),
+        "runs": samples,
+        "summary": summary,
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, choices=("plasma", "niri-core", "niri-quickshell"),
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--profile", choices=("plasma", "niri-core", "niri-quickshell"),
                         help="requested session profile; the collector validates it against the live host")
+    mode.add_argument("--diagnose-overhead", action="store_true",
+                      help="run a separate, read-only diagnostic of this collector's observer overhead")
     parser.add_argument("--runs", type=int, default=1,
                         help="collect repeated snapshots; use 5 for the documented idle protocol")
     parser.add_argument("--window", type=float, default=10.0,
@@ -564,6 +626,19 @@ def main() -> int:
         parser.error("--window must be between 1 and 300 seconds")
     if args.profile_sample_period < 0.2 or args.profile_sample_period > args.window:
         parser.error("--profile-sample-period must be between 0.2 seconds and --window")
+
+    if args.diagnose_overhead:
+        diagnostic = diagnose_collector_overhead(args.runs)
+        rendered = json.dumps(diagnostic, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+        if args.output:
+            try:
+                write_output_atomic(args.output, rendered)
+            except OSError as exc:
+                print(f"cannot write output: {exc}", file=sys.stderr)
+                return 2
+        else:
+            sys.stdout.write(rendered)
+        return 0
 
     collector = Collector(observation_window=args.window, profile_sample_period=args.profile_sample_period)
     snapshots = []
@@ -618,8 +693,7 @@ def main() -> int:
     rendered = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
     if args.output:
         try:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(rendered, encoding="utf-8")
+            write_output_atomic(args.output, rendered)
         except OSError as exc:
             print(f"cannot write output: {exc}", file=sys.stderr)
             return 2

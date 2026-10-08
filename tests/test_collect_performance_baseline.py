@@ -43,7 +43,7 @@ class CollectorTests(unittest.TestCase):
         (cgroup / "memory.pressure").write_text("some avg10=0.00 total=0\n")
         (cgroup / "cpu.stat").write_text("usage_usec 40\n")
         (cgroup / "io.stat").write_text("8:0 rbytes=0 wbytes=0\n")
-        self.collector = collector_module.Collector(self.root, cpu_interval=0)
+        self.collector = collector_module.Collector(self.root, observation_window=0)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -78,13 +78,18 @@ class CollectorTests(unittest.TestCase):
             self.assertIn(name, result)
         self.assertEqual(result["unified"]["status"], collector_module.NOT_APPLICABLE)
 
-    def test_process_smaps_rollup_and_faults(self):
+    def test_process_smaps_rollup_and_faults_use_live_metrics_path(self):
         proc = self.root / "proc/101"
         proc.mkdir()
-        # Fields after comm: state, ppid, ... minflt, cminflt, majflt, cmajflt, ... utime, stime.
-        (proc / "stat").write_text("101 (demo process) S 1 0 0 0 0 0 7 0 2 0 50 10 0 0 0\n")
+        tail = ["S"] + ["0"] * 19
+        tail[1], tail[7], tail[9], tail[11], tail[12], tail[19] = "1", "7", "2", "50", "10", "1234"
+        (proc / "stat").write_text("101 (demo process) " + " ".join(tail) + "\n")
+        (proc / "cmdline").write_bytes(b"/usr/bin/demo\0")
+        (proc / "status").write_text("Uid:\t1000\t1000\t1000\t1000\n")
+        (proc / "cgroup").write_text("0::/user.slice/test.scope\n")
+        (proc / "io").write_text("read_bytes: 10\nwrite_bytes: 20\n")
         (proc / "smaps_rollup").write_text("Rss: 100 kB\nPss: 70 kB\nPrivate_Clean: 10 kB\nPrivate_Dirty: 20 kB\nSwapPss: 3 kB\n")
-        processes, outcomes = self.collector._processes()
+        processes, outcomes = collector_module.benchmark_metrics.process_snapshot(self.root, 100)
         item = next(row for row in processes if row["pid"] == 101)
         self.assertEqual(item["name"], "demo process")
         self.assertEqual(item["pss_bytes"]["value"], 70 * 1024)
@@ -95,6 +100,7 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(item["minor_page_faults"]["value"], 7)
         self.assertEqual(item["major_page_faults"]["value"], 2)
         self.assertGreaterEqual(outcomes["available"], 1)
+        self.assertEqual(outcomes["identity_changed"], 0)
 
     def test_profile_validation_failure_does_not_write_output(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -117,6 +123,39 @@ class CollectorTests(unittest.TestCase):
                 self.assertEqual(collector_module.main(), 3)
             self.assertFalse(output.exists())
 
+    def test_atomic_output_failure_preserves_previous_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = pathlib.Path(temp) / "baseline.json"
+            output.write_text("previous complete result\n")
+            with mock.patch.object(collector_module.os, "replace", side_effect=OSError("simulated replace failure")):
+                with self.assertRaisesRegex(OSError, "simulated replace failure"):
+                    collector_module.write_output_atomic(output, '{"new": true}\n')
+            self.assertEqual(output.read_text(), "previous complete result\n")
+            self.assertEqual(list(pathlib.Path(temp).glob("*.tmp")), [])
+            self.assertEqual(list(pathlib.Path(temp).glob(".*.tmp")), [])
+
+    def test_atomic_output_is_private_and_complete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = pathlib.Path(temp) / "nested" / "baseline.json"
+            collector_module.write_output_atomic(output, '{"complete": true}\n')
+            self.assertEqual(json.loads(output.read_text()), {"complete": True})
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_overhead_diagnostic_is_separate_and_never_subtracts_estimates(self):
+        snapshot = {
+            "collector": {"read_only": True, "host_modified": False, "process_scans": {
+                "start": {"proc_file_reads": 10, "scan_wall_seconds": 0.01},
+                "end": {"proc_file_reads": 10, "scan_wall_seconds": 0.01},
+            }}
+        }
+        with mock.patch.object(collector_module.Collector, "snapshot", return_value=snapshot):
+            result = collector_module.diagnose_collector_overhead(1)
+        self.assertEqual(result["mode"], "collector-overhead-diagnostic")
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["subtracted_from_benchmark"])
+        self.assertIn("process_scans", result["runs"][0])
+        self.assertIn("process_cpu_seconds", result["runs"][0])
+
     def test_cloud_architecture_and_schema_are_partial_and_read_only(self):
         before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
         with mock.patch.object(collector_module.platform, "machine", return_value="x86_64"), \
@@ -128,8 +167,12 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(snapshot["schema_version"], 2)
         self.assertTrue(snapshot["collector"]["read_only"])
+        self.assertIn("process_observation_window_seconds", snapshot["collector"])
         self.assertEqual(snapshot["system"]["architecture"]["value"], "x86_64")
         self.assertEqual(snapshot["system"]["asahi_hardware"]["status"], collector_module.NOT_APPLICABLE)
+        self.assertEqual(snapshot["system"]["niri_plus_version"]["status"], collector_module.AVAILABLE)
+        self.assertIn("quickshell_expected_commit", snapshot["system"])
+        self.assertIn("niri_compositor_version", snapshot["system"])
         self.assertEqual(snapshot["cgroup_v2"]["memory_current"]["value"], 12345)
         encoded = json.dumps(snapshot)
         self.assertIn('"status": "AVAILABLE"', encoded)

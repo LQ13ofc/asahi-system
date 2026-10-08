@@ -13,6 +13,11 @@ explícita do perfil B, `niri+ benchmark --prepare-niri-core`. Ela usa um
 **mask runtime** do unit Quickshell no `systemd --user` e tem restore
 correspondente. Isso não é executado automaticamente pela coleta.
 
+O marcador privado em `$XDG_RUNTIME_DIR` usa escrita atômica e serializa
+prepare/restore. Se o restore falhar, o marcador permanece com a fase e o erro
+para permitir uma nova tentativa. O código não adota nem encerra um processo
+Quickshell que tenha aparecido fora da operação.
+
 Cada métrica mantém um estado explícito:
 
 - `AVAILABLE`: valor coletado;
@@ -23,11 +28,15 @@ Cada métrica mantém um estado explícito:
 Ausência não equivale a zero. Memória por processo vem de
 `/proc/PID/smaps_rollup`. PSS é a métrica prioritária para comparar footprint;
 RSS continua disponível para diagnóstico.
+O leitor confirma o `starttime` de `/proc/PID/stat` antes e depois de ler os
+arquivos do processo. Se o PID for reutilizado no meio da leitura, aquela linha
+é descartada e o inventário/PSS agregado é marcado como incompleto.
 
 ## Janela de observação
 
-Cada run abre uma janela padrão de 10 s (`--window`) e usa os mesmos contadores
-antes/depois para:
+Cada run abre uma janela padrão de 10 s (`--window`). A janela de CPU/PSI é
+delimitada por contadores antes/depois da timeline; snapshots completos de
+processos são feitos em uma janela separada. O coletor registra:
 
 - CPU time por PID;
 - minor/major faults;
@@ -36,6 +45,14 @@ antes/depois para:
 - CPU system-wide;
 - PSI CPU/memory/I/O;
 - CPU/I/O do cgroup Quickshell.
+
+As varreduras completas de `/proc/PID` e `smaps_rollup` ficam fora dos deltas de
+CPU/PSI/cgroup: a captura inicial e as leituras de cgroup ocorrem antes dos
+contadores; as leituras finais ocorrem depois. As porcentagens por processo
+usam `process_observation_window_seconds`, que cobre as duas capturas e é
+registrado separadamente. A timeline leve de presença de processos permanece
+dentro da janela para validar o perfil. Assim, o custo das leituras completas
+de `smaps_rollup` não é contabilizado como carga da sessão medida.
 
 Portanto `%CPU` instantâneo não é a métrica primária. O campo
 `cpu_percent_one_core_delta` é derivado do delta de CPU time na janela, e o
@@ -58,6 +75,47 @@ Para cada perfil:
 6. Registre energia, rede, horário e atividade externa junto da conclusão.
 
 Nunca use `drop_caches`. Nenhuma coleta Cloud x86_64 substitui o M1.
+
+## Comparação offline e overhead do collector
+
+Depois das três capturas:
+
+```bash
+niri+ benchmark compare \
+  --plasma ~/benchmark-plasma.json \
+  --niri-core ~/benchmark-niri-core.json \
+  --niri-quickshell ~/benchmark-niri-quickshell.json \
+  --output ~/benchmark-report.md \
+  --json-output ~/benchmark-report.json
+```
+
+O comparador valida schema, perfil, evidência de perfil, read-only e metadados
+de compatibilidade. Ele compara release/arquitetura/modelo, page size, kernel,
+sessão Wayland, Niri+, Niri, Quickshell e o commit esperado/instalado do
+Quickshell. Um mismatch torna as diferenças `INCONCLUSIVE`; campos necessários
+ausentes deixam a comparabilidade `UNVERIFIED`. O commit Git de `asahi-system`
+é mostrado quando disponível, mas pode estar ausente numa instalação sem
+metadados Git.
+
+Para cada métrica são exibidos mediana, MAD, mínimo, máximo, delta absoluto e
+percentual. Uma classificação `MEASURED_INCREASE` ou `MEASURED_DECREASE`
+exige pelo menos três runs completos e uma diferença maior que duas vezes o
+maior MAD entre os lados. Isso é uma heurística descritiva conservadora, não um
+teste formal de significância. O protocolo continua recomendando cinco runs.
+O relatório separa memória global, PSS por sessão/processo e cgroups, e lista
+processos presentes só em C e os maiores PSS.
+
+O overhead do collector é medido separadamente:
+
+```bash
+niri+ benchmark --diagnose-overhead --runs 3 --output ~/collector-overhead.json
+```
+
+Esse modo usa janela de workload zero e registra tempo/CPU do processo,
+leituras de `/proc`, leituras de `smaps_rollup`, subprocessos, PSS/I/O próprio
+e contadores de faults/context switches. A estimativa nunca é subtraída dos
+resultados reais. A medição do overhead deve usar o mesmo host e ferramentas
+que as capturas; Cloud é apenas `CLOUD_MEASURED`.
 
 ## Perfis experimentais obrigatórios
 
@@ -118,9 +176,9 @@ niri+ benchmark --restore-niri-core
 ```
 
 O restore só remove o mask runtime se o marcador de ownership do benchmark for
-válido. Depois do unmask, o marcador é removido antes da tentativa de restart;
-assim uma falha de restart não deixa ownership falso. Em Niri, a CLI tenta
-reiniciar o unit e informa erro de forma explícita se isso falhar.
+válido. Em Niri, ele restaura e verifica a única instância gerenciada. Se o
+unmask, restart ou verificação falhar, mantém o marcador `restore-required`;
+uma nova execução pode retomar a recuperação com segurança.
 
 ### C — Niri + Quickshell
 

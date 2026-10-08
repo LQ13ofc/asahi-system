@@ -1,0 +1,70 @@
+{
+  "after_file": "after/result.json",
+  "before_file": "before/result.json",
+  "collector_run_cost_after": {
+    "process_cpu_percent_of_one_core": {
+      "mad": 0.7463018118822333,
+      "max": 84.85744254737648,
+      "median": 84.11114073549425,
+      "min": 83.06757201600558,
+      "n": 3
+    },
+    "process_cpu_seconds": {
+      "mad": 0.0003429999999999822,
+      "max": 0.31254099999999996,
+      "median": 0.312198,
+      "min": 0.296536,
+      "n": 3
+    },
+    "wall_seconds": {
+      "mad": 0.0028601759986486286,
+      "max": 0.37117318499076646,
+      "median": 0.36831300899211783,
+      "min": 0.3569816630042624,
+      "n": 3
+    }
+  },
+  "collector_run_cost_before": {
+    "process_cpu_percent_of_one_core": {
+      "mad": 0.2951738264387558,
+      "max": 84.41863952281017,
+      "median": 84.12346569637141,
+      "min": 81.10731597633513,
+      "n": 3
+    },
+    "process_cpu_seconds": {
+      "mad": 0.009247999999999978,
+      "max": 0.33140499999999995,
+      "median": 0.32215699999999997,
+      "min": 0.30852199999999996,
+      "n": 3
+    },
+    "wall_seconds": {
+      "mad": 0.017490675003500655,
+      "max": 0.40860062499996275,
+      "median": 0.3829573559924029,
+      "min": 0.3654666809889022,
+      "n": 3
+    }
+  },
+  "decision": "KEEP",
+  "end_scan": {
+    "proc_file_reads": 8379,
+    "proc_read_wall_seconds": 0.0775886170740705,
+    "scan_wall_seconds": 0.11235778300033417,
+    "smaps_rollup_reads": 1197,
+    "smaps_rollup_wall_seconds": 0.007995156163815409
+  },
+  "experiment": "collector-window-isolation",
+  "interpretation": "The refactor moves complete /proc PID/smaps scans outside system CPU, PSI and cgroup deltas; process CPU percentages now use their own scan-to-scan duration. The Cloud diagnostic reports total observer cost only; it is not subtracted from profile results and does not quantify an M1 performance benefit.",
+  "measurement_class": "CLOUD_MEASURED",
+  "read_only": true,
+  "schema_version": 1,
+  "start_scan": {
+    "proc_file_reads": 8379,
+    "proc_read_wall_seconds": 0.08753477735444903,
+    "scan_wall_seconds": 0.1257676839886699,
+    "smaps_rollup_reads": 1197,
+    "smaps_rollup_wall_seconds": 0.010178507887758315
+  }
+}
