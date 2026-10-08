@@ -307,13 +307,13 @@ def process_inventory(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
     largest: dict[str, list[dict[str, Any]]] = {}
     for profile, capture in captures.items():
         counts: dict[str, int] = {}
-        per_run_pss: list[dict[str, float] | None] = []
+        per_run_pss: list[dict[str, float | None] | None] = []
         for run in capture["runs"]:
             rows = _walk(run, ("session", "processes"))
             if not isinstance(rows, list):
                 per_run_pss.append(None)
                 continue
-            pss_by_identity: dict[str, float] = {}
+            pss_by_identity: dict[str, float | None] = {}
             present: set[str] = set()
             for row in rows:
                 if not isinstance(row, dict):
@@ -321,22 +321,32 @@ def process_inventory(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
                 identity = _process_identity(row)
                 present.add(identity)
                 pss = _number(_walk(row, ("pss_bytes",)))
-                if pss is not None:
-                    pss_by_identity[identity] = pss_by_identity.get(identity, 0.0) + pss
+                # Multiple processes can share an executable identity. A missing
+                # PSS for any one of them invalidates that run's aggregate.
+                if pss is None:
+                    pss_by_identity[identity] = None
+                elif identity not in pss_by_identity:
+                    pss_by_identity[identity] = pss
+                elif pss_by_identity[identity] is not None:
+                    pss_by_identity[identity] += pss
             for identity in present:
                 counts[identity] = counts.get(identity, 0) + 1
             per_run_pss.append(pss_by_identity)
         inventory[profile] = {}
         for identity, count in sorted(counts.items()):
+            # Process absence is not zero PSS. Summarize only runs where the
+            # process was present, and never report a complete median when
+            # smaps_rollup was unavailable for a present instance.
             observed = [
-                run_pss.get(identity, 0.0)
+                run_pss[identity]
                 for run_pss in per_run_pss
-                if run_pss is not None
+                if run_pss is not None and identity in run_pss and run_pss[identity] is not None
             ]
             inventory[profile][identity] = {
                 "runs_present": count,
                 "runs_total": len(capture["runs"]),
-                "median_pss_bytes": statistics.median(observed) if observed else None,
+                "runs_with_pss": len(observed),
+                "median_pss_bytes": statistics.median(observed) if len(observed) == count else None,
             }
         largest[profile] = sorted(
             (
