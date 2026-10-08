@@ -105,7 +105,7 @@ class CollectorTests(unittest.TestCase):
             snapshot = self.collector.snapshot()
         after = sorted(str(path.relative_to(self.root)) for path in self.root.rglob("*"))
         self.assertEqual(before, after)
-        self.assertEqual(snapshot["schema_version"], 1)
+        self.assertEqual(snapshot["schema_version"], 2)
         self.assertTrue(snapshot["collector"]["read_only"])
         self.assertEqual(snapshot["system"]["architecture"]["value"], "x86_64")
         self.assertEqual(snapshot["system"]["asahi_hardware"]["status"], collector_module.NOT_APPLICABLE)
