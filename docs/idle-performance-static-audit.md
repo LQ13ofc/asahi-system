@@ -76,6 +76,14 @@ do compositor; `foot` e `fuzzel` só são iniciados por ação do usuário.
 - **1 h:** `Weather.qml` agenda um refresh a cada 3 600 000 ms. O `curl` é
   efêmero e também pode ocorrer no startup se o cache estiver ausente/velho.
 
+### Filesystem watchers
+
+Nenhum QML do pin habilita `FileView.watchChanges`. No Quickshell 0.3.1 essa
+opção é `false` por padrão; portanto os `FileView` encontrados são leitura/carga
+explícita, não watchers permanentes. `Stats.qml` chama `reload()` pelo timer de
+5 s; Brightness chama reload a partir de uevents; caches de Weather/Agenda são
+lidos/escritos nos momentos descritos acima.
+
 ## Tabela de custo idle estático
 
 | Componente | Arquivo | Startup/residente? | Mecanismo | Frequência/evento | Processo extra? | Custo idle provável | Classificação | Evidência |
