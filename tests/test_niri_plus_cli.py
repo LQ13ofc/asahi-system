@@ -446,6 +446,28 @@ class NiriPlusCliTests(unittest.TestCase):
             self.assertEqual(report["quickshell"]["state_pin_status"], host.WARNING)
             self.assertEqual(report["quickshell"]["status"], host.WARNING)
 
+    def test_quickshell_rpm_probe_renders_implicit_zero_epoch_canonically(self):
+        calls = []
+
+        def rpm_runner(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(
+                args, 0, stdout="0:0.3.1-2.fc44.aarch64", stderr=""
+            )
+
+        state, version = quickshell._rpm_version(pathlib.Path("/"), rpm_runner)
+
+        self.assertEqual(state, host.OK)
+        self.assertEqual(version, "0:0.3.1-2.fc44.aarch64")
+        self.assertEqual(
+            calls,
+            [[
+                "rpm", "-q", "--qf",
+                "%|EPOCH?{%{EPOCH}:}:{0:}|%{VERSION}-%{RELEASE}.%{ARCH}",
+                "quickshell",
+            ]],
+        )
+
     def test_quickshell_report_detects_pinned_and_diverged_checkouts(self):
         with tempfile.TemporaryDirectory() as temp:
             base = pathlib.Path(temp) / "data"
