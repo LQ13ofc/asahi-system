@@ -45,6 +45,7 @@ class BenchmarkProfileTests(unittest.TestCase):
             "plasmashell_pids": [],
             "qs_pids": [20],
             "managed_qs_pids": [20],
+            "polkit_agent_pids": [30],
             "qs_argv": [{"pid": 20, "argv": benchmark_metrics.QS_EXPECTED_ARGV}],
         }]
         unit = {
@@ -57,6 +58,10 @@ class BenchmarkProfileTests(unittest.TestCase):
         }
         result = benchmark_metrics.validate_profile("niri-quickshell", timeline, unit, unit)
         self.assertEqual(result["status"], benchmark_metrics.PROFILE_OK)
+
+        missing_polkit = [dict(timeline[0], polkit_agent_pids=[])]
+        result = benchmark_metrics.validate_profile("niri-quickshell", missing_polkit, unit, unit)
+        self.assertEqual(result["status"], benchmark_metrics.PROFILE_FAIL)
 
         bad = dict(unit, ExecMainPID="21")
         result = benchmark_metrics.validate_profile("niri-quickshell", timeline, unit, bad)
