@@ -397,7 +397,7 @@ def profile_signature(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def lightweight_signature(root: pathlib.Path) -> dict[str, Any]:
-    names = {"niri", "kwin_wayland", "plasmashell", "qs", "lxqt-policykit-"}
+    names = {"niri", "kwin_wayland", "plasmashell", "qs"}
     rows = []
     try:
         entries = [entry for entry in (root / "proc").iterdir() if entry.name.isdigit()]
@@ -409,7 +409,7 @@ def lightweight_signature(root: pathlib.Path) -> dict[str, Any]:
             continue
         open_, close = stat.find("("), stat.rfind(")")
         name = stat[open_ + 1 : close] if open_ >= 0 and close > open_ else ""
-        if name not in names:
+        if name not in names and not name.startswith("lxqt-policykit"):
             continue
         raw, _ = read_text(entry / "cmdline")
         argv = [part for part in (raw or "").split("\x00") if part]
