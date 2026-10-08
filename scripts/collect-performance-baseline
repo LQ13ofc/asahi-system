@@ -20,8 +20,15 @@ from typing import Any
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# Source checkout: scripts/ and niri_plus/ are siblings. The installed
+# bootstrap deliberately separates read-only data under /usr/local/share
+# from trusted Python modules under /usr/local/lib. Resolve that split
+# without PYTHONPATH or a user-writable fallback.
+if REPO_ROOT.name == "niri-plus" and REPO_ROOT.parent.name == "share":
+    MODULE_ROOT = REPO_ROOT.parent.parent / "lib/niri-plus"
+else:
+    MODULE_ROOT = REPO_ROOT
+sys.path.insert(0, str(MODULE_ROOT))
 
 from niri_plus import benchmark_metrics
 
