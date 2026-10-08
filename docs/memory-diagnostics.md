@@ -20,8 +20,10 @@ niri+ memory --json-output "$HOME/niri-memory.json"
 
 A coleta longitudinal inicia uma amostra imediatamente e encerra depois de
 quatro amostras (+0, +5, +15 e +30 minutos). `--include-60-minutes` acrescenta
-a última amostra opcional. O JSON é atualizado atomicamente depois de cada
-amostra completa; `Ctrl+C` preserva as que terminaram:
+a última amostra opcional. Cada amostra completa é gravada atomicamente em um
+arquivo lateral `*.partial`; o destino anterior só é substituído quando a
+série termina. Se a coleta for cancelada, o destino anterior continua intacto
+e a série parcial é mantida no caminho informado pelo comando:
 
 ```bash
 niri+ memory --series --json-output "$HOME/niri-memory-series.json"
@@ -32,6 +34,15 @@ O processo não fica residente depois do comando. `--window` (padrão 2 s) e
 `--sample-period` (padrão 0,5 s) controlam a pequena janela de CPU por processo.
 O arquivo JSON de destino é a única escrita solicitada pelo usuário; o coletor
 não altera serviços, pacotes, configurações ou políticas de memória.
+
+### Privacidade do JSON
+
+Antes de escrever JSON, a CLI mostra um aviso. O arquivo inclui `argv` por
+processo, que pode conter tokens ou outros segredos, além de caminhos de
+executáveis/cgroups, PID, UID, nomes de processos e metadados da sessão. O JSON
+também carrega um campo `privacy.review_before_sharing`; inspecione e redija os
+dados antes de compartilhar o arquivo fora de um ambiente confiável. O coletor
+não tenta adivinhar quais argumentos ou caminhos são secretos.
 
 ## Contabilidade e limites
 
@@ -58,7 +69,9 @@ não altera serviços, pacotes, configurações ou políticas de memória.
   nos processos; nunca some `memory.current` ao PSS.
 - **Residual:** `MemTotal - MemAvailable - PSS total` é um residual aritmético
   aproximado com instantes e domínios de contabilidade distintos. Não o rotule
-  como kernel, cache ou GPU.
+  como kernel, cache ou GPU. Um resultado negativo é preservado como sinal da
+  diferença entre domínios/instantes, não é truncado para zero e não é atribuído
+  a um dispositivo.
 - **PSI/swap:** pressão vem de `/proc/pressure`; swap e zswap são mostrados
   separadamente. Ausência de debugfs ou de interface resulta em
   `UNAVAILABLE`, `PERMISSION_REQUIRED`, `NOT_APPLICABLE` ou `NOT_ACCOUNTED`,
@@ -84,10 +97,18 @@ e [driver Asahi público](https://github.com/AsahiLinux/linux/tree/asahi/drivers
 Cada amostra inclui inventário/PSS, Niri, Quickshell, filhos, contagem de
 processos e threads, CPU, memória disponível, swap, PSI e cgroups. A análise
 offline reporta deltas e monotonicidade. Só marca um processo como
-`POSSIBLE_LEAK_CANDIDATE` quando a mesma identidade PID + `start_time_ticks`
-mantém PSS e private-dirty crescentes em todas as quatro amostras. É uma pista,
-nunca diagnóstico: carga funcional, objetos retidos e cache precisam ser
-investigados antes de chamar isso de vazamento.
+`POSSIBLE_LEAK_CANDIDATE` quando o mesmo par observado PID + `start_time_ticks`
+e os metadados de processo (nome, UID, executável e cgroup) permanecem
+consistentes, e PSS/private-dirty não decrescem em todas as quatro amostras.
+PID reutilizado com outro `start_time_ticks`, mudança de metadados, processos
+que desaparecem e métricas PSS incompletas não geram candidato. O campo é uma
+pista, nunca diagnóstico: `start_time_ticks` tem resolução de ticks do kernel e
+não é uma prova criptográfica de identidade; carga funcional, objetos retidos
+e cache precisam ser investigados antes de chamar isso de vazamento.
+
+O texto do relatório rotula bytes, percentuais de PSI/zswap, contagens e
+durações separadamente. Contadores de cgroup e `memory.current` são vistas
+separadas e não devem ser somados a PSS ou à estimativa global.
 
 Uma execução sem Niri registra `NOT_APPLICABLE` para a meta idle Niri. A marca
 `HIGH_BASELINE_CANDIDATE` significa apenas que a estimativa global ultrapassa a

@@ -273,6 +273,63 @@ class BenchmarkProfileTests(unittest.TestCase):
             self.assertEqual(outcomes["identity_changed"], 1)
             self.assertEqual(outcomes["rows_included"], 0)
 
+    def test_process_snapshot_marks_process_disappearance_as_incomplete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            entry = root / "proc/123"
+            entry.mkdir(parents=True)
+            (root / "proc/uptime").write_text("1000.0 0.0\n")
+            (entry / "cmdline").write_bytes(b"/usr/bin/example\0")
+            (entry / "status").write_text("Uid:\t1000\t1000\t1000\t1000\nThreads:\t1\n")
+            (entry / "cgroup").write_text("0::/user.slice/test\n")
+            (entry / "io").write_text("read_bytes: 12\nwrite_bytes: 4\n")
+            (entry / "smaps_rollup").write_text("Rss: 10 kB\nPss: 8 kB\n")
+            original_read = benchmark_metrics.read_text
+            stat_reads = {"count": 0}
+
+            def read_with_exit(path):
+                if path == entry / "stat":
+                    stat_reads["count"] += 1
+                    if stat_reads["count"] == 1:
+                        return self._proc_stat(123, "example", 100), None
+                    return None, "[Errno 2] No such process"
+                return original_read(path)
+
+            with mock.patch.object(benchmark_metrics, "read_text", side_effect=read_with_exit):
+                rows, outcomes = benchmark_metrics.process_snapshot(root, 100)
+            self.assertEqual(rows, [])
+            self.assertEqual(outcomes["stat_unavailable"], 1)
+            self.assertEqual(outcomes["rows_included"], 0)
+            self.assertEqual(benchmark_metrics.apply_process_coverage({}, {}, outcomes)["status"],
+                             benchmark_metrics.UNAVAILABLE)
+
+    def test_missing_pss_field_marks_process_coverage_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            entry = root / "proc/123"
+            entry.mkdir(parents=True)
+            (root / "proc/uptime").write_text("1000.0 0.0\n")
+            (entry / "cmdline").write_bytes(b"/usr/bin/example\0")
+            (entry / "status").write_text("Uid:\t1000\t1000\t1000\t1000\nThreads:\t1\n")
+            (entry / "cgroup").write_text("0::/user.slice/test\n")
+            (entry / "io").write_text("read_bytes: 12\nwrite_bytes: 4\n")
+            (entry / "smaps_rollup").write_text("Rss: 10 kB\nPrivate_Dirty: 2 kB\n")
+            original_read = benchmark_metrics.read_text
+
+            def stable_stat(path):
+                if path == entry / "stat":
+                    return self._proc_stat(123, "example", 100), None
+                return original_read(path)
+
+            with mock.patch.object(benchmark_metrics, "read_text", side_effect=stable_stat):
+                rows, outcomes = benchmark_metrics.process_snapshot(root, 100)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["pss_bytes"]["status"], benchmark_metrics.UNAVAILABLE)
+            self.assertEqual(outcomes["pss_missing"], 1)
+            coverage = benchmark_metrics.apply_process_coverage({}, {}, outcomes)
+            self.assertEqual(coverage["status"], benchmark_metrics.UNAVAILABLE)
+            self.assertIn("Pss field missing", coverage["note"])
+
     def test_partial_process_scan_does_not_report_zero_memory_as_available(self):
         session = {"pss_bytes": benchmark_metrics.metric(benchmark_metrics.AVAILABLE, 0)}
         components = {"niri": {"pss_bytes": benchmark_metrics.metric(benchmark_metrics.AVAILABLE, 0)}}

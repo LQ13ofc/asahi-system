@@ -16,6 +16,7 @@ import sys
 import statistics
 import time
 import tempfile
+import uuid
 from typing import Any
 
 
@@ -621,6 +622,21 @@ def write_output_atomic(destination: pathlib.Path, rendered: str) -> None:
         raise
 
 
+def _warn_json_privacy(emit=print) -> None:
+    notice = memory_report.JSON_PRIVACY_NOTICE
+    emit("PRIVACY WARNING: memory JSON may contain process argv (including secrets), executable/cgroup paths, PIDs, UIDs, and session metadata.")
+    emit(notice["message"])
+
+
+def _commit_series_output(partial: pathlib.Path, destination: pathlib.Path) -> None:
+    os.replace(partial, destination)
+    directory_fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def collect_memory_series(
     *,
     window: float,
@@ -642,40 +658,54 @@ def collect_memory_series(
     payload: dict[str, Any] = {
         "schema_version": 1,
         "mode": "memory-longitudinal",
+        "privacy": memory_report.JSON_PRIVACY_NOTICE,
         "read_only": True,
         "host_modified": False,
         "schedule_seconds": schedule,
         "complete": False,
         "samples": samples,
     }
-    for index, scheduled in enumerate(schedule):
-        wait_seconds = scheduled - (monotonic() - started)
-        if wait_seconds > 0:
-            emit(f"Next memory sample in {wait_seconds:.0f} seconds (scheduled +{scheduled}s).")
-            sleeper(wait_seconds)
-        diagnostic = factory().memory_diagnostic()
-        sample = {
-            "index": index,
-            "scheduled_offset_seconds": scheduled,
-            "elapsed_seconds": max(0.0, monotonic() - started),
-            "diagnostic": diagnostic,
-        }
-        samples.append(sample)
-        payload["trend_analysis"] = memory_report.analyze_memory_series(samples)
-        if index + 1 == len(schedule):
-            payload["complete"] = True
-        if output:
-            write_output_atomic(output, json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
-        emit(f"\nSample {index + 1}/{len(schedule)} at +{sample['elapsed_seconds']:.0f}s")
-        emit(memory_report.render_memory_report(diagnostic))
+    partial_output = None
     if output:
-        emit(f"\nLongitudinal JSON updated: {output}")
+        output = pathlib.Path(output)
+        partial_output = output.with_name(f"{output.name}.{os.getpid()}.{uuid.uuid4().hex}.partial")
+        _warn_json_privacy(emit)
+    try:
+        for index, scheduled in enumerate(schedule):
+            wait_seconds = scheduled - (monotonic() - started)
+            if wait_seconds > 0:
+                emit(f"Next memory sample in {wait_seconds:.0f} seconds (scheduled +{scheduled}s).")
+                sleeper(wait_seconds)
+            diagnostic = factory().memory_diagnostic()
+            sample = {
+                "index": index,
+                "scheduled_offset_seconds": scheduled,
+                "elapsed_seconds": max(0.0, monotonic() - started),
+                "diagnostic": diagnostic,
+            }
+            samples.append(sample)
+            payload["trend_analysis"] = memory_report.analyze_memory_series(samples)
+            if index + 1 == len(schedule):
+                payload["complete"] = True
+            if partial_output:
+                write_output_atomic(partial_output, json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+            emit(f"\nSample {index + 1}/{len(schedule)} at +{sample['elapsed_seconds']:.0f}s")
+            emit(memory_report.render_memory_report(diagnostic))
+    except BaseException:
+        if partial_output and partial_output.is_file():
+            emit(f"Incomplete series preserved separately at: {partial_output}")
+        raise
+    if output:
+        _commit_series_output(partial_output, output)
+        emit(f"\nComplete longitudinal JSON written: {output}")
     emit("\nTrend assessment")
     emit(json.dumps(payload.get("trend_analysis", {}), indent=2, ensure_ascii=False, sort_keys=True))
     return payload
 
 
 def collect_memory_diagnostic(*, window: float, sample_period: float, output: pathlib.Path | None = None) -> dict[str, Any]:
+    if output:
+        _warn_json_privacy()
     diagnostic = Collector(observation_window=window, profile_sample_period=sample_period).memory_diagnostic()
     print(memory_report.render_memory_report(diagnostic))
     if output:
@@ -825,7 +855,7 @@ def main() -> int:
                     output=args.output,
                 )
             except KeyboardInterrupt:
-                print("Interrupted; the JSON destination contains all completed samples.", file=sys.stderr)
+                print("Interrupted; the previous JSON destination is unchanged. See the preserved .partial path above.", file=sys.stderr)
                 return 130
             except OSError as exc:
                 print(f"cannot finish memory series/output: {exc}", file=sys.stderr)

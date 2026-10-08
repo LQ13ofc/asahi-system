@@ -107,6 +107,53 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertEqual(report["unattributed_memory_estimate_bytes"]["status"], bm.UNAVAILABLE)
         self.assertEqual(report["processes"]["graphics_components"]["niri"]["pss_bytes"]["status"], bm.UNAVAILABLE)
 
+    def test_missing_pss_for_one_process_makes_global_pss_and_residual_unavailable(self):
+        rows = [process(10, "niri", 500), process(11, "other", 200)]
+        rows[1]["pss_bytes"] = item(None, bm.PERMISSION_REQUIRED, "smaps_rollup denied")
+        report = diagnostic_for(rows)
+        self.assertEqual(report["processes"]["all_process_pss_bytes"]["status"], bm.UNAVAILABLE)
+        self.assertIn("11", report["processes"]["all_process_pss_bytes"]["note"])
+        self.assertEqual(report["unattributed_memory_estimate_bytes"]["status"], bm.UNAVAILABLE)
+
+    def test_residual_is_arithmetic_only_even_when_negative_and_unknown_is_not_gpu(self):
+        row = process(10, "unknown-render-helper", 6 * 1024**3)
+        report = diagnostic_for([row], used=4 * 1024**3)
+        self.assertEqual(report["unattributed_memory_estimate_bytes"]["value"], -2 * 1024**3)
+        self.assertIn("cannot be assigned", report["unattributed_memory_estimate_bytes"]["note"])
+        self.assertEqual(report["processes"]["process_inventory"][0]["observed_group"], "SAME_UID_USER_PROCESSES")
+        self.assertNotIn("gpu_bytes", report)
+        self.assertEqual(report["graphics_memory"]["drm_fdinfo"]["status"], "NOT_ACCOUNTED")
+
+    def test_rendered_report_labels_bytes_percentages_counts_and_durations(self):
+        row = process(10, "niri", 1024**2)
+        row["minor_page_faults_delta"] = item(12)
+        row["major_page_faults_delta"] = item(3)
+        report = diagnostic_for([row])
+        report["memory"]["zswap_usage"]["pool_total_size"] = item("67108864")
+        report["memory_management"].update({
+            "zswap_max_pool_percent": item("20"),
+            "swappiness": item("60"),
+            "page_cluster": item("3"),
+            "mglru_min_ttl_ms": item("1000"),
+        })
+        report["psi"]["end"]["memory"] = item("some avg10=0.05 avg60=0.10 avg300=0.15 total=2500")
+        report["cgroup_v2"]["memory_stat"] = item({"anon": 1024, "file": 2048})
+        report["cgroup_v2"]["memory_events"] = item({"high": 2, "oom": 1, "oom_kill": 0})
+        rendered = memory_report.render_memory_report(report)
+        self.assertRegex(rendered, r"zswap max pool\s+20%")
+        self.assertRegex(rendered, r"swappiness\s+60\n")
+        self.assertRegex(rendered, r"page-cluster\s+3\n")
+        self.assertRegex(rendered, r"MGLRU min TTL\s+1000 ms")
+        self.assertIn("zswap pool size         64.00 MiB", rendered)
+        self.assertIn("avg10=0.05%", rendered)
+        self.assertIn("total=2500 us", rendered)
+        self.assertIn("anon=1.00 KiB", rendered)
+        self.assertIn("high=2 events", rendered)
+        self.assertIn("CPU 5.00% one core", rendered)
+        self.assertIn("age 300 s", rendered)
+        self.assertIn("faults(min/maj) 12/3 counts", rendered)
+        self.assertNotIn("20.00 B", rendered)
+
     def test_readable_component_pss_survives_unrelated_global_smaps_denial(self):
         niri = process(10, "niri", 500)
         quickshell = process(11, "qs", 300, ppid=10)
@@ -161,6 +208,37 @@ class MemoryDiagnosticTests(unittest.TestCase):
             samples.append({"elapsed_seconds": index * 300, "diagnostic": report})
         analysis = memory_report.analyze_memory_series(samples)
         self.assertEqual(analysis["growth_over_time"], "NOT_ESTABLISHED")
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+
+    def test_pid_reuse_and_disappearing_process_do_not_become_leak_candidates(self):
+        samples = []
+        series_rows = (
+            [process(50, "worker", 100, dirty=50, start=123)],
+            [process(50, "worker", 900, dirty=800, start=124)],
+            [],
+            [process(50, "worker", 1200, dirty=1100, start=124)],
+        )
+        for index, rows in enumerate(series_rows):
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": diagnostic_for(rows, used=1500)})
+        analysis = memory_report.analyze_memory_series(samples)
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+
+    def test_same_tick_pid_reuse_with_changed_process_metadata_is_not_a_leak(self):
+        samples = []
+        for index, (name, value) in enumerate((("worker", 100), ("other", 900), ("other", 1000), ("other", 1100))):
+            row = process(50, name, value, dirty=value // 2, start=123)
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": diagnostic_for([row], used=1500)})
+        analysis = memory_report.analyze_memory_series(samples)
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+
+    def test_incomplete_per_process_smaps_never_creates_leak_candidate(self):
+        samples = []
+        for index, value in enumerate((100, 110, 120, 130)):
+            row = process(50, "worker", value, dirty=value // 2, start=123)
+            if index == 2:
+                row["private_dirty_bytes"] = item(None, bm.PERMISSION_REQUIRED)
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": diagnostic_for([row], used=1000)})
+        analysis = memory_report.analyze_memory_series(samples)
         self.assertEqual(analysis["possible_leak_candidates"], [])
 
 

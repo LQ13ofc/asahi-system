@@ -390,6 +390,7 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
         "stat_permission": 0,
         "identity_changed": 0,
         "stat_unavailable": 0,
+        "pss_missing": 0,
         "pids_seen": 0,
         "rows_included": 0,
         "enumeration_available": 1,
@@ -447,6 +448,8 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
 
         rollup_text, rollup_error = read_proc(pid_dir / "smaps_rollup", smaps_rollup=True)
         smaps = parse_smaps_rollup(rollup_text)
+        if "Pss" not in smaps:
+            outcomes["pss_missing"] += 1
         smaps_status = error_status(rollup_error) if rollup_error else AVAILABLE
         def smaps_metric(source: str) -> dict[str, Any]:
             if source in smaps:
@@ -954,6 +957,8 @@ def apply_process_coverage(
         reasons.append(f"permission denied reading smaps_rollup for {outcomes['permission']} process(es)")
     if outcomes.get("unavailable", 0):
         reasons.append(f"smaps_rollup unavailable for {outcomes['unavailable']} process(es)")
+    if outcomes.get("pss_missing", 0):
+        reasons.append(f"Pss field missing from smaps_rollup for {outcomes['pss_missing']} process(es)")
     coverage = metric(AVAILABLE if not reasons else UNAVAILABLE, {
         "pids_seen": outcomes.get("pids_seen", 0),
         "rows_included": outcomes.get("rows_included", 0),
@@ -962,6 +967,7 @@ def apply_process_coverage(
         "stat_unavailable": outcomes.get("stat_unavailable", 0),
         "smaps_permission": outcomes.get("permission", 0),
         "smaps_unavailable": outcomes.get("unavailable", 0),
+        "pss_missing": outcomes.get("pss_missing", 0),
     }, "; ".join(reasons) if reasons else "all enumerated process identities were stable")
     if reasons:
         aggregate_names = ("pss_bytes", "rss_bytes", "private_clean_bytes", "private_dirty_bytes", "swap_pss_bytes")

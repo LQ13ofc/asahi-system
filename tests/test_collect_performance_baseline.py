@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import runpy
 import shutil
 import subprocess
 import sys
@@ -56,32 +57,72 @@ class CollectorTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_installed_collector_imports_modules_from_split_lib_share_layout(self):
-        """Regression: installed script lives in share/, Python package in lib/."""
+        """Run niri+ memory through the installed split lib/share layout."""
         with tempfile.TemporaryDirectory() as temp:
-            local = pathlib.Path(temp) / "usr/local"
+            root = pathlib.Path(temp)
+            local = root / "usr/local"
             script_dir = local / "share/niri-plus/scripts"
             package_dir = local / "lib/niri-plus/niri_plus"
+            bin_dir = local / "bin"
             script_dir.mkdir(parents=True)
-            package_dir.mkdir(parents=True)
+            bin_dir.mkdir(parents=True)
             installed_script = script_dir / "collect-performance-baseline"
             shutil.copy2(SCRIPT, installed_script)
             source_package = SCRIPT.parents[1] / "niri_plus"
-            for filename in ("__init__.py", "benchmark_metrics.py", "memory_report.py"):
-                shutil.copy2(source_package / filename, package_dir / filename)
+            shutil.copytree(source_package, package_dir)
+            data_dir = local / "share/niri-plus"
+            (data_dir / "VERSION").write_text("0.1.9\n")
+            installed_cli = bin_dir / "niri+"
+            bootstrap = runpy.run_path(
+                str(SCRIPT.parents[1] / "scripts/bootstrap-niri-plus"), run_name="bootstrap-test",
+            )
+            launcher_text = bootstrap["launcher"]()
+            launcher_text = launcher_text.replace("/usr/local/share/niri-plus", str(data_dir))
+            launcher_text = launcher_text.replace("/usr/local/lib/niri-plus", str(local / "lib/niri-plus"))
+            installed_cli.write_text(launcher_text)
+            installed_cli.chmod(0o755)
 
             # Isolation makes accidentally importing this checkout impossible.
+            env = {**os.environ, "PYTHONPATH": ""}
+            version = subprocess.run(
+                [sys.executable, "-I", str(installed_cli), "--version"], cwd=temp, env=env,
+                text=True, capture_output=True, check=False, timeout=15,
+            )
+            self.assertEqual(version.returncode, 0, version.stderr)
+            self.assertIn("Niri+ 0.1.9", version.stdout)
+
+            output = root / "memory.json"
             completed = subprocess.run(
-                [sys.executable, "-I", str(installed_script), "--help"],
-                cwd=temp,
-                env={**os.environ, "PYTHONPATH": ""},
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=15,
+                [sys.executable, "-I", str(installed_cli), "memory", "--window", "0.5",
+                 "--sample-period", "0.2", "--json-output", str(output)],
+                cwd=temp, env=env, text=True, capture_output=True, check=False, timeout=30,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn("--profile", completed.stdout)
-            self.assertIn("--memory-diagnostic", completed.stdout)
+            self.assertIn("PRIVACY WARNING", completed.stdout)
+            self.assertLess(completed.stdout.index("PRIVACY WARNING"), completed.stdout.index("Niri+ memory diagnostic"))
+            result = json.loads(output.read_text())
+            self.assertEqual(result["mode"], "memory-diagnostic")
+            self.assertTrue(result["read_only"])
+            self.assertTrue(result["privacy"]["review_before_sharing"])
+            self.assertIn("process_inventory", result["processes"])
+
+            blocked_parent = root / "not-a-directory"
+            blocked_parent.write_text("file")
+            failed_output = subprocess.run(
+                [sys.executable, "-I", str(installed_cli), "memory", "--window", "0.5",
+                 "--sample-period", "0.2", "--json-output", str(blocked_parent / "memory.json")],
+                cwd=temp, env=env, text=True, capture_output=True, check=False, timeout=30,
+            )
+            self.assertEqual(failed_output.returncode, 2)
+            self.assertIn("cannot write memory diagnostic output", failed_output.stderr)
+
+            installed_script.unlink()
+            unavailable = subprocess.run(
+                [sys.executable, "-I", str(installed_cli), "memory"], cwd=temp, env=env,
+                text=True, capture_output=True, check=False, timeout=15,
+            )
+            self.assertEqual(unavailable.returncode, 2)
+            self.assertIn("collector not found", unavailable.stderr)
 
     def test_memory_units_and_used_definition(self):
         memory = self.collector.memory()
@@ -268,6 +309,7 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result["schedule_seconds"], [0, 300, 900, 1800])
         self.assertTrue(result["complete"])
         self.assertEqual(len(saved["samples"]), 4)
+        self.assertEqual([sample["scheduled_offset_seconds"] for sample in saved["samples"]], [0, 300, 900, 1800])
         self.assertEqual(clock["sleeps"], [300, 600, 900])
         self.assertIn("trend_analysis", saved)
 
@@ -294,6 +336,51 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(result["schedule_seconds"], [0, 300, 900, 1800, 3600])
         self.assertEqual(len(result["samples"]), 5)
         self.assertEqual(clock["sleeps"], [300, 600, 900, 1800])
+
+    def test_cancelled_series_preserves_previous_json_and_completed_partial_samples(self):
+        class FakeCollector:
+            def memory_diagnostic(self):
+                return {"memory": {}, "processes": {"process_inventory": []}}
+
+        with tempfile.TemporaryDirectory() as temp:
+            output = pathlib.Path(temp) / "series.json"
+            output.write_text('{"previous": true}\n')
+            messages = []
+
+            def cancel(_seconds):
+                raise KeyboardInterrupt
+
+            with self.assertRaises(KeyboardInterrupt):
+                collector_module.collect_memory_series(
+                    window=1, sample_period=0.5, output=output, collector_factory=FakeCollector,
+                    sleeper=cancel, monotonic=lambda: 0.0, emit=messages.append,
+                )
+
+            self.assertEqual(json.loads(output.read_text()), {"previous": True})
+            partials = list(pathlib.Path(temp).glob("series.json.*.partial"))
+            self.assertEqual(len(partials), 1)
+            partial = json.loads(partials[0].read_text())
+            self.assertFalse(partial["complete"])
+            self.assertEqual(len(partial["samples"]), 1)
+            self.assertTrue(partial["privacy"]["review_before_sharing"])
+            self.assertTrue(any("PRIVACY WARNING" in line for line in messages))
+            self.assertTrue(any(str(partials[0]) in line for line in messages))
+            warning_index = next(index for index, line in enumerate(messages) if "PRIVACY WARNING" in line)
+            sample_index = next(index for index, line in enumerate(messages) if "Sample 1/4" in line)
+            self.assertLess(warning_index, sample_index)
+
+    def test_memory_series_keyboard_interrupt_returns_cancel_status(self):
+        argv = [
+            "collect-performance-baseline", "--memory-series", "--memory-window", "0.5",
+            "--memory-sample-period", "0.2",
+        ]
+        with mock.patch.object(collector_module.sys, "argv", argv), \
+             mock.patch.object(collector_module, "collect_memory_series", side_effect=KeyboardInterrupt), \
+             mock.patch.object(collector_module.sys, "stderr") as stderr:
+            self.assertEqual(collector_module.main(), 130)
+            self.assertIn("previous JSON destination is unchanged", "".join(
+                call.args[0] for call in stderr.write.call_args_list
+            ))
 
     def test_atomic_output_failure_preserves_previous_file(self):
         with tempfile.TemporaryDirectory() as temp:

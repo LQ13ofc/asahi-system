@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from . import benchmark_metrics as bm
@@ -17,6 +18,16 @@ GRAPHICS_NAMES = {
     "kwin_wayland",
     "plasmashell",
     "Xorg",
+}
+
+JSON_PRIVACY_NOTICE = {
+    "contains_process_metadata": True,
+    "review_before_sharing": True,
+    "may_include": [
+        "process command-line arguments (argv), which can contain tokens or other secrets",
+        "executable and cgroup paths, process names, PIDs, UIDs, and session metadata",
+    ],
+    "message": "Inspect and redact this diagnostic before sharing it outside your trusted environment.",
 }
 
 
@@ -293,6 +304,7 @@ def build_memory_diagnostic(
     return {
         "schema_version": 1,
         "mode": "memory-diagnostic",
+        "privacy": JSON_PRIVACY_NOTICE,
         "collected_at": collected_at,
         "system": system or {},
         "read_only": True,
@@ -386,13 +398,13 @@ def render_memory_report(report: dict[str, Any], *, top: int = 10) -> str:
         pss = format_metric(row.get("pss_bytes"))
         rss = format_metric(row.get("rss_bytes"))
         uss = format_metric(row.get("uss_approx_bytes"))
-        cpu = format_metric(row.get("cpu_percent_one_core_delta"))
+        cpu = format_scalar_metric(row.get("cpu_percent_one_core_delta"), "% one core")
         lines.append(
             f"  PID {str(row.get('pid', '?')):<7} {str(row.get('name', '?'))[:22]:<22} "
             f"PSS {pss:<11} RSS {rss:<11} USS~ {uss:<11} CPU {cpu} "
             f"threads {format_number_metric(row.get('threads'))} direct-children {format_number_metric(row.get('children_count'))} "
-            f"age {format_number_metric(row.get('runtime_seconds'), 's')} faults(min/maj) "
-            f"{format_number_metric(row.get('minor_page_faults_delta'))}/{format_number_metric(row.get('major_page_faults_delta'))} "
+            f"age {format_number_metric(row.get('runtime_seconds'), ' s')} faults(min/maj) "
+            f"{format_number_metric(row.get('minor_page_faults_delta'))}/{format_number_metric(row.get('major_page_faults_delta'))} counts "
             f"[{row.get('observed_group', 'UNKNOWN')}]"
         )
         exe = row.get("executable", {})
@@ -405,18 +417,19 @@ def render_memory_report(report: dict[str, Any], *, top: int = 10) -> str:
     zswap = report.get("memory_management", {})
     for label, key in (
         ("zswap enabled", "zswap_enabled"), ("zswap compressor", "zswap_compressor"),
-        ("zswap max pool %", "zswap_max_pool_percent"), ("swappiness", "swappiness"),
+        ("zswap max pool", "zswap_max_pool_percent"), ("swappiness", "swappiness"),
         ("page-cluster", "page_cluster"), ("MGLRU enabled", "mglru_enabled"),
         ("MGLRU min TTL", "mglru_min_ttl_ms"),
     ):
-        lines.append(f"  {label:<25} {format_metric(zswap.get(key))}")
-    lines.append(f"  zswap pool bytes        {format_metric(memory.get('zswap_usage', {}).get('pool_total_size'))}")
+        suffix = {"zswap_max_pool_percent": "%", "mglru_min_ttl_ms": " ms"}.get(key, "")
+        lines.append(f"  {label:<25} {format_scalar_metric(zswap.get(key), suffix)}")
+    lines.append(f"  zswap pool size         {format_text_bytes_metric(memory.get('zswap_usage', {}).get('pool_total_size'))}")
     lines.append(f"  SwapPss all processes   {format_metric(processes.get('all_process_swap_pss_bytes'))}")
 
     psi = report.get("psi", {}).get("end", {})
     psi_memory = psi.get("memory", {})
     lines.append("\nMemory pressure")
-    lines.append(f"  PSI memory              {format_metric(psi_memory)}")
+    lines.append(f"  PSI memory              {format_psi_metric(psi_memory)}")
     lines.append(f"  Unattributed residual  {format_metric(report.get('unattributed_memory_estimate_bytes'))}")
     target = report.get("interpretation", {}).get("baseline_target", {})
     lines.append(f"  Niri idle target        {target.get('status', 'UNAVAILABLE')}: {target.get('note', '')}")
@@ -428,8 +441,12 @@ def render_memory_report(report: dict[str, Any], *, top: int = 10) -> str:
             item = snapshot.get(key, {})
             value = item.get("value") if isinstance(item, dict) and item.get("status") == bm.AVAILABLE else None
             if isinstance(value, dict):
-                selected = ("anon", "file", "shmem", "slab", "kernel", "high", "oom", "oom_kill")
-                detail = ", ".join(f"{name}={value[name]}" for name in selected if name in value)
+                if field == "memory.stat":
+                    selected = ("anon", "file", "shmem", "slab", "kernel")
+                    detail = ", ".join(f"{name}={format_bytes(value[name])}" for name in selected if name in value)
+                else:
+                    selected = ("low", "high", "max", "oom", "oom_kill")
+                    detail = ", ".join(f"{name}={value[name]} events" for name in selected if name in value)
                 if detail:
                     lines.append(f"    {field:<22} {detail}")
             elif isinstance(value, str) and field == "memory.events":
@@ -477,6 +494,44 @@ def format_metric(item: Any) -> str:
             return ", ".join(f"{key}={value}" for key, value in sorted(raw.items()))
         return str(item.get("status", "UNAVAILABLE"))
     return "UNAVAILABLE"
+
+
+def format_scalar_metric(item: Any, suffix: str = "") -> str:
+    """Render kernel scalar values with their declared unit, never as bytes."""
+    if not isinstance(item, dict) or item.get("status") != bm.AVAILABLE:
+        return str(item.get("status", "UNAVAILABLE")) if isinstance(item, dict) else "UNAVAILABLE"
+    value = item.get("value")
+    if isinstance(value, bool) or value is None:
+        return str(value) if value is not None else "UNAVAILABLE"
+    if isinstance(value, float):
+        rendered = f"{value:.2f}"
+    elif isinstance(value, int):
+        rendered = str(value)
+    elif isinstance(value, str):
+        rendered = value.strip()
+    else:
+        return "UNAVAILABLE"
+    return f"{rendered}{suffix}"
+
+
+def format_text_bytes_metric(item: Any) -> str:
+    """Render numeric debugfs byte counters whose text API returns strings."""
+    raw = item.get("value") if isinstance(item, dict) and item.get("status") == bm.AVAILABLE else None
+    if isinstance(raw, str):
+        try:
+            return format_bytes(int(raw.strip()))
+        except ValueError:
+            pass
+    return format_metric(item)
+
+
+def format_psi_metric(item: Any) -> str:
+    """Make proc pressure's avg fields (%), and total (microseconds), explicit."""
+    value = item.get("value") if isinstance(item, dict) and item.get("status") == bm.AVAILABLE else None
+    if not isinstance(value, str):
+        return format_metric(item)
+    value = re.sub(r"\b(avg(?:10|60|300)=)([0-9]+(?:\.[0-9]+)?)", r"\1\2%", value)
+    return re.sub(r"\btotal=(\d+)\b", r"total=\1 us", value)
 
 
 def format_number_metric(item: Any, suffix: str = "") -> str:
@@ -540,6 +595,20 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
                 continue
             if any(row.get("observed_group") == "COLLECTOR_AND_ANCESTORS" for row in rows):
                 continue
+            observed_identity = {
+                (
+                    row.get("name"), row.get("uid"),
+                    (row.get("executable") or {}).get("value") if isinstance(row.get("executable"), dict) else None,
+                    row.get("cgroup"),
+                )
+                for row in rows
+            }
+            # start_time_ticks is the best portable procfs identity available,
+            # but has clock-tick granularity. Require stable process metadata
+            # too, so a same-tick PID reuse with a different executable/scope
+            # does not look like one growing process.
+            if len(observed_identity) != 1:
+                continue
             pss = [number(row.get("pss_bytes")) for row in rows]
             dirty = [number(row.get("private_dirty_bytes")) for row in rows]
             if any(value is None for value in pss + dirty):
@@ -552,7 +621,7 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
                     "pss_delta_bytes": pss[-1] - pss[0],
                     "private_dirty_delta_bytes": dirty[-1] - dirty[0],
                     "classification": "POSSIBLE_LEAK_CANDIDATE",
-                    "note": "stable PID identity and monotonic PSS/private-dirty growth across all samples; workload and functional retention still require investigation",
+                    "note": "PID/start-time and process metadata stayed consistent with monotonic PSS/private-dirty growth across all samples; procfs identity has tick granularity, and workload/functional retention still require investigation",
                 })
     return {
         "sample_count": len(samples),
