@@ -57,10 +57,11 @@ Sources: [COPR project](https://copr.fedorainfracloud.org/coprs/errornointernet/
 
 The UI was originally developed against Quickshell 0.2.1. The package metadata
 proves availability and architecture, not that every QML component works with
-0.3.1 or Fedora Asahi's Wayland stack. On the first M1 Niri login the bar
-appeared and was usable. Audio/network panels, restart behavior, log health,
-and full device integration remain `M1_REQUIRED`; appearance alone does not
-mark either repository commit known-good.
+0.3.1 or Fedora Asahi's Wayland stack. On the M1, the infrastructure gate now
+confirms a single managed Quickshell process, zero restarts, successful crash
+result, live Wayland readiness and matching snapshot/pin/runtime state. Audio,
+network/Bluetooth panels and broader device integration remain separate
+`M1_REQUIRED` functional checks where no dedicated evidence has been recorded.
 
 ## Dependency inventory
 
@@ -173,11 +174,14 @@ therefore expected. DRM/EDID/HDR/gamma warnings did not prevent Niri startup.
 Cloud tests verify lock consistency, snapshot object hashes, concurrent source
 edits, non-interactive Git, transaction rollback/idempotence, Wayland socket
 handshake and target ordering, KDE filters and diagnostics, CLI output and the
-absence of Niri `spawn-at-startup` duplication. The M1 is still required to validate
-Quickshell 0.3.1 against this v0.2.1-oriented QML, Wayland surfaces, audio,
-network, Bluetooth, notifications, crash restart, process uniqueness, panel
-helpers and memory. First compare clean Niri-only idle against Niri+Quickshell
-with five runs each under the same login/settle conditions.
+absence of Niri `spawn-at-startup` duplication. The M1 infrastructure gate has
+validated live Wayland surfaces sufficiently for startup/lifecycle, process
+uniqueness, restart state, KDE isolation and the installed snapshot/pin/runtime
+contract. Audio, network, Bluetooth, notifications, panel helpers and memory
+remain feature/performance checks rather than blockers for the closed
+infrastructure gate. The next controlled measurement compares clean Niri-only
+idle against Niri+Quickshell with five runs each under the same login/settle
+conditions.
 
 The audit found that the Wi-Fi bar indicator had depended on iwd even though
 the captured target uses NetworkManager with `wpa_supplicant` and has no iwd.
