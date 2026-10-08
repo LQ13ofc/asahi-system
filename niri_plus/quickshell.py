@@ -74,7 +74,11 @@ def _qs_version(root: pathlib.Path, runner: Runner) -> tuple[str, str]:
 def _rpm_version(root: pathlib.Path, runner: Runner) -> tuple[str, str]:
     if root != pathlib.Path("/"):
         return UNAVAILABLE, "simulated host"
-    result = run(["rpm", "-q", "--qf", "%{EVR}.%{ARCH}", "quickshell"], runner)
+    # RPM treats an absent epoch as zero for version comparison, but %{EVR}
+    # omits that implicit zero. Render a canonical EVR with an explicit epoch
+    # so the installed package and the lockfile use the same representation.
+    query_format = "%|EPOCH?{%{EPOCH}:}:{0:}|%{VERSION}-%{RELEASE}.%{ARCH}"
+    result = run(["rpm", "-q", "--qf", query_format, "quickshell"], runner)
     if not result:
         return UNAVAILABLE, "rpm unavailable"
     if result.returncode != 0:
