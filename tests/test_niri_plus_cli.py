@@ -270,6 +270,34 @@ class NiriPlusCliTests(unittest.TestCase):
                                   "--profile", "niri-quickshell", "--runs", "5", "--window", "12.5",
                                   "--output", "capture.json"]])
 
+    def test_benchmark_overhead_forwards_to_separate_diagnostic_mode(self):
+        calls = []
+        def runner(args, check=False):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0)
+        with mock.patch.object(benchmark, "data_dir", return_value=ROOT):
+            self.assertEqual(benchmark.run_overhead_diagnostic(3, "overhead.json", runner), 0)
+        self.assertEqual(calls, [[sys.executable, str(ROOT / "scripts/collect-performance-baseline"),
+                                  "--diagnose-overhead", "--runs", "3", "--output", "overhead.json"]])
+
+    def test_benchmark_compare_cli_forwards_three_profiles_offline(self):
+        with mock.patch.object(benchmark, "compare_benchmarks", return_value=0) as compare_mock:
+            self.assertEqual(cli.main([
+                "benchmark", "compare",
+                "--plasma", "plasma.json",
+                "--niri-core", "niri-core.json",
+                "--niri-quickshell", "niri-quickshell.json",
+                "--output", "report.md",
+                "--json-output", "report.json",
+            ]), 0)
+        compare_mock.assert_called_once_with(
+            "plasma.json", "niri-core.json", "niri-quickshell.json", "report.md", "report.json"
+        )
+
+    def test_benchmark_requires_an_action_but_compare_is_a_subcommand(self):
+        with self.assertRaises(SystemExit):
+            cli.main(["benchmark"])
+
     def test_session_status_accepts_packaged_niri_and_rejects_legacy_duplicate(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)

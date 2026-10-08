@@ -1,0 +1,299 @@
+{
+  "mode": "collector-overhead-diagnostic",
+  "note": "Diagnostic runs use zero idle observation time and measure collector CPU/wall time, process scan reads, subprocess costs, self PSS, I/O and resource counters. This is an instrumentation diagnostic, not an estimate to subtract from desktop measurements.",
+  "read_only": true,
+  "runs": [
+    {
+      "process_cpu_percent_of_one_core": 84.41863952281017,
+      "process_cpu_seconds": 0.30852199999999996,
+      "process_scans": {
+        "end": {
+          "proc_file_reads": 8379,
+          "proc_read_wall_seconds": 0.08383240883995313,
+          "scan_wall_seconds": 0.12174734199652448,
+          "smaps_rollup_reads": 1197,
+          "smaps_rollup_wall_seconds": 0.008587366857682355
+        },
+        "start": {
+          "proc_file_reads": 8379,
+          "proc_read_wall_seconds": 0.08529861285933293,
+          "scan_wall_seconds": 0.12363639198883902,
+          "smaps_rollup_reads": 1197,
+          "smaps_rollup_wall_seconds": 0.009407252917299047
+        }
+      },
+      "read_only": true,
+      "resource_usage_delta": {
+        "major_page_faults": 0,
+        "maxrss_kib_high_water_after": 26240,
+        "maxrss_kib_high_water_before": 15104,
+        "minor_page_faults": 2807,
+        "nonvoluntary_context_switches": 6,
+        "voluntary_context_switches": 47
+      },
+      "run": 1,
+      "self_io_delta_bytes": {
+        "io_read_bytes": {
+          "status": "AVAILABLE",
+          "value": 0
+        },
+        "io_write_bytes": {
+          "status": "AVAILABLE",
+          "value": 0
+        }
+      },
+      "self_memory": {
+        "after": {
+          "io_read_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "io_write_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "pss_bytes": {
+            "status": "AVAILABLE",
+            "value": 24458240
+          }
+        },
+        "before": {
+          "io_read_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "io_write_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "pss_bytes": {
+            "status": "AVAILABLE",
+            "value": 13612032
+          }
+        }
+      },
+      "subprocesses": {
+        "findmnt": {
+          "count": 1,
+          "wall_seconds": 0.0016312899970216677
+        },
+        "git": {
+          "count": 2,
+          "wall_seconds": 0.0029344950016820803
+        },
+        "systemctl": {
+          "count": 12,
+          "wall_seconds": 0.05578367997077294
+        },
+        "uname": {
+          "count": 1,
+          "wall_seconds": 0.0012846030003856868
+        }
+      },
+      "wall_seconds": 0.3654666809889022
+    },
+    {
+      "process_cpu_percent_of_one_core": 81.10731597633513,
+      "process_cpu_seconds": 0.33140499999999995,
+      "process_scans": {
+        "end": {
+          "proc_file_reads": 8379,
+          "proc_read_wall_seconds": 0.08458288708061446,
+          "scan_wall_seconds": 0.12347174000751693,
+          "smaps_rollup_reads": 1197,
+          "smaps_rollup_wall_seconds": 0.009423285140655935
+        },
+        "start": {
+          "proc_file_reads": 8379,
+          "proc_read_wall_seconds": 0.08886026477557607,
+          "scan_wall_seconds": 0.1392583620036021,
+          "smaps_rollup_reads": 1197,
+          "smaps_rollup_wall_seconds": 0.008404484047787264
+        }
+      },
+      "read_only": true,
+      "resource_usage_delta": {
+        "major_page_faults": 0,
+        "maxrss_kib_high_water_after": 32572,
+        "maxrss_kib_high_water_before": 26240,
+        "minor_page_faults": 1788,
+        "nonvoluntary_context_switches": 8,
+        "voluntary_context_switches": 49
+      },
+      "run": 2,
+      "self_io_delta_bytes": {
+        "io_read_bytes": {
+          "status": "AVAILABLE",
+          "value": 0
+        },
+        "io_write_bytes": {
+          "status": "AVAILABLE",
+          "value": 0
+        }
+      },
+      "self_memory": {
+        "after": {
+          "io_read_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "io_write_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "pss_bytes": {
+            "status": "AVAILABLE",
+            "value": 31364096
+          }
+        },
+        "before": {
+          "io_read_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "io_write_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "pss_bytes": {
+            "status": "AVAILABLE",
+            "value": 24458240
+          }
+        }
+      },
+      "subprocesses": {
+        "findmnt": {
+          "count": 1,
+          "wall_seconds": 0.001521312995464541
+        },
+        "git": {
+          "count": 2,
+          "wall_seconds": 0.0029031890007900074
+        },
+        "systemctl": {
+          "count": 12,
+          "wall_seconds": 0.07765942902187817
+        },
+        "uname": {
+          "count": 1,
+          "wall_seconds": 0.0018731770105659962
+        }
+      },
+      "wall_seconds": 0.40860062499996275
+    },
+    {
+      "process_cpu_percent_of_one_core": 84.12346569637141,
+      "process_cpu_seconds": 0.32215699999999997,
+      "process_scans": {
+        "end": {
+          "proc_file_reads": 8379,
+          "proc_read_wall_seconds": 0.0890079674863955,
+          "scan_wall_seconds": 0.1305883630120661,
+          "smaps_rollup_reads": 1197,
+          "smaps_rollup_wall_seconds": 0.009030318047734909
+        },
+        "start": {
+          "proc_file_reads": 8379,
+          "proc_read_wall_seconds": 0.08090794560848735,
+          "scan_wall_seconds": 0.1183110139972996,
+          "smaps_rollup_reads": 1197,
+          "smaps_rollup_wall_seconds": 0.008347616909304634
+        }
+      },
+      "read_only": true,
+      "resource_usage_delta": {
+        "major_page_faults": 0,
+        "maxrss_kib_high_water_after": 33468,
+        "maxrss_kib_high_water_before": 32572,
+        "minor_page_faults": 236,
+        "nonvoluntary_context_switches": 4,
+        "voluntary_context_switches": 47
+      },
+      "run": 3,
+      "self_io_delta_bytes": {
+        "io_read_bytes": {
+          "status": "AVAILABLE",
+          "value": 0
+        },
+        "io_write_bytes": {
+          "status": "AVAILABLE",
+          "value": 0
+        }
+      },
+      "self_memory": {
+        "after": {
+          "io_read_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "io_write_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "pss_bytes": {
+            "status": "AVAILABLE",
+            "value": 32330752
+          }
+        },
+        "before": {
+          "io_read_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "io_write_bytes": {
+            "status": "AVAILABLE",
+            "value": 0
+          },
+          "pss_bytes": {
+            "status": "AVAILABLE",
+            "value": 31364096
+          }
+        }
+      },
+      "subprocesses": {
+        "findmnt": {
+          "count": 1,
+          "wall_seconds": 0.006045151007128879
+        },
+        "git": {
+          "count": 2,
+          "wall_seconds": 0.0035478710051393136
+        },
+        "systemctl": {
+          "count": 12,
+          "wall_seconds": 0.05524557697935961
+        },
+        "uname": {
+          "count": 1,
+          "wall_seconds": 0.0009266890119761229
+        }
+      },
+      "wall_seconds": 0.3829573559924029
+    }
+  ],
+  "schema_version": 1,
+  "subtracted_from_benchmark": false,
+  "summary": {
+    "process_cpu_percent_of_one_core": {
+      "mad": 0.2951738264387558,
+      "max": 84.41863952281017,
+      "median": 84.12346569637141,
+      "min": 81.10731597633513,
+      "n": 3
+    },
+    "process_cpu_seconds": {
+      "mad": 0.009247999999999978,
+      "max": 0.33140499999999995,
+      "median": 0.32215699999999997,
+      "min": 0.30852199999999996,
+      "n": 3
+    },
+    "wall_seconds": {
+      "mad": 0.017490675003500655,
+      "max": 0.40860062499996275,
+      "median": 0.3829573559924029,
+      "min": 0.3654666809889022,
+      "n": 3
+    }
+  }
+}
