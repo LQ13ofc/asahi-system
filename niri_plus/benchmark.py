@@ -149,22 +149,25 @@ def restore_niri_core(runner=subprocess.run) -> int:
         print(f"FAILED: could not remove runtime mask: {(unmasked.stderr or unmasked.stdout).strip()}", file=sys.stderr)
         return 2
 
+    final = _state(runner)
+    if final["enabled"] in {"masked", "masked-runtime"}:
+        print("FAILED: Quickshell remains masked after restore.", file=sys.stderr)
+        return 2
+
+    # Ownership of the temporary mask ends as soon as the runtime unmask succeeds.
+    # Do not leave a stale marker if restarting Quickshell subsequently fails.
+    marker.unlink(missing_ok=True)
     desktop = (os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("XDG_SESSION_DESKTOP") or "").lower()
     if "niri" in desktop:
         started = _systemctl(["start", QS_UNIT], runner)
         if started.returncode != 0:
             print(
-                "FAILED: runtime mask was removed but Quickshell could not be restarted; "
+                "FAILED: the temporary mask was removed, but Quickshell could not be restarted; "
                 f"run systemctl --user start {QS_UNIT}.",
                 file=sys.stderr,
             )
             return 2
 
-    final = _state(runner)
-    if final["enabled"] in {"masked", "masked-runtime"}:
-        print("FAILED: Quickshell remains masked after restore.", file=sys.stderr)
-        return 2
-    marker.unlink(missing_ok=True)
     print("niri-core restored: temporary runtime mask removed.")
     return 0
 
