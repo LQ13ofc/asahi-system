@@ -500,6 +500,7 @@ class Collector:
             "memory_scopes": observation["memory_scopes"],
             "components": observation["components"],
             "cgroup_v2": self.cgroup(),
+            "systemd_user_cgroup": observation["systemd_user_cgroup"],
             "quickshell_cgroup": observation["quickshell_cgroup"],
             "psi": {
                 "start": observation["psi_start"],
