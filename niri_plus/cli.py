@@ -28,8 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_parser = commands.add_parser("rollback", help="restore Niri+ managed files")
     rollback_parser.add_argument("--remove-packages", action="store_true", help="also remove only explicitly tracked packages")
     commands.add_parser("doctor", help="run read-only diagnostics")
-    benchmark_parser = commands.add_parser("benchmark", help="run the Phase A read-only collector")
+    benchmark_parser = commands.add_parser("benchmark", help="run the validated A/B/C performance collector")
+    benchmark_mode = benchmark_parser.add_mutually_exclusive_group(required=True)
+    benchmark_mode.add_argument("--profile", choices=("plasma", "niri-core", "niri-quickshell"),
+                                help="collect only if the live session matches this profile")
+    benchmark_mode.add_argument("--prepare-niri-core", action="store_true",
+                                help="temporarily runtime-mask and stop Quickshell for profile B")
+    benchmark_mode.add_argument("--restore-niri-core", action="store_true",
+                                help="remove the benchmark-owned runtime mask and restore Quickshell")
     benchmark_parser.add_argument("--runs", type=int, default=1)
+    benchmark_parser.add_argument("--window", type=float, default=10.0,
+                                  help="seconds in each CPU/fault/I/O observation window")
     benchmark_parser.add_argument("--output")
     commands.add_parser("uninstall", help="remove Niri+ managed files and tracked packages")
     return parser
@@ -52,9 +61,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "doctor":
         print(doctor.render_doctor())
     elif args.command == "benchmark":
+        if args.prepare_niri_core:
+            return benchmark.prepare_niri_core()
+        if args.restore_niri_core:
+            return benchmark.restore_niri_core()
         if not 1 <= args.runs <= 20:
             parser.error("--runs must be between 1 and 20")
-        return benchmark.run_benchmark(args.runs, args.output)
+        if not 1 <= args.window <= 300:
+            parser.error("--window must be between 1 and 300 seconds")
+        return benchmark.run_benchmark(args.profile, args.runs, args.window, args.output)
     elif args.command == "uninstall":
         return uninstall.run_uninstall()
     return 0
