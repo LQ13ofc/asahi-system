@@ -18,6 +18,7 @@ class BenchmarkProfileTests(unittest.TestCase):
                 "plasmashell_pids": [],
                 "qs_pids": [],
                 "managed_qs_pids": [],
+                "polkit_agent_pids": [30],
                 "qs_argv": [],
             },
             {
@@ -27,6 +28,7 @@ class BenchmarkProfileTests(unittest.TestCase):
                 "plasmashell_pids": [],
                 "qs_pids": [20],
                 "managed_qs_pids": [20],
+                "polkit_agent_pids": [30],
                 "qs_argv": [{"pid": 20, "argv": benchmark_metrics.QS_EXPECTED_ARGV}],
             },
         ]
@@ -68,6 +70,7 @@ class BenchmarkProfileTests(unittest.TestCase):
             "plasmashell_pids": [12],
             "qs_pids": [],
             "managed_qs_pids": [],
+            "polkit_agent_pids": [],
             "qs_argv": [],
         }]
         self.assertEqual(
