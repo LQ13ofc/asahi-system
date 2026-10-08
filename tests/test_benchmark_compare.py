@@ -211,6 +211,30 @@ class BenchmarkCompareTests(unittest.TestCase):
             "qs [qs]",
         )
 
+    def test_inventory_does_not_impute_zero_pss_when_process_is_absent(self):
+        candidate = copy.deepcopy(self.quickshell)
+        candidate["runs"][1]["session"]["processes"]["value"] = [
+            row for row in candidate["runs"][1]["session"]["processes"]["value"]
+            if row["name"] != "qs"
+        ]
+        result = compare.compare_captures(self.plasma, self.core, candidate)
+        qs = result["process_inventory"]["by_profile"]["niri_quickshell"]["qs [qs]"]
+        self.assertEqual(qs["runs_present"], 4)
+        self.assertEqual(qs["runs_with_pss"], 4)
+        self.assertEqual(qs["median_pss_bytes"], 50)
+
+    def test_inventory_missing_pss_is_unavailable_not_a_partial_median(self):
+        candidate = copy.deepcopy(self.quickshell)
+        rows = candidate["runs"][2]["session"]["processes"]["value"]
+        for row in rows:
+            if row["name"] == "qs":
+                row["pss_bytes"] = metric(None, "UNAVAILABLE")
+        result = compare.compare_captures(self.plasma, self.core, candidate)
+        qs = result["process_inventory"]["by_profile"]["niri_quickshell"]["qs [qs]"]
+        self.assertEqual(qs["runs_present"], 5)
+        self.assertEqual(qs["runs_with_pss"], 4)
+        self.assertIsNone(qs["median_pss_bytes"])
+
     def test_markdown_keeps_global_memory_and_pss_separate(self):
         result = compare.compare_captures(self.plasma, self.core, self.quickshell)
         text = compare.render_markdown(result)
