@@ -122,6 +122,22 @@ class BenchmarkProfileTests(unittest.TestCase):
         self.assertEqual(components["quickshell_auxiliary"]["pss_bytes"]["value"], 30)
         self.assertIn("never added back", session["definition"])
 
+    def test_lightweight_signature_keeps_truncated_policykit_comm(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            proc = root / "proc"
+            proc.mkdir()
+            entry = proc / "123"
+            entry.mkdir()
+            entry.joinpath("stat").write_text(
+                "123 (lxqt-policykit-) S 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+            )
+            entry.joinpath("cmdline").write_bytes(
+                b"/usr/libexec/lxqt-policykit-agent\0"
+            )
+            signature = benchmark_metrics.lightweight_signature(root)
+            self.assertEqual(signature["polkit_agent_pids"], [123])
+
     def test_component_matching_uses_argv_for_long_linux_comm_names(self):
         xwayland = {"name": "xwayland-satell", "argv": ["/usr/bin/xwayland-satellite"]}
         polkit = {"name": "lxqt-policykit-a", "argv": ["/usr/libexec/lxqt-policykit-agent"]}
@@ -158,6 +174,7 @@ class BenchmarkProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state = {"enabled": "enabled", "active": "active"}
             calls = []
+            qs_state = {"items": [{"pid": 77, "argv": benchmark.QS_EXPECTED}]}
 
             def runner(args, **kwargs):
                 calls.append(args)
@@ -172,6 +189,7 @@ class BenchmarkProfileTests(unittest.TestCase):
                     self.assertIn("--runtime", args)
                     self.assertIn("--now", args)
                     state.update(enabled="masked-runtime", active="inactive")
+                    qs_state["items"] = []
                     return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
                 if action == "unmask":
                     self.assertIn("--runtime", args)
@@ -179,23 +197,80 @@ class BenchmarkProfileTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
                 if action == "start":
                     state["active"] = "active"
+                    qs_state["items"] = [{"pid": 88, "argv": benchmark.QS_EXPECTED}]
                     return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
                 raise AssertionError(args)
 
             env = {"XDG_RUNTIME_DIR": temp, "XDG_CURRENT_DESKTOP": "niri"}
             with mock.patch.dict(os.environ, env, clear=False), \
                  mock.patch.object(benchmark.os, "geteuid", return_value=1000), \
-                 mock.patch.object(benchmark, "_qs_processes", return_value=[]):
+                 mock.patch.object(benchmark, "_qs_processes", side_effect=lambda: list(qs_state["items"])):
                 self.assertEqual(benchmark.prepare_niri_core(runner), 0)
                 marker = benchmark.runtime_marker()
                 self.assertTrue(marker.is_file())
                 self.assertEqual(state, {"enabled": "masked-runtime", "active": "inactive"})
+                payload = __import__("json").loads(marker.read_text())
+                self.assertEqual(payload["previous_active_state"], "active")
+                self.assertEqual(payload["previous_qs_pid"], 77)
                 self.assertEqual(benchmark.restore_niri_core(runner), 0)
                 self.assertFalse(marker.exists())
                 self.assertEqual(state, {"enabled": "enabled", "active": "active"})
 
             self.assertTrue(any(call[2] == "mask" and "--runtime" in call for call in calls))
             self.assertTrue(any(call[2] == "unmask" and "--runtime" in call for call in calls))
+
+    def test_prepare_niri_core_refuses_non_known_good_quickshell_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env = {"XDG_RUNTIME_DIR": temp, "XDG_CURRENT_DESKTOP": "niri"}
+
+            def runner(args, **kwargs):
+                action = args[2]
+                if action == "is-enabled":
+                    return subprocess.CompletedProcess(args, 0, stdout="disabled\n", stderr="")
+                if action == "is-active":
+                    return subprocess.CompletedProcess(args, 3, stdout="inactive\n", stderr="")
+                raise AssertionError("prepare must refuse before mutating systemd state")
+
+            with mock.patch.dict(os.environ, env, clear=False), \
+                 mock.patch.object(benchmark.os, "geteuid", return_value=1000), \
+                 mock.patch.object(benchmark, "_qs_processes", return_value=[]):
+                self.assertEqual(benchmark.prepare_niri_core(runner), 2)
+                self.assertFalse(benchmark.runtime_marker().exists())
+
+    def test_failed_prepare_restores_quickshell_after_partial_runtime_mask(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = {"enabled": "disabled", "active": "active"}
+            qs_state = {"items": [{"pid": 77, "argv": benchmark.QS_EXPECTED}]}
+
+            def runner(args, **kwargs):
+                action = args[2]
+                if action == "is-enabled":
+                    code = 1 if state["enabled"].startswith("masked") else 0
+                    return subprocess.CompletedProcess(args, code, stdout=state["enabled"] + "\n", stderr="")
+                if action == "is-active":
+                    code = 0 if state["active"] == "active" else 3
+                    return subprocess.CompletedProcess(args, code, stdout=state["active"] + "\n", stderr="")
+                if action == "mask":
+                    state.update(enabled="masked-runtime", active="inactive")
+                    qs_state["items"] = [{"pid": 99, "argv": benchmark.QS_EXPECTED}]
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                if action == "unmask":
+                    state["enabled"] = "disabled"
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                if action == "start":
+                    state["active"] = "active"
+                    qs_state["items"] = [{"pid": 100, "argv": benchmark.QS_EXPECTED}]
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                raise AssertionError(args)
+
+            env = {"XDG_RUNTIME_DIR": temp, "XDG_CURRENT_DESKTOP": "niri"}
+            with mock.patch.dict(os.environ, env, clear=False), \
+                 mock.patch.object(benchmark.os, "geteuid", return_value=1000), \
+                 mock.patch.object(benchmark, "_qs_processes", side_effect=lambda: list(qs_state["items"])):
+                self.assertEqual(benchmark.prepare_niri_core(runner), 2)
+                self.assertFalse(benchmark.runtime_marker().exists())
+                self.assertEqual(state, {"enabled": "disabled", "active": "active"})
+                self.assertEqual(qs_state["items"], [{"pid": 100, "argv": benchmark.QS_EXPECTED}])
 
 
 if __name__ == "__main__":
