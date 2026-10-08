@@ -259,15 +259,16 @@ class NiriPlusCliTests(unittest.TestCase):
             self.assertEqual(rollback.run_rollback(root=root, require_root=False), 0)
             self.assertFalse(target.exists())
 
-    def test_benchmark_forwards_arguments_to_existing_collector(self):
+    def test_benchmark_forwards_validated_profile_and_window_to_existing_collector(self):
         calls = []
         def runner(args, check=False):
             calls.append(args)
             return subprocess.CompletedProcess(args, 0)
         with mock.patch.object(benchmark, "data_dir", return_value=ROOT):
-            self.assertEqual(benchmark.run_benchmark(5, "capture.json", runner), 0)
+            self.assertEqual(benchmark.run_benchmark("niri-quickshell", 5, 12.5, "capture.json", runner), 0)
         self.assertEqual(calls, [[sys.executable, str(ROOT / "scripts/collect-performance-baseline"),
-                                  "--runs", "5", "--output", "capture.json"]])
+                                  "--profile", "niri-quickshell", "--runs", "5", "--window", "12.5",
+                                  "--output", "capture.json"]])
 
     def test_session_status_accepts_packaged_niri_and_rejects_legacy_duplicate(self):
         with tempfile.TemporaryDirectory() as temp:
