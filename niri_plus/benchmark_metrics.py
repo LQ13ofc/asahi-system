@@ -23,16 +23,30 @@ QS_EXPECTED_ARGV = [
     "/usr/local/share/niri-plus/quickshell/shell.qml",
 ]
 
+def process_name(row: dict[str, Any]) -> str:
+    argv = row.get("argv") or []
+    if argv:
+        return pathlib.Path(argv[0]).name
+    return str(row.get("name", ""))
+
+
+def named(*names: str):
+    expected = set(names)
+    return lambda row: row.get("name") in expected or process_name(row) in expected
+
+
 COMPONENT_MATCHERS = {
-    "niri": lambda row: row["name"] == "niri",
-    "quickshell": lambda row: row["name"] == "qs",
-    "pipewire": lambda row: row["name"] in {"pipewire", "pipewire-pulse"},
-    "wireplumber": lambda row: row["name"] == "wireplumber",
-    "networkmanager": lambda row: row["name"] == "NetworkManager",
-    "xwayland_satellite": lambda row: row["name"] == "xwayland-satellite",
-    "polkit_agent": lambda row: row["name"] == "lxqt-policykit-agent",
-    "plasma": lambda row: row["name"] == "plasmashell",
-    "kwin_wayland": lambda row: row["name"] == "kwin_wayland",
+    "niri": named("niri"),
+    "quickshell": named("qs"),
+    "pipewire": named("pipewire", "pipewire-pulse"),
+    "wireplumber": named("wireplumber"),
+    "networkmanager": named("NetworkManager"),
+    # /proc/PID/stat comm is capped at TASK_COMM_LEN, so long executable names
+    # must also be matched through argv[0].
+    "xwayland_satellite": named("xwayland-satellite"),
+    "polkit_agent": named("lxqt-policykit-agent"),
+    "plasma": named("plasmashell"),
+    "kwin_wayland": named("kwin_wayland"),
 }
 
 
@@ -294,7 +308,7 @@ def system_cpu_counters(root: pathlib.Path) -> dict[str, int] | None:
     if not line:
         return None
     try:
-        fields = [int(value) for value in line.split()[1:8]]
+        fields = [int(value) for value in line.split()[1:9]]  # through steal; guest counters remain excluded
     except ValueError:
         return None
     idle = fields[3] + fields[4]
@@ -441,6 +455,20 @@ def systemd_user_unit(unit: str) -> dict[str, Any]:
     values["EnableState"] = (enabled.stdout or "").strip() or "UNAVAILABLE"
     values["probe_status"] = AVAILABLE if shown.returncode == 0 else UNAVAILABLE
     return values
+
+
+def systemd_user_manager_cgroup() -> str | None:
+    if not shutil.which("systemctl"):
+        return None
+    try:
+        shown = subprocess.run(
+            ["systemctl", "--user", "show", "--property=ControlGroup", "--value"],
+            text=True, capture_output=True, check=False, timeout=4,
+        )
+    except (PermissionError, OSError, subprocess.TimeoutExpired):
+        return None
+    value = (shown.stdout or "").strip()
+    return value if shown.returncode == 0 and value.startswith("/") else None
 
 
 def cgroup_snapshot(root: pathlib.Path, cgroup_path: str | None) -> dict[str, Any]:
@@ -697,6 +725,8 @@ def observe(
         cgroup_snapshot(root, unit_before.get("ControlGroup"))
         if real_host else cgroup_snapshot(root, None)
     )
+    user_manager_path = systemd_user_manager_cgroup() if real_host else None
+    user_manager_before = cgroup_snapshot(root, user_manager_path)
 
     started = time.monotonic()
     timeline = observe_timeline(root, max(0.0, duration), sample_period)
@@ -712,6 +742,7 @@ def observe(
         cgroup_snapshot(root, unit_after.get("ControlGroup"))
         if real_host else cgroup_snapshot(root, None)
     )
+    user_manager_after = cgroup_snapshot(root, user_manager_path)
     session, components = aggregate_scopes(after_rows)
     validation = validate_profile(profile, timeline, unit_before, unit_after)
 
@@ -736,6 +767,12 @@ def observe(
         "psi_start": psi_before,
         "psi_end": psi_after,
         "psi_delta": psi_delta(psi_before, psi_after),
+        "systemd_user_cgroup": {
+            "start": user_manager_before,
+            "end": user_manager_after,
+            "delta": cgroup_delta(user_manager_before, user_manager_after),
+            "note": "systemd --user manager cgroup; reported separately from PSS aggregates.",
+        },
         "quickshell_cgroup": {
             "start": cgroup_before,
             "end": cgroup_after,
