@@ -251,7 +251,7 @@ marcador e reinicia o unit na sessão Niri.
 
 Isso não edita unit, não usa `disable`, não altera install state, pin ou
 managed files e desaparece com o runtime/user manager. Durante a janela medida o
-validator exige Niri presente, Plasma/KWin ausentes, `qs == 0` em **todas** as
+validator exige Niri e o agente PolicyKit presentes, Plasma/KWin ausentes, `qs == 0` em **todas** as
 amostras e unit runtime-masked/inativo no início e no fim. Se `qs` aparecer
 mesmo brevemente, o run falha.
 
@@ -259,7 +259,7 @@ mesmo brevemente, o run falha.
 
 Durante toda a janela:
 
-- Niri precisa estar presente;
+- Niri e o agente PolicyKit precisam estar presentes;
 - Plasma/KWin precisam estar ausentes;
 - precisa existir exatamente um `qs`;
 - seu argv deve corresponder ao managed invocation
