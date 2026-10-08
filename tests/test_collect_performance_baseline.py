@@ -1,7 +1,11 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 import pathlib
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -47,6 +51,33 @@ class CollectorTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_installed_collector_imports_modules_from_split_lib_share_layout(self):
+        """Regression: installed script lives in share/, Python package in lib/."""
+        with tempfile.TemporaryDirectory() as temp:
+            local = pathlib.Path(temp) / "usr/local"
+            script_dir = local / "share/niri-plus/scripts"
+            package_dir = local / "lib/niri-plus/niri_plus"
+            script_dir.mkdir(parents=True)
+            package_dir.mkdir(parents=True)
+            installed_script = script_dir / "collect-performance-baseline"
+            shutil.copy2(SCRIPT, installed_script)
+            source_package = SCRIPT.parents[1] / "niri_plus"
+            for filename in ("__init__.py", "benchmark_metrics.py"):
+                shutil.copy2(source_package / filename, package_dir / filename)
+
+            # Isolation makes accidentally importing this checkout impossible.
+            completed = subprocess.run(
+                [sys.executable, "-I", str(installed_script), "--help"],
+                cwd=temp,
+                env={**os.environ, "PYTHONPATH": ""},
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("--profile", completed.stdout)
 
     def test_memory_units_and_used_definition(self):
         memory = self.collector.memory()
