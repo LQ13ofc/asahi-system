@@ -114,6 +114,12 @@ class BenchmarkProfileTests(unittest.TestCase):
         self.assertEqual(components["quickshell_auxiliary"]["pss_bytes"]["value"], 30)
         self.assertIn("never added back", session["definition"])
 
+    def test_component_matching_uses_argv_for_long_linux_comm_names(self):
+        xwayland = {"name": "xwayland-satell", "argv": ["/usr/bin/xwayland-satellite"]}
+        polkit = {"name": "lxqt-policykit-a", "argv": ["/usr/libexec/lxqt-policykit-agent"]}
+        self.assertTrue(benchmark_metrics.COMPONENT_MATCHERS["xwayland_satellite"](xwayland))
+        self.assertTrue(benchmark_metrics.COMPONENT_MATCHERS["polkit_agent"](polkit))
+
     def test_process_counter_deltas_share_one_window(self):
         def base(pid, ticks, minor, major, read, write):
             return {
