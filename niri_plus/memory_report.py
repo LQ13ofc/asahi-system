@@ -155,14 +155,17 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
             "swap_pss_bytes": metric_sum(items, "swap_pss_bytes", coverage_ok=enumeration_complete),
         }
 
-    def component_aggregate(items: list[dict[str, Any]]) -> dict[str, Any]:
+    def component_aggregate(
+        items: list[dict[str, Any]], *, absence_confirmed: bool | None = None,
+    ) -> dict[str, Any]:
         summary = aggregate(items)
         if not items:
-            status = bm.NOT_APPLICABLE if enumeration_complete else bm.UNAVAILABLE
+            confirmed = enumeration_complete if absence_confirmed is None else absence_confirmed
+            status = bm.NOT_APPLICABLE if confirmed else bm.UNAVAILABLE
             note = (
                 "no process for this component was observed in the complete PID scan"
-                if enumeration_complete else
-                "process scan incomplete; component absence cannot be confirmed"
+                if confirmed else
+                "process scan or classification metadata incomplete; component absence cannot be confirmed"
             )
             for key in (
                 "pss_bytes", "rss_bytes", "private_clean_bytes", "private_dirty_bytes",
@@ -233,6 +236,9 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
     # Niri/Quickshell systemd user units may live outside session-*.scope.
     # This is explicitly a UID-owned user-process view, not an exact graphical
     # session boundary; component groups overlap it and are never added again.
+    system_slice_absence_confirmed = enumeration_complete and all(
+        row.get("cgroup") is not None for row in decorated
+    )
     return {
         "coverage": bm.metric(bm.AVAILABLE if coverage_ok else bm.UNAVAILABLE,
                               {"process_count": len(rows), "thread_count": total_threads,
@@ -251,8 +257,10 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
                 "same_uid_user_processes is a broader UID-owned proxy"
             ),
         ),
-        "system_service_processes": aggregate(groups["SYSTEM_SERVICES"]),
-        "other_uid_or_scope_processes": aggregate(groups["OTHER_UID_OR_SCOPE"]),
+        "system_service_processes": component_aggregate(
+            groups["SYSTEM_SERVICES"], absence_confirmed=system_slice_absence_confirmed,
+        ),
+        "other_uid_or_scope_processes": component_aggregate(groups["OTHER_UID_OR_SCOPE"]),
         "graphics_components": graphics,
         "component_views": component_views or {},
         "group_semantics": (

@@ -134,6 +134,25 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertIn("complete PID scan", niri["note"])
         self.assertEqual(report["interpretation"]["baseline_target"]["status"], bm.NOT_APPLICABLE)
 
+    def test_absent_process_groups_are_not_misreported_as_zero_pss(self):
+        row = process(10, "niri", 500)
+        report = diagnostic_for([row])
+        system = report["processes"]["system_service_processes"]["pss_bytes"]
+        other = report["processes"]["other_uid_or_scope_processes"]["pss_bytes"]
+        self.assertEqual(system["status"], bm.NOT_APPLICABLE)
+        self.assertEqual(other["status"], bm.NOT_APPLICABLE)
+        self.assertNotIn("value", system)
+        self.assertIn("complete PID scan", system["note"])
+
+    def test_missing_cgroup_metadata_does_not_claim_system_services_are_absent(self):
+        row = process(10, "niri", 500)
+        row["cgroup"] = None
+        report = diagnostic_for([row])
+        system = report["processes"]["system_service_processes"]["pss_bytes"]
+        self.assertEqual(system["status"], bm.UNAVAILABLE)
+        self.assertNotIn("value", system)
+        self.assertIn("classification metadata incomplete", system["note"])
+
     def test_missing_pss_for_one_process_makes_global_pss_and_residual_unavailable(self):
         rows = [process(10, "niri", 500), process(11, "other", 200)]
         rows[1]["pss_bytes"] = item(None, bm.PERMISSION_REQUIRED, "smaps_rollup denied")
