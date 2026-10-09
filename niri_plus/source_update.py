@@ -42,6 +42,7 @@ class Snapshot:
     manifest: pathlib.Path
     system_commit: str
     quickshell_commit: str
+    include_quickshell: bool = True
 
 
 def _normalize_repository(value: str, *, allow_test_file: bool = False) -> str:
@@ -485,7 +486,8 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
                       runner: Runner = subprocess.run,
                       expected_repository: str = EXPECTED_REPOSITORY,
                       expected_quickshell_repository: str = EXPECTED_QUICKSHELL_REPOSITORY,
-                      *, allow_test_file_sources: bool = False) -> Iterator[Snapshot]:
+                      *, allow_test_file_sources: bool = False,
+                      include_quickshell: bool = True) -> Iterator[Snapshot]:
     source_root = (source_root or discover_source_root()).resolve()
     if (not allow_test_file_sources
             and (_normalize_repository(expected_repository) != _normalize_repository(EXPECTED_REPOSITORY)
@@ -523,46 +525,52 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
             temp_system, gitlinks, expected_quickshell_repository,
             allow_test_file=allow_test_file_sources,
         )
-        _check_initialized_quickshell(
-            source_root, runner, expected_quickshell_repository, allow_test_file=allow_test_file_sources,
-        )
         fetch_url = _resolve_effective_url(
             source_root, scratch, fetch_url, expected_repository, runner,
             allow_test_file=allow_test_file_sources,
         )
-        qs_fetch_url = _resolve_effective_url(
-            source_root, scratch, qs_repo, expected_quickshell_repository, runner,
-            allow_test_file=allow_test_file_sources,
-        )
-        quickshell_objects = pathlib.Path(owner_temp) / "quickshell.git"
-        _create_git_dir(source_root, quickshell_objects, runner)
-        qshell_helpers = _local_credential_helpers(source_root, qs_fetch_url, runner)
-        qshell_checkout = source_root / QUICKSHELL_PATH
-        if (qshell_checkout / ".git").exists():
-            qshell_helpers.extend(_local_credential_helpers(qshell_checkout, qs_fetch_url, runner))
-        quickshell_commit = _fetch_commit(
-            source_root, quickshell_objects, qs_fetch_url, qs_commit, runner, private_quickshell=True,
-            credential_helpers=list(dict.fromkeys(qshell_helpers)),
-        )
-        if quickshell_commit != qs_commit:
-            raise SourceUpdateError("fetched Quickshell commit differs from the parent gitlink/lock pin")
-        qs_files, nested_gitlinks = _read_git_tree(source_root, quickshell_objects, qs_commit, runner)
-        if nested_gitlinks:
-            raise SourceUpdateError("nested Quickshell submodules are not supported by the locked snapshot format")
+        qs_files = {}
+        if include_quickshell:
+            _check_initialized_quickshell(
+                source_root, runner, expected_quickshell_repository, allow_test_file=allow_test_file_sources,
+            )
+            qs_fetch_url = _resolve_effective_url(
+                source_root, scratch, qs_repo, expected_quickshell_repository, runner,
+                allow_test_file=allow_test_file_sources,
+            )
+            quickshell_objects = pathlib.Path(owner_temp) / "quickshell.git"
+            _create_git_dir(source_root, quickshell_objects, runner)
+            qshell_helpers = _local_credential_helpers(source_root, qs_fetch_url, runner)
+            qshell_checkout = source_root / QUICKSHELL_PATH
+            if (qshell_checkout / ".git").exists():
+                qshell_helpers.extend(_local_credential_helpers(qshell_checkout, qs_fetch_url, runner))
+            quickshell_commit = _fetch_commit(
+                source_root, quickshell_objects, qs_fetch_url, qs_commit, runner, private_quickshell=True,
+                credential_helpers=list(dict.fromkeys(qshell_helpers)),
+            )
+            if quickshell_commit != qs_commit:
+                raise SourceUpdateError("fetched Quickshell commit differs from the parent gitlink/lock pin")
+            qs_files, nested_gitlinks = _read_git_tree(source_root, quickshell_objects, qs_commit, runner)
+            if nested_gitlinks:
+                raise SourceUpdateError("nested Quickshell submodules are not supported by the locked snapshot format")
+        else:
+            quickshell_commit = qs_commit
 
         snapshot_root = root / "source"
         _materialize(snapshot_root, system_files)
         qs_root = snapshot_root / QUICKSHELL_PATH
         if qs_root.exists():
             raise SourceUpdateError("Quickshell gitlink path unexpectedly materialized as a normal directory")
-        _materialize(qs_root, qs_files)
+        if include_quickshell:
+            _materialize(qs_root, qs_files)
         manifest_data = {
             "schema_version": 1,
             "source_root": str(source_root),
             "system": {"repository": expected_repository, "branch": EXPECTED_BRANCH,
                        "commit": system_commit, "files": _snapshot_entries(system_files)},
             "quickshell": {"repository": qs_repo,
-                           "commit": quickshell_commit, "files": _snapshot_entries(qs_files)},
+                           "commit": quickshell_commit, "included": include_quickshell,
+                           "files": _snapshot_entries(qs_files)},
         }
         canonical = json.dumps(manifest_data, sort_keys=True, separators=(",", ":")).encode()
         manifest_data["snapshot_sha256"] = hashlib.sha256(canonical).hexdigest()
@@ -587,7 +595,7 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
             os.chown(snapshot_root, 0, 0)
             os.chown(manifest_path, 0, 0)
             os.chmod(root, 0o555)
-        yield Snapshot(snapshot_root, manifest_path, system_commit, quickshell_commit)
+        yield Snapshot(snapshot_root, manifest_path, system_commit, quickshell_commit, include_quickshell)
 
 
 def _safe_snapshot_path(root: pathlib.Path, rel: str) -> pathlib.Path:
@@ -607,7 +615,15 @@ def validate_snapshot(root: pathlib.Path, manifest_path: pathlib.Path) -> dict:
     if manifest.get("schema_version") != 1 or supplied_digest != hashlib.sha256(canonical).hexdigest():
         raise SourceUpdateError("snapshot manifest integrity check failed")
     expected_paths: set[str] = set()
+    quickshell = manifest.get("quickshell")
+    if not isinstance(quickshell, dict) or not isinstance(quickshell.get("included", True), bool):
+        raise SourceUpdateError("snapshot Quickshell inclusion state is invalid")
+    include_quickshell = quickshell.get("included", True)
+    if not include_quickshell and quickshell.get("files") != []:
+        raise SourceUpdateError("Niri-only snapshot unexpectedly contains Quickshell files")
     for section in ("system", "quickshell"):
+        if section == "quickshell" and not include_quickshell:
+            continue
         data = manifest.get(section)
         if not isinstance(data, dict) or not re.fullmatch(r"[0-9a-f]{40}", str(data.get("commit", ""))):
             raise SourceUpdateError(f"snapshot {section} commit is invalid")
@@ -658,6 +674,8 @@ def install_from_snapshot(snapshot: Snapshot, runner: Runner = subprocess.run) -
     env["NIRI_PLUS_DATA_DIR"] = str(snapshot.root)
     command = [sys_executable(), "-I", "-B", str(snapshot.root / "scripts/install-snapshot"),
                "--snapshot-root", str(snapshot.root), "--manifest", str(snapshot.manifest)]
+    if not snapshot.include_quickshell:
+        command.append("--without-quickshell")
     try:
         runner(command, check=True, env=env, stdin=subprocess.DEVNULL, cwd=str(snapshot.root))
     except (OSError, subprocess.SubprocessError) as exc:

@@ -193,6 +193,30 @@ class GitSnapshotTests(unittest.TestCase):
         self.assertEqual(git(["-C", str(self.checkout), "rev-parse", "HEAD"]).stdout.strip(), local_head_before)
         self.assertNotEqual(local_head_before, remote_commit)
 
+    def test_niri_only_snapshot_skips_private_quickshell_fetch_and_materialization(self):
+        commands = []
+
+        def record_runner(args, **kwargs):
+            commands.append([str(value) for value in args])
+            return subprocess.run(args, **kwargs)
+
+        with self._snapshot(runner=record_runner, include_quickshell=False) as snapshot:
+            manifest = source_update.validate_snapshot(snapshot.root, snapshot.manifest)
+            self.assertFalse(snapshot.include_quickshell)
+            self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
+            self.assertFalse((snapshot.root / "external/quickshell").exists())
+            self.assertEqual(manifest["quickshell"]["files"], [])
+            invoked = []
+
+            def capture_install(args, **kwargs):
+                invoked.extend(str(value) for value in args)
+                return subprocess.CompletedProcess(args, 0)
+
+            source_update.install_from_snapshot(snapshot, capture_install)
+
+        self.assertFalse(any("fetch" in command and self.qs_url in command for command in commands))
+        self.assertIn("--without-quickshell", invoked)
+
     def test_install_with_source_already_at_remote_head_is_reproducible(self):
         with self._snapshot() as first:
             first_sha = first.system_commit
@@ -277,7 +301,7 @@ class GitSnapshotTests(unittest.TestCase):
              mock.patch.object(install_command.source_update, "resolved_snapshot", side_effect=error), \
              mock.patch.object(install_command.source_update, "install_from_snapshot") as apply, \
              contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(install_command.run_install(), 2)
+            self.assertEqual(install_command.run_install(include_quickshell=True), 2)
         apply.assert_not_called()
         self.assertIn("no changes were applied", output.getvalue())
 

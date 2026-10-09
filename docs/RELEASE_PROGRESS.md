@@ -12,13 +12,31 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | Settings backend `6073e5e`; integration pin and safe Niri window rules in progress |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | Latest `master` merged at `5305bd2`; latest Settings Center work `ee0a9b8` |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `5bccfd5`; candidate pin and optional visual integration work in progress |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `aa3c7dd`; Settings Center, harness lifecycle fixes, and CI follow-up |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
 its RC candidate separately to `ee0a9b8c7836b14485efaf7aca33849d0210570d`; this
 does not change the production pin.
+
+### Repository independence contract
+
+The repositories are peers, not runtime dependencies. The default
+`sudo niri+ install` installs Niri/system management without fetching or
+installing Quickshell. Users opt into the pinned visual integration with
+`sudo niri+ install --with-quickshell`. Quickshell owns its QML and can launch
+through `qs` without the Niri+ CLI; Niri-specific actions use the CLI as an
+optional backend and report its absence. The integration branch's gitlink and
+lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa9e17`
+is unchanged.
+
+Current Cloud validation after this change: asahi-system compileall and all
+194 unit tests pass; the baseline validator passes. QuickShell local harness
+passes all 36 Python tests, QML load/render and qmllint. GitHub Actions still
+fails two QML subprocess tests with SIGSEGV on Ubuntu 24.04; those tests pass in
+the Cloud environment, so the QuickShell PR remains blocked on reproducing or
+removing that runner-specific crash.
 
 ## Completed in this continuation
 
@@ -67,15 +85,14 @@ does not change the production pin.
 ## Validation so far
 
 - asahi-system: `compileall`, baseline validator, and full unittest discovery;
-  **187 tests passed**.
+  **198 tests passed**.
 - quickshell-: `compileall`, full unittest discovery; **36 tests passed**.
 - quickshell-: QML load: **59 files, 0 errors, 0 warnings**.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
   brightness, Control Center radios, and Niri bridge harnesses passed. The
   the suite includes **36 tests**.
-- quickshell-: full offscreen render passed for all reference scenes, including
-  all Settings Center categories and the Control Center. The input page and
-  Control Center slider were visually checked after the layout change.
+- quickshell-: full offscreen render is being rechecked for all reference
+  scenes, including all Settings Center categories and the Control Center.
 - quickshell-: `pyside6-qmllint` returned **0**, reporting 191 classified
   warnings (160 unqualified, 20 missing-property, 6 import, 3 unresolved-type,
   2 unused-imports). These are not silently treated as proof of a runtime bug;
@@ -83,11 +100,11 @@ does not change the production pin.
 
 ## Open work / next executable action
 
-1. Run the combined asahi-system suite after the candidate QuickShell pin; verify
-   the lockfile/gitlink exact-SHA contract and install/rollback failure paths.
-2. Run the integrated Settings Center/Control Center harnesses and full render
-   after the new per-app rule editor.
-3. Push both candidate heads, update PR #8/#19 evidence, and verify CI. Do not
+1. Resolve the two GitHub Actions SIGSEGVs in the QuickShell Control Center
+   subprocess tests; faulthandler is enabled for the next runner result.
+2. Commit/push the optional visual runtime contract on the asahi-system
+   candidate and verify its GitHub Actions result.
+3. Refresh PR #8/#19 evidence and update this matrix after both CI runs. Do not
    merge to `main`/`master` or change the production pin.
 
 ## M1 release gate

@@ -35,6 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status", help="show read-only installation status")
     install_parser = commands.add_parser("install", help="install the Niri+ session")
     install_parser.add_argument("--dry-run", action="store_true", help="show the plan without changing the host")
+    install_parser.add_argument("--with-quickshell", action="store_true",
+                                help="also install the optional Quickshell visual integration")
     commands.add_parser("update", help="check/apply a trusted Niri+ release (not yet available)")
     rollback_parser = commands.add_parser("rollback", help="restore Niri+ managed files")
     rollback_parser.add_argument("--remove-packages", action="store_true", help="also remove only explicitly tracked packages")
@@ -104,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         print(status.render_status(version()))
     elif args.command == "install":
-        return install_command.run_install(args.dry_run)
+        return install_command.run_install(args.dry_run, include_quickshell=args.with_quickshell)
     elif args.command == "update":
         return update.run_update()
     elif args.command == "rollback":

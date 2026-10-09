@@ -68,9 +68,19 @@ class NiriSessionTests(unittest.TestCase):
                 (unit_root / name).write_text((ROOT / "sessions/systemd" / name).read_text())
             self.assertEqual(host.wayland_readiness_status(host_root), host.OK)
 
+        with tempfile.TemporaryDirectory() as temp:
+            host_root = pathlib.Path(temp)
+            unit_root = host_root / "usr/lib/systemd/user"
+            unit_root.mkdir(parents=True)
+            for name in ("asahi-niri-wayland-ready.service", "asahi-niri-polkit-agent.service"):
+                (unit_root / name).write_text((ROOT / "sessions/systemd" / name).read_text())
+            self.assertEqual(host.wayland_readiness_status(host_root, include_quickshell=False), host.OK)
+
     def test_only_minimal_explicit_packages_are_requested(self):
         package_lines = [line.strip() for line in (ROOT / "packages/niri-performance.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
-        self.assertEqual(package_lines, ["niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit", "python3-dbus", "python3-gobject", "quickshell"])
+        self.assertEqual(package_lines, ["niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit", "python3-dbus", "python3-gobject"])
+        optional_lines = [line.strip() for line in (ROOT / "packages/quickshell-optional.txt").read_text().splitlines() if line.strip() and not line.startswith("#")]
+        self.assertEqual(optional_lines, ["quickshell"])
         self.assertNotIn("plasma", " ".join(package_lines))
         self.assertNotIn("gamescope", " ".join(package_lines))
 
@@ -207,6 +217,17 @@ class NiriSessionTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertIn("Niri+ install plan", output.getvalue())
         self.assertIn("Apply will refuse this host", error.getvalue())
+
+    def test_niri_only_file_plan_omits_visual_service_without_touching_plasma(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            installer.install_files(root, include_quickshell=False)
+            self.assertTrue(installer.prefixed(root, "/etc/niri/config.kdl").is_file())
+            self.assertFalse(installer.prefixed(root, "/usr/lib/systemd/user/asahi-quickshell.service").exists())
+            self.assertFalse(installer.prefixed(
+                root, "/usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service"
+            ).exists())
+            self.assertFalse(installer.prefixed(root, "/usr/share/wayland-sessions/plasma.desktop").exists())
 
     def test_install_is_idempotent_and_rollback_restores_backups(self):
         with tempfile.TemporaryDirectory() as temp:
