@@ -242,6 +242,7 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
         "all_process_private_dirty_bytes": metric_sum(rows, "private_dirty_bytes", coverage_ok=coverage_ok),
         "all_process_private_clean_bytes": metric_sum(rows, "private_clean_bytes", coverage_ok=coverage_ok),
         "all_process_swap_pss_bytes": metric_sum(rows, "swap_pss_bytes", coverage_ok=coverage_ok),
+        "collector_and_ancestors": aggregate(groups["COLLECTOR_AND_ANCESTORS"]),
         "same_uid_user_processes": aggregate(same_uid_rows),
         "graphical_session_processes": bm.metric(
             bm.NOT_ACCOUNTED,
@@ -255,7 +256,7 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
         "graphics_components": graphics,
         "component_views": component_views or {},
         "group_semantics": (
-            "Process groups are overlapping views, not additive partitions. Same-UID user processes include user services and desktop applications; this is not asserted to be the exact logind graphical-session cgroup. System services are selected by system.slice cgroup path. Every observed PID remains in process_inventory, including unclassified processes."
+            "Process groups are overlapping views, not additive partitions. all_process_pss_bytes includes this collector and its ancestor chain; collector_and_ancestors is the explicit view, and the same UID workload proxy excludes them. Same-UID user processes include user services and desktop applications; this is not asserted to be the exact logind graphical-session cgroup. System services are selected by system.slice cgroup path. Every observed PID remains in process_inventory, including unclassified processes."
         ),
         "process_inventory": inventory,
         "largest_by_pss": inventory[:20],
@@ -391,6 +392,7 @@ def render_memory_report(report: dict[str, Any], *, top: int = 10) -> str:
     if session_boundary.get("note"):
         lines.append(f"    session scope: {session_boundary['note']}")
     lines.append(f"  {'All-process PSS':<25} {format_metric(processes.get('all_process_pss_bytes'))}")
+    lines.append(f"  {'Collector + ancestors PSS':<25} {format_metric(processes.get('collector_and_ancestors', {}).get('pss_bytes'))}")
     lines.append(f"  {'Same-UID user PSS proxy':<25} {format_metric(processes.get('same_uid_user_processes', {}).get('pss_bytes'))}")
     lines.append(f"  {'System.slice PSS':<25} {format_metric(processes.get('system_service_processes', {}).get('pss_bytes'))}")
     lines.append(f"  {'All private dirty':<25} {format_metric(processes.get('all_process_private_dirty_bytes'))}")

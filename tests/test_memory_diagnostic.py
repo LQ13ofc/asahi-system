@@ -85,6 +85,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertEqual(processes["graphics_components"]["niri"]["pss_bytes"]["value"], 500 * 1024**2)
         self.assertEqual(processes["graphics_components"]["quickshell"]["pss_bytes"]["value"], 300 * 1024**2)
         self.assertEqual(processes["system_service_processes"]["pss_bytes"]["value"], 40 * 1024**2)
+        self.assertEqual(processes["collector_and_ancestors"]["pss_bytes"]["value"], 50 * 1024**2)
         self.assertEqual(processes["same_uid_user_processes"]["pid_count"], 2)
         self.assertEqual(processes["graphical_session_processes"]["status"], bm.NOT_ACCOUNTED)
         self.assertEqual(processes["non_graphics_component_process_count"], 2)
@@ -97,6 +98,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertIn("Do not add", rendered)
         self.assertIn("DRM/GPU memory", rendered)
         self.assertIn("Graphical-session PSS", rendered)
+        self.assertIn("Collector + ancestors PSS", rendered)
         self.assertIn("Used estimate (total-available)", rendered)
         self.assertIn("Unattributed residual", rendered)
 
