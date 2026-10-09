@@ -190,15 +190,31 @@ class MemoryDiagnosticTests(unittest.TestCase):
 
     def test_longitudinal_trend_reports_growth_and_stable_process_candidate_only(self):
         samples = []
-        for index, value in enumerate((100, 110, 120, 130)):
+        base = 8 * 1024 * 1024
+        values = (base, base + 256 * 1024, base + 768 * 1024, base + 1024 * 1024)
+        for index, value in enumerate(values):
             row = process(50, "worker", value, dirty=value // 2, start=123)
             report = diagnostic_for([row], used=value)
             samples.append({"elapsed_seconds": index * 300, "diagnostic": report})
         analysis = memory_report.analyze_memory_series(samples)
         self.assertEqual(analysis["growth_over_time"], "OBSERVED_MONOTONIC_PSS_GROWTH")
-        self.assertEqual(analysis["trends"]["all_process_pss_bytes"]["value"]["delta"], 30)
+        self.assertEqual(analysis["trends"]["all_process_pss_bytes"]["value"]["delta"], 1024 * 1024)
         self.assertEqual(len(analysis["possible_leak_candidates"]), 1)
         self.assertEqual(analysis["possible_leak_candidates"][0]["classification"], "POSSIBLE_LEAK_CANDIDATE")
+        self.assertEqual(analysis["possible_leak_candidates"][0]["minimum_candidate_growth_bytes"], 1024 * 1024)
+
+    def test_small_monotonic_process_growth_is_visible_but_not_a_leak_candidate(self):
+        samples = []
+        for index, value in enumerate((100, 110, 120, 130)):
+            row = process(50, "worker", value, dirty=value // 2, start=123)
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": diagnostic_for([row], used=value)})
+        analysis = memory_report.analyze_memory_series(samples)
+        self.assertEqual(analysis["growth_over_time"], "OBSERVED_MONOTONIC_PSS_GROWTH")
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+        observed = analysis["subthreshold_process_growth"]
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["pss_delta_bytes"], 30)
+        self.assertEqual(observed[0]["classification"], "OBSERVED_GROWTH_BELOW_SCREENING_FLOOR")
 
     def test_series_with_noise_is_not_reported_as_monotonic_growth_or_leak(self):
         samples = []

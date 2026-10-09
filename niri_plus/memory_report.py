@@ -30,6 +30,11 @@ JSON_PRIVACY_NOTICE = {
     "message": "Inspect and redact this diagnostic before sharing it outside your trusted environment.",
 }
 
+# smaps_rollup values are rounded to KiB and small resident changes are common
+# during ordinary allocator/cache activity. Keep those observations visible,
+# but require a material per-process delta before calling one a leak candidate.
+MIN_POSSIBLE_LEAK_GROWTH_BYTES = 1024 * 1024
+
 
 def number(item: Any) -> int | float | None:
     if isinstance(item, dict) and item.get("status") == bm.AVAILABLE:
@@ -580,6 +585,7 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     leak_candidates = []
+    subthreshold_growth = []
     if len(samples) >= 4:
         by_identity: dict[tuple[int, int], list[dict[str, Any] | None]] = {}
         for index, sample in enumerate(samples):
@@ -613,21 +619,43 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
             dirty = [number(row.get("private_dirty_bytes")) for row in rows]
             if any(value is None for value in pss + dirty):
                 continue
-            if all(b >= a for a, b in zip(pss, pss[1:])) and all(b >= a for a, b in zip(dirty, dirty[1:])) and (pss[-1] > pss[0] or dirty[-1] > dirty[0]):
+            monotonic_pss = all(b >= a for a, b in zip(pss, pss[1:]))
+            monotonic_dirty = all(b >= a for a, b in zip(dirty, dirty[1:]))
+            pss_delta = pss[-1] - pss[0]
+            dirty_delta = dirty[-1] - dirty[0]
+            if not (monotonic_pss and monotonic_dirty and (pss_delta > 0 or dirty_delta > 0)):
+                continue
+            growth = {
+                "pid": pid,
+                "start_time_ticks": start_ticks,
+                "name": rows[-1].get("name"),
+                "pss_delta_bytes": pss_delta,
+                "private_dirty_delta_bytes": dirty_delta,
+                "minimum_candidate_growth_bytes": MIN_POSSIBLE_LEAK_GROWTH_BYTES,
+            }
+            if max(pss_delta, dirty_delta) >= MIN_POSSIBLE_LEAK_GROWTH_BYTES:
                 leak_candidates.append({
                     "pid": pid,
                     "start_time_ticks": start_ticks,
                     "name": rows[-1].get("name"),
-                    "pss_delta_bytes": pss[-1] - pss[0],
-                    "private_dirty_delta_bytes": dirty[-1] - dirty[0],
+                    "pss_delta_bytes": pss_delta,
+                    "private_dirty_delta_bytes": dirty_delta,
+                    "minimum_candidate_growth_bytes": MIN_POSSIBLE_LEAK_GROWTH_BYTES,
                     "classification": "POSSIBLE_LEAK_CANDIDATE",
-                    "note": "PID/start-time and process metadata stayed consistent with monotonic PSS/private-dirty growth across all samples; procfs identity has tick granularity, and workload/functional retention still require investigation",
+                    "note": "PID/start-time and process metadata stayed consistent with monotonic PSS/private-dirty growth across all samples and at least one metric exceeded the 1 MiB screening floor; procfs identity has tick granularity, and workload/functional retention still require investigation",
+                })
+            else:
+                subthreshold_growth.append({
+                    **growth,
+                    "classification": "OBSERVED_GROWTH_BELOW_SCREENING_FLOOR",
+                    "note": "monotonic growth is retained as an observation but is too small for the leak-candidate screen; this does not rule out a leak",
                 })
     return {
         "sample_count": len(samples),
         "trends": trends,
         "growth_over_time": "OBSERVED_MONOTONIC_PSS_GROWTH" if trends.get("all_process_pss_bytes", {}).get("value", {}).get("monotonic_non_decreasing") and trends["all_process_pss_bytes"]["value"]["delta"] > 0 else "NOT_ESTABLISHED",
         "possible_leak_candidates": leak_candidates,
+        "subthreshold_process_growth": subthreshold_growth,
         "cached_memory": "Reported as separate meminfo fields; recoverability is not inferred.",
         "expected_residency": "Not inferred from counters alone; workload and session-specific A/B comparison are required.",
         "note": "Longitudinal growth is observational, not a leak diagnosis. Cloud fixtures validate schema and trend logic only; hardware measurements are required for the target system.",
