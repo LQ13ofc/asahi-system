@@ -152,7 +152,11 @@ def _validate_capture(path: pathlib.Path, expected_profile: str) -> dict[str, An
     return capture
 
 
-def assess_compatibility(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def assess_compatibility(
+    captures: dict[str, dict[str, Any]], *,
+    allow_quickshell_pin_change: bool = False,
+    allow_asahi_system_commit_change: bool = False,
+) -> dict[str, Any]:
     issues: list[str] = []
     warnings: list[str] = []
     required_missing = False
@@ -176,7 +180,12 @@ def assess_compatibility(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
             known_values[label] = {profile: value for profile, value in observed}
             distinct = {json.dumps(value, sort_keys=True, ensure_ascii=False) for _, value in observed}
             if len(distinct) != 1:
-                issues.append(f"profiles disagree on {label}")
+                if allow_quickshell_pin_change and label in {
+                    "Quickshell expected commit", "Quickshell installed commit",
+                }:
+                    warnings.append(f"{label} differs between candidate captures as the tested variable")
+                else:
+                    issues.append(f"profiles disagree on {label}")
     for label, path in OPTIONAL_COMPATIBILITY_PATHS.items():
         observed = []
         for profile, capture in captures.items():
@@ -189,7 +198,12 @@ def assess_compatibility(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
             else:
                 observed.append((profile, values[0]))
         if len({json.dumps(value, sort_keys=True) for _, value in observed}) > 1:
-            issues.append(f"profiles disagree on {label}")
+            if allow_asahi_system_commit_change and label == "asahi-system commit":
+                warnings.append(
+                    "asahi-system commit differs; review that the candidate revision changes only the Quickshell pin/runtime selection"
+                )
+            else:
+                issues.append(f"profiles disagree on {label}")
 
     for label, key, tolerance in (
         ("observation window", "observation_window_seconds", 0.05),
@@ -318,7 +332,11 @@ def _process_identity(row: dict[str, Any]) -> str:
     return f"{row.get('name', 'unknown')} [{executable}]"
 
 
-def process_inventory(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def process_inventory(
+    captures: dict[str, dict[str, Any]],
+    baseline_key: str = "niri_core",
+    candidate_key: str = "niri_quickshell",
+) -> dict[str, Any]:
     inventory: dict[str, dict[str, dict[str, Any]]] = {}
     largest: dict[str, list[dict[str, Any]]] = {}
     for profile, capture in captures.items():
@@ -373,20 +391,28 @@ def process_inventory(captures: dict[str, dict[str, Any]]) -> dict[str, Any]:
             key=lambda row: row["median_pss_bytes"],
             reverse=True,
         )[:10]
-    core = set(inventory["niri_core"])
-    with_shell = set(inventory["niri_quickshell"])
-    return {
+    baseline = set(inventory.get(baseline_key, {}))
+    candidate = set(inventory.get(candidate_key, {}))
+    result = {
         "by_profile": inventory,
         "largest_pss_by_profile": largest,
-        "quickshell_incremental_processes": {
-            "present_only_with_quickshell": sorted(with_shell - core),
-            "present_only_without_quickshell": sorted(core - with_shell),
+        "process_presence_changes": {
+            "baseline_capture": baseline_key,
+            "candidate_capture": candidate_key,
+            "present_only_in_candidate": sorted(candidate - baseline),
+            "present_only_in_baseline": sorted(baseline - candidate),
         },
         "notes": [
             "Process identity uses comm plus executable basename, not PID, so profiles compare across fresh processes.",
             "PSS is reported separately from system memory and cgroup memory; these totals are never added together.",
         ],
     }
+    if baseline_key == "niri_core" and candidate_key == "niri_quickshell":
+        result["quickshell_incremental_processes"] = {
+            "present_only_with_quickshell": sorted(candidate - baseline),
+            "present_only_without_quickshell": sorted(baseline - candidate),
+        }
+    return result
 
 
 def compare_captures(
@@ -427,6 +453,73 @@ def compare_files(plasma_path: pathlib.Path, core_path: pathlib.Path, quickshell
         for name, path in paths.items()
     }
     return compare_captures(captures["plasma"], captures["niri_core"], captures["niri_quickshell"])
+
+
+def compare_quickshell_candidate_captures(
+    known_good: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    allow_asahi_system_commit_change: bool = False,
+) -> dict[str, Any]:
+    """Compare two C captures while treating each capture's locked QS commit as the variable."""
+    captures = {"known_good": known_good, "candidate": candidate}
+    compatibility = assess_compatibility(
+        captures,
+        allow_quickshell_pin_change=True,
+        allow_asahi_system_commit_change=allow_asahi_system_commit_change,
+    )
+    comparable = compatibility["status"] == "COMPATIBLE"
+    commits = {}
+    for name, capture in captures.items():
+        commits[name] = {
+            "quickshell_version": _walk(capture["runs"][-1], COMPATIBILITY_PATHS["Quickshell version"]),
+            "quickshell_expected_commit": _walk(capture["runs"][-1], COMPATIBILITY_PATHS["Quickshell expected commit"]),
+            "quickshell_installed_commit": _walk(capture["runs"][-1], COMPATIBILITY_PATHS["Quickshell installed commit"]),
+            "asahi_system_commit": _walk(capture["runs"][-1], OPTIONAL_COMPATIBILITY_PATHS["asahi-system commit"]),
+        }
+    return {
+        "schema_version": COMPARISON_SCHEMA_VERSION,
+        "mode": "quickshell-candidate-comparison",
+        "profiles": {
+            name: {"profile": capture["profile"], "runs": len(capture["runs"])}
+            for name, capture in captures.items()
+        },
+        "revisions": commits,
+        "comparability": compatibility,
+        "classification_policy": (
+            f"At least {MIN_RUNS_FOR_CLASSIFICATION} complete runs per side are required. "
+            "The direction must exceed twice the larger median absolute deviation. This descriptive "
+            "noise heuristic is not a formal significance test. A changed asahi-system source commit "
+            "requires explicit review before its results are comparable."
+        ),
+        "conditions_not_automatically_verified": [
+            "display resolution/scale and monitor count",
+            "theme and visual settings",
+            "battery/charger and thermal conditions",
+            "Wi-Fi/network activity and unrelated background workload",
+            "when asahi-system commits differ, review that the only intended system delta is selecting the Quickshell candidate",
+        ],
+        "comparisons": {
+            name: compare_metric(known_good, candidate, path, unit, comparable)
+            for name, (path, unit) in METRIC_PATHS.items()
+        },
+        "process_inventory": process_inventory(captures, "known_good", "candidate"),
+    }
+
+
+def compare_quickshell_candidate_files(
+    known_good_path: pathlib.Path,
+    candidate_path: pathlib.Path,
+    *,
+    allow_asahi_system_commit_change: bool = False,
+) -> dict[str, Any]:
+    known_good = _validate_capture(pathlib.Path(known_good_path), "niri-quickshell")
+    candidate = _validate_capture(pathlib.Path(candidate_path), "niri-quickshell")
+    return compare_quickshell_candidate_captures(
+        known_good,
+        candidate,
+        allow_asahi_system_commit_change=allow_asahi_system_commit_change,
+    )
 
 
 def render_markdown(result: dict[str, Any]) -> str:
@@ -499,6 +592,74 @@ def render_markdown(result: dict[str, Any]) -> str:
         "System-wide memory comes from /proc/meminfo. Per-process PSS and cgroup memory remain separate views.",
         "",
     ]
+    return "\n".join(lines)
+
+
+def render_quickshell_candidate_markdown(result: dict[str, Any]) -> str:
+    code = chr(96)
+    lines = [
+        "# Niri+ Quickshell C0/C1 comparison",
+        "",
+        f"**Comparability:** {result['comparability']['status']}",
+        "",
+        "| Capture | Runs | Quickshell version | Expected commit | Installed commit | asahi-system commit |",
+        "|---|---:|---|---|---|---|",
+    ]
+    for name, info in result["profiles"].items():
+        revision = result["revisions"].get(name, {})
+        value = lambda field: revision.get(field) or "UNAVAILABLE"
+        lines.append(
+            f"| {code}{name}{code} | {info['runs']} | {value('quickshell_version')} | "
+            f"{value('quickshell_expected_commit')} | {value('quickshell_installed_commit')} | "
+            f"{value('asahi_system_commit')} |"
+        )
+    lines += ["", "## Comparability review", ""]
+    lines.extend(f"- **Mismatch:** {item}" for item in result["comparability"]["issues"])
+    lines.extend(f"- **Review:** {item}" for item in result["comparability"]["warnings"])
+    if not result["comparability"]["issues"] and not result["comparability"]["warnings"]:
+        lines.append("Required host and runtime metadata match; each installed commit matches its capture lock.")
+    lines += ["", result["classification_policy"], ""]
+    lines += [
+        "A = KNOWN-GOOD C0; B = Performance Candidate C1. Per-process PSS and global memory are "
+        "separate views. The Quickshell commit is the intentional independent variable.",
+        "",
+        "## Metrics",
+        "",
+        "| Metric | C0 median | C1 median | Δ | Δ % | MAD C0/C1 | Range C0/C1 | N C0/C1 | Classification |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    for name, item in result["comparisons"].items():
+        before, after = item["baseline"], item["candidate"]
+        if before is None or after is None:
+            lines.append(
+                f"| {code}{name}{code} | unavailable | unavailable | — | — | — | — | "
+                f"{item['missing_runs']['baseline']}/{item['missing_runs']['candidate']} missing | "
+                f"{item['classification']} |"
+            )
+            continue
+        percent = "—" if item["delta_percent"] is None else f"{item['delta_percent']:+.2f}%"
+        lines.append(
+            f"| {code}{name}{code} | {before['median']:.3f} {item['unit']} | "
+            f"{after['median']:.3f} {item['unit']} | {item['delta']:+.3f} | {percent} | "
+            f"{before['mad']:.3f}/{after['mad']:.3f} | {before['min']:.3f}–{before['max']:.3f} / "
+            f"{after['min']:.3f}–{after['max']:.3f} | {before['n']}/{after['n']} | "
+            f"{item['classification']} |"
+        )
+    inventory = result["process_inventory"]
+    delta = inventory["process_presence_changes"]
+    lines += ["", "## Process presence", ""]
+    lines.append("Present only in C1: " + (", ".join(f"{code}{name}{code}" for name in delta["present_only_in_candidate"]) or "none observed"))
+    lines.append("Present only in C0: " + (", ".join(f"{code}{name}{code}" for name in delta["present_only_in_baseline"]) or "none observed"))
+    for capture_name, rows in inventory["largest_pss_by_profile"].items():
+        lines += ["", f"### Largest PSS — {capture_name}", "", "| Process | Median PSS | Runs present |", "|---|---:|---:|"]
+        if not rows:
+            lines.append("| unavailable | — | — |")
+        for row in rows:
+            lines.append(
+                f"| {code}{row['process']}{code} | {row['median_pss_bytes'] / (1024 * 1024):.2f} MiB | "
+                f"{row['runs_present']}/{row['runs_total']} |"
+            )
+    lines += ["", "Review capture privacy metadata before sharing. No result here establishes M1 performance unless the source captures are M1 captures.", ""]
     return "\n".join(lines)
 
 
