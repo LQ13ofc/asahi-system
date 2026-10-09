@@ -244,30 +244,49 @@ def drm_fdinfo_snapshot(root: pathlib.Path, rows: list[dict[str, Any]]) -> dict[
     drm_files = 0
     permission_failures = 0
     read_failures = 0
+    identity_changed = 0
+    identity_unavailable = 0
     malformed = 0
 
     for row in rows:
         pid = row.get("pid")
         if not isinstance(pid, int):
             continue
+        expected_start = row.get("start_time_ticks")
+        if not isinstance(expected_start, int):
+            identity_unavailable += 1
+            continue
+        process_stat = root / "proc" / str(pid) / "stat"
+        stat_text, stat_error = read_text(process_stat)
+        stat = parse_proc_stat(stat_text or "")
+        if stat is None:
+            if stat_error and ("Permission denied" in stat_error or "Operation not permitted" in stat_error):
+                permission_failures += 1
+            else:
+                identity_unavailable += 1
+            continue
+        if stat["start_time_ticks"] != expected_start:
+            identity_changed += 1
+            continue
+
         base = root / "proc" / str(pid) / "fdinfo"
+        process_fdinfo: list[tuple[str, dict[str, Any]]] = []
+        process_fdinfo_files = 0
         try:
             entries = sorted(base.iterdir(), key=lambda item: item.name)
         except PermissionError:
             permission_failures += 1
-            continue
+            entries = []
         except OSError as exc:
             # An exiting process is an ordinary race; permission remains
             # visible, while a missing fdinfo directory is not a GPU failure.
-            if isinstance(exc, FileNotFoundError):
-                continue
-            read_failures += 1
-            continue
-        scanned += 1
+            if not isinstance(exc, FileNotFoundError):
+                read_failures += 1
+            entries = []
         for entry in entries:
             if not entry.name.isdigit():
                 continue
-            fdinfo_files += 1
+            process_fdinfo_files += 1
             text, error = read_text(entry)
             if text is None:
                 if error and ("Permission denied" in error or "Operation not permitted" in error):
@@ -276,8 +295,28 @@ def drm_fdinfo_snapshot(root: pathlib.Path, rows: list[dict[str, Any]]) -> dict[
                     read_failures += 1
                 continue
             parsed = parse_drm_fdinfo(text)
-            if parsed is None:
-                continue
+            if parsed is not None:
+                process_fdinfo.append((entry.name, parsed))
+
+        # /proc/PID/fdinfo is keyed by a reusable PID. Verify that it still
+        # names the process whose smaps row is being diagnosed before keeping
+        # any DRM records from this scan.
+        final_stat_text, final_stat_error = read_text(process_stat)
+        final_stat = parse_proc_stat(final_stat_text or "")
+        if final_stat is None:
+            if final_stat_error and ("Permission denied" in final_stat_error or "Operation not permitted" in final_stat_error):
+                permission_failures += 1
+                identity_unavailable += 1
+            else:
+                identity_changed += 1
+            continue
+        if final_stat["start_time_ticks"] != expected_start:
+            identity_changed += 1
+            continue
+
+        scanned += 1
+        fdinfo_files += process_fdinfo_files
+        for fd_name, parsed in process_fdinfo:
             drm_files += 1
             if parsed["malformed_keys"]:
                 malformed += len(parsed["malformed_keys"])
@@ -286,7 +325,7 @@ def drm_fdinfo_snapshot(root: pathlib.Path, rows: list[dict[str, Any]]) -> dict[
             # inherited/passed DRM descriptors, so preserve the record but
             # keep it out of the aggregate.
             if not client_id:
-                raw_without_identity.append({"pid": pid, "process": row.get("name"), "fd": entry.name, **parsed})
+                raw_without_identity.append({"pid": pid, "process": row.get("name"), "fd": fd_name, **parsed})
                 continue
             key = (str(parsed.get("driver") or "unknown"), str(parsed.get("pdev") or ""), str(client_id))
             record = clients.get(key)
@@ -328,7 +367,10 @@ def drm_fdinfo_snapshot(root: pathlib.Path, rows: list[dict[str, Any]]) -> dict[
             for region, size in client["resident_bytes_by_region"].items():
                 regions[region] = regions.get(region, 0) + size
 
-    if not drm_files and not permission_failures and not read_failures:
+    if identity_changed or identity_unavailable:
+        status = UNAVAILABLE
+        note = "some process fdinfo could not be tied to a stable PID/start-time identity"
+    elif not drm_files and not permission_failures and not read_failures:
         status = NOT_APPLICABLE
         note = "no open DRM client fdinfo was found"
     elif permission_failures and not drm_files:
@@ -356,6 +398,8 @@ def drm_fdinfo_snapshot(root: pathlib.Path, rows: list[dict[str, Any]]) -> dict[
             "drm_files_seen": drm_files,
             "permission_failures": permission_failures,
             "read_failures": read_failures,
+            "identity_changed": identity_changed,
+            "identity_unavailable": identity_unavailable,
         },
     }
 
