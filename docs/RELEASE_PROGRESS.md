@@ -12,8 +12,8 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `ad71678`; Niri core and visual integration are independent, pin-aware options |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `aa3c7dd` plus pending CI trace instrumentation; Settings Center and harness fixes |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `d1ac213`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `87e7da7`; optional Niri+ bridge, touchpad controls, and deferred offscreen fixture setup |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -31,12 +31,14 @@ optional backend and report its absence. The integration branch's gitlink and
 lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa9e17`
 is unchanged.
 
-Current Cloud validation after this change: asahi-system compileall and all
-194 unit tests pass; the baseline validator passes. QuickShell local harness
-passes all 36 Python tests, QML load/render and qmllint. GitHub Actions still
-fails two QML subprocess tests with SIGSEGV on Ubuntu 24.04; those tests pass in
-the Cloud environment, so the QuickShell PR remains blocked on reproducing or
-removing that runner-specific crash.
+Current Cloud validation after this change: asahi-system compileall, baseline
+validation, and all 201 unit tests pass; GitHub Actions run 74 also passes.
+QuickShell passes all 37 Python tests, loads 59 QML files, renders every
+configured offscreen scene, and its Qt 6 lint exits successfully with 191
+classified warnings. GitHub Actions run 28 still failed because the scene
+scheduled fixture mutations during `QQuickView.setSource()`. The current head
+87e7da7 removes that scene callback and explicitly applies fixture state after
+the view loads; run 30 is validating this change.
 
 ## Completed in this continuation
 
@@ -49,8 +51,9 @@ removing that runner-specific crash.
   recovery of managed files when apply fails.
 - Added the unprivileged `niri+ niri-settings status|apply|rollback` path and
   connected Settings Center Niri, launcher, and keyboard controls over a
-  validated stdin protocol. Unsupported touchpad changes remain explicitly
-  unconfigured rather than being presented as working controls.
+  validated stdin protocol. Touchpad controls now use the official Niri KDL
+  options only when the included config tree proves there is no separate
+  touchpad block; unverifiable absolute includes are refused safely.
 - Added the settings KDL include and regression tests for backend safety,
   rollback, session syntax, CLI dispatch, and the QML-to-CLI bridge.
 - Added allowlisted, bounded per-app window rules for exact `app-id`, workspace,
@@ -80,23 +83,23 @@ removing that runner-specific crash.
 | Panel behavior, notification privacy/history/DND | QuickShell panel/services and Settings Center | Implemented | Unit and offscreen checks |
 | Audio, Wi-Fi, Bluetooth, brightness | Existing PipeWire/NetworkManager/BlueZ services and Control Center | Implemented via existing backends | Cloud stubs only; hardware behavior is `M1_REQUIRED` |
 | Niri gaps, border, column layout, launcher, keyboard repeat, and per-app window rules | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL; legacy state without rules migrates in memory | KDL parsing, rule validation, persistence/rollback, migration, and bridge tests; actual compositor reload is `M1_REQUIRED` |
-| Trackpad/input configuration | Settings Center documents unsupported partial Niri config merge | Incomplete, deliberately no fake control | Revisit only with safe complete-config ownership/merge design |
+| Trackpad/input configuration | `niri_settings.py`, Settings Center Input page | Implemented with explicit opt-in and collision checks | KDL/parser and preservation tests pass; real M1 device behavior remains `M1_REQUIRED` |
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage; integrated render still pending |
 | UI efficiency profiles | Shared stats service and lazy panel content | Implemented as interface-only profiles | Regression tests and Cloud parser experiment; no M1 performance claim |
-| Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | 198 system tests; 36 visual tests; M1 session behavior remains required |
+| Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | Default system install and shell operation do not require the other repository; 201 system tests and 37 visual tests; M1 session behavior remains required |
 | Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | In progress | Combined integration, failure-path tests, screenshots, and CI still required |
 | Cause of observed ~4 GiB RAM | Memory collector/diagnostic tooling | Unknown | Requires longitudinal M1 captures; no cause inferred |
 
 ## Validation so far
 
 - asahi-system: `compileall`, baseline validator, and full unittest discovery;
-  **198 tests passed**.
-- quickshell-: `compileall`, full unittest discovery; **36 tests passed**.
+  **201 tests passed**.
+- quickshell-: `compileall`, full unittest discovery; **37 tests passed**.
 - quickshell-: QML load: **59 files, 0 errors, 0 warnings**.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
-  brightness, Control Center radios, and Niri bridge harnesses passed. The
-  the suite includes **36 tests**.
+  brightness, Control Center radios, touchpad preferences, and Niri bridge
+  harnesses passed.
 - quickshell-: full offscreen render passed for all 71 reference scenes,
   including Settings Center categories and Control Center.
 - quickshell-: `pyside6-qmllint` returned **0**, reporting 191 classified
@@ -106,10 +109,11 @@ removing that runner-specific crash.
 
 ## Open work / next executable action
 
-1. Read the faulthandler trace for the two GitHub Actions SIGSEGVs in QuickShell
-   Control Center subprocess tests; fix the cause and rerun CI.
-2. Push asahi-system `ad71678` and verify its GitHub Actions result.
-3. Refresh PR #8/#19 evidence and update this matrix after both CI runs. Do not
+1. Check GitHub Actions run 30 for the two QuickShell offscreen panel subprocess
+   tests; if either still fails, use its faulthandler trace to isolate the Qt
+   scene load crash.
+2. Asahi-system run 74 passed after the guarded touchpad backend change.
+3. Refresh PR #8/#19 evidence and update this matrix after the QuickShell run. Do not
    merge to `main`/`master` or change the production pin.
 
 ## M1 release gate
