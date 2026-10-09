@@ -29,6 +29,21 @@ class NiriPlusCliTests(unittest.TestCase):
         self.assertEqual(version_exit.exception.code, 0)
         self.assertIn((ROOT / "VERSION").read_text().strip(), output.getvalue())
 
+    def test_quickshell_candidate_compare_dispatches_without_host_mutation(self):
+        with mock.patch.object(benchmark, "compare_quickshell_candidate_benchmarks", return_value=0) as compare_candidate:
+            result = cli.main([
+                "benchmark", "compare-quickshell",
+                "--known-good", "c0.json",
+                "--candidate", "c1.json",
+                "--output", "report.md",
+                "--allow-asahi-system-commit-change",
+            ])
+        self.assertEqual(result, 0)
+        compare_candidate.assert_called_once_with(
+            "c0.json", "c1.json", "report.md", None,
+            allow_asahi_system_commit_change=True,
+        )
+
     def test_status_command_dispatches(self):
         with mock.patch.object(cli.status, "render_status", return_value="simulated status") as render, contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(["status"]), 0)

@@ -49,6 +49,17 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--niri-quickshell", required=True, help="validated profile C JSON")
     compare_parser.add_argument("--output", required=True, help="Markdown report path")
     compare_parser.add_argument("--json-output", help="optional machine-readable comparison JSON path")
+    candidate_compare_parser = benchmark_actions.add_parser(
+        "compare-quickshell", help="compare KNOWN-GOOD C0 with an experimental Quickshell C1 capture"
+    )
+    candidate_compare_parser.add_argument("--known-good", required=True, help="validated C0 niri-quickshell JSON")
+    candidate_compare_parser.add_argument("--candidate", required=True, help="validated C1 niri-quickshell JSON")
+    candidate_compare_parser.add_argument("--output", required=True, help="Markdown report path")
+    candidate_compare_parser.add_argument("--json-output", help="optional machine-readable report path")
+    candidate_compare_parser.add_argument(
+        "--allow-asahi-system-commit-change", action="store_true",
+        help="permit a differing Niri+ source commit after manually confirming only Quickshell selection changed",
+    )
     memory_parser = commands.add_parser("memory", help="inspect global, process, cgroup and DRM memory read-only")
     memory_parser.add_argument("--window", type=float, default=2.0,
                                help="seconds for process CPU deltas (default: 2)")
@@ -83,6 +94,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.benchmark_action == "compare":
             return benchmark.compare_benchmarks(
                 args.plasma, args.niri_core, args.niri_quickshell, args.output, args.json_output
+            )
+        if args.benchmark_action == "compare-quickshell":
+            return benchmark.compare_quickshell_candidate_benchmarks(
+                args.known_good,
+                args.candidate,
+                args.output,
+                args.json_output,
+                allow_asahi_system_commit_change=args.allow_asahi_system_commit_change,
             )
         if not any((args.profile, args.prepare_niri_core, args.restore_niri_core, args.diagnose_overhead)):
             parser.error("benchmark requires --profile, --prepare-niri-core, --restore-niri-core, --diagnose-overhead, or compare")
