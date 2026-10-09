@@ -12,12 +12,13 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | Settings backend committed as `6073e5e`; progress/CI update pending commit |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | Latest `master` merged at `5305bd2`; Settings Center bridge committed as `1ecac16` |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | Settings backend `6073e5e`; integration pin and safe Niri window rules in progress |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | Latest `master` merged at `5305bd2`; latest Settings Center work `ee0a9b8` |
 
-The asahi candidate's external Quickshell submodule remains at the production
-known-good pin `55e92880d0aff75d235f283c839ec0990eaa9e17`. Do not move it as part
-of this work without a separately reviewed candidate pin update.
+Production `main` still uses the known-good Quickshell pin
+`55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
+its RC candidate separately to `ee0a9b8c7836b14485efaf7aca33849d0210570d`; this
+does not change the production pin.
 
 ## Completed in this continuation
 
@@ -34,8 +35,13 @@ of this work without a separately reviewed candidate pin update.
   unconfigured rather than being presented as working controls.
 - Added the settings KDL include and regression tests for backend safety,
   rollback, session syntax, CLI dispatch, and the QML-to-CLI bridge.
+- Added allowlisted, bounded per-app window rules for exact `app-id`, workspace,
+  and floating behavior; old settings states without the new list remain
+  readable, and the rules participate in atomic apply/rollback.
 - Added the installed split-library import test for `niri_settings.py` so the
   installed `/usr/local/lib/niri-plus` layout is exercised without host writes.
+- Added the Settings Center per-app rule editor and validated rule payloads;
+  candidate integration pin and gitlink now point to the exact QuickShell RC SHA.
 - Added Python compilation to the asahi-system GitHub Actions validation job.
 - In QuickShell, wide Settings Center choice groups now wrap below their
   labels, and Control Center uses a shared themed slider rather than Qt's
@@ -50,7 +56,7 @@ of this work without a separately reviewed candidate pin update.
 | Bar modules, order, position, per-monitor overrides | QuickShell `config/Preferences.qml`, `Bar.qml`, Settings Center | Implemented | Existing multi-screen and settings tests |
 | Panel behavior, notification privacy/history/DND | QuickShell panel/services and Settings Center | Implemented | Unit and offscreen checks |
 | Audio, Wi-Fi, Bluetooth, brightness | Existing PipeWire/NetworkManager/BlueZ services and Control Center | Implemented via existing backends | Cloud stubs only; hardware behavior is `M1_REQUIRED` |
-| Niri gaps, border, column layout, launcher, keyboard repeat | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL | 9 backend tests and bridge check; actual `niri msg action load-config-file` is `M1_REQUIRED` |
+| Niri gaps, border, column layout, launcher, keyboard repeat, and per-app window rules | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL; legacy state without rules migrates in memory | KDL parsing, rule validation, persistence/rollback, migration, and bridge tests; actual compositor reload is `M1_REQUIRED` |
 | Trackpad/input configuration | Settings Center documents unsupported partial Niri config merge | Incomplete, deliberately no fake control | Revisit only with safe complete-config ownership/merge design |
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage; integrated render still pending |
@@ -61,12 +67,12 @@ of this work without a separately reviewed candidate pin update.
 ## Validation so far
 
 - asahi-system: `compileall`, baseline validator, and full unittest discovery;
-  **184 tests passed**.
-- quickshell-: `compileall`, full unittest discovery; **35 tests passed**.
+  **187 tests passed**.
+- quickshell-: `compileall`, full unittest discovery; **36 tests passed**.
 - quickshell-: QML load: **59 files, 0 errors, 0 warnings**.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
   brightness, Control Center radios, and Niri bridge harnesses passed. The
-  the suite includes **35 tests**.
+  the suite includes **36 tests**.
 - quickshell-: full offscreen render passed for all reference scenes, including
   all Settings Center categories and the Control Center. The input page and
   Control Center slider were visually checked after the layout change.
@@ -77,14 +83,12 @@ of this work without a separately reviewed candidate pin update.
 
 ## Open work / next executable action
 
-1. Add/verify Settings Center controls only where a real backend exists; mark
-   unresolved display and touchpad operations explicitly instead of adding
-   placebo controls.
-2. Exercise the installed-layout integration and failure recovery across the
-   candidate branches, then run all suites together.
-3. Update each worktree's progress/PR evidence, make small commits, and verify
-   CI on candidate branches. Do not merge to `main`/`master` or change the
-   production pin.
+1. Run the combined asahi-system suite after the candidate QuickShell pin; verify
+   the lockfile/gitlink exact-SHA contract and install/rollback failure paths.
+2. Run the integrated Settings Center/Control Center harnesses and full render
+   after the new per-app rule editor.
+3. Push both candidate heads, update PR #8/#19 evidence, and verify CI. Do not
+   merge to `main`/`master` or change the production pin.
 
 ## M1 release gate
 
@@ -103,5 +107,5 @@ above is not a substitute for these results.
 - Existing quickshell- PRs #4/#5: parser and residency work.
 - Current candidate-only checkpoints: asahi `da85d0e`; quickshell `435ca33`,
   followed by merge `5305bd2`. Candidate implementation commits: asahi
-  `6073e5e`; quickshell `1ecac16`. The current progress/CI documentation change
-  is not yet committed. None has been merged into production.
+  `6073e5e`, `4b2caf0`; quickshell `1ecac16`, `ee0a9b8`. Draft integration PRs: asahi
+  #19 and quickshell #8. None has been merged into production.

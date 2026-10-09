@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repository": "https://github.com/LQ13ofc/quickshell-.git",
   "checkout": "external/quickshell",
-  "commit": "55e92880d0aff75d235f283c839ec0990eaa9e17",
+  "commit": "ee0a9b8c7836b14485efaf7aca33849d0210570d",
   "runtime_link": "/usr/local/share/niri-plus/quickshell",
   "runtime_entrypoint": "shell.qml",
   "engine": {
