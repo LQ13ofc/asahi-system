@@ -13,7 +13,7 @@ branches and the production Quickshell pin are unchanged.
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
 | `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `cafcba5`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `b355504`; optional Niri+ bridge, touchpad controls, and isolated action-policy tests |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `918b07c`; optional Niri+ bridge, touchpad controls, and isolated action-policy tests |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -32,16 +32,15 @@ lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa
 is unchanged.
 
 Current Cloud validation after this change: asahi-system compileall, baseline
-validation, and all 201 unit tests pass; GitHub Actions run 74 also passes.
-QuickShell passes all 37 Python tests, loads 59 QML files, renders every
-configured offscreen scene, and its Qt 6 lint exits successfully with 191
-classified warnings. GitHub Actions runs 28, 30, 31, 33, and 34 reproduced a
-native SIGSEGV when the two Control Center behavior checks instantiated its
-visual QML tree in subprocesses. Current head b355504 isolates the pure action
-guards in a JavaScript module, tests their boundary cases with QJSEngine, and
-checks that the QML panel still connects those decisions to its real service
-authorities. The standard load/render harness still instantiates the complete
-panel; GitHub validation of this head is pending.
+validation, and all 201 unit tests pass; GitHub Actions runs 74 and 76 pass.
+QuickShell passes all 37 Python tests and loads 59 QML files locally. The last
+complete local render/lint pass preceded the new optional process-start fallback.
+Hosted runs 28 through 35 exposed two different SIGSEGVs: isolated creation of
+the Control Center tree in behavior subprocesses, then full-scene rendering.
+Head 918b07c tests the action guards without constructing that visual tree in
+the unit tests and adds per-scene render progress. Hosted run 37 has passed
+Python and QML load and is currently rendering scenes to identify any remaining
+runner-specific crash.
 
 ## Completed in this continuation
 
@@ -112,8 +111,8 @@ panel; GitHub validation of this head is pending.
 
 ## Open work / next executable action
 
-1. Check GitHub Actions for QuickShell head `b355504`; confirm Python action
-   tests, QML load, and full render all pass on the hosted runner.
+1. Inspect QuickShell run 37's scene-level progress, fix the failing render
+   scene if necessary, then rerun CI to completion.
 2. Asahi-system run 74 passed after the guarded touchpad backend change.
 3. Refresh PR #8/#19 evidence and update this matrix after the QuickShell run. Do not
    merge to `main`/`master` or change the production pin.
