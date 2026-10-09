@@ -38,7 +38,13 @@ DEFAULTS: dict[str, object] = {
     "keyboard_repeat_rate": 25,
     "launcher_key": "Mod+Space",
     "terminal_key": "Mod+Return",
+    "window_rules": [],
 }
+
+_LEGACY_SETTING_KEYS = set(DEFAULTS) - {"window_rules"}
+_APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z", re.ASCII)
+_WORKSPACE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,31}\Z", re.ASCII)
+MAX_WINDOW_RULES = 12
 
 CENTER_FOCUSED = {"never", "always", "on-overflow"}
 COLUMN_DISPLAY = {"normal", "tabbed"}
@@ -70,8 +76,10 @@ def _shortcut_is_safe(value: object) -> bool:
 
 
 def validate_settings(payload: object) -> dict[str, object]:
-    if not isinstance(payload, dict) or set(payload) != set(DEFAULTS):
+    if not isinstance(payload, dict) or set(payload) not in (set(DEFAULTS), _LEGACY_SETTING_KEYS):
         raise NiriSettingsError("o documento precisa conter exatamente os campos de Niri+ suportados")
+    payload = dict(payload)
+    payload.setdefault("window_rules", [])
     if payload.get("schema_version") != SCHEMA_VERSION or type(payload.get("schema_version")) is not int:
         raise NiriSettingsError("versão das preferências Niri+ incompatível")
     for key, lower, upper in (
@@ -93,13 +101,35 @@ def validate_settings(payload: object) -> dict[str, object]:
             raise NiriSettingsError(f"atalho não suportado para {key}")
     if payload["launcher_key"] == payload["terminal_key"]:
         raise NiriSettingsError("launcher e terminal não podem usar o mesmo atalho")
-    return dict(payload)
+    rules = payload.get("window_rules")
+    if not isinstance(rules, list) or len(rules) > MAX_WINDOW_RULES:
+        raise NiriSettingsError(f"window_rules precisa ser uma lista de até {MAX_WINDOW_RULES} regras")
+    normalized_rules: list[dict[str, object]] = []
+    used_app_ids: set[str] = set()
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict) or set(rule) != {"app_id", "workspace", "floating"}:
+            raise NiriSettingsError(f"campos inválidos na regra de janela {index + 1}")
+        app_id = rule.get("app_id")
+        workspace = rule.get("workspace")
+        floating = rule.get("floating")
+        if not isinstance(app_id, str) or not _APP_ID.fullmatch(app_id):
+            raise NiriSettingsError(f"app_id inválido na regra de janela {index + 1}")
+        if not isinstance(workspace, str) or not _WORKSPACE_NAME.fullmatch(workspace):
+            raise NiriSettingsError(f"workspace inválido na regra de janela {index + 1}")
+        if type(floating) is not bool:
+            raise NiriSettingsError(f"floating inválido na regra de janela {index + 1}")
+        if app_id in used_app_ids:
+            raise NiriSettingsError("cada regra de janela precisa de um app_id único")
+        used_app_ids.add(app_id)
+        normalized_rules.append({"app_id": app_id, "workspace": workspace, "floating": floating})
+    payload["window_rules"] = normalized_rules
+    return payload
 
 
 def render_kdl(payload: object) -> str:
     settings = validate_settings(payload)
     flag = lambda value: "true" if value else "false"
-    return "\n".join((
+    lines = [
         "// Gerenciado por niri+; altere pelo Settings Center ou niri+ niri-settings.",
         "layout {",
         f"    gaps {settings['gaps']}",
@@ -120,8 +150,17 @@ def render_kdl(payload: object) -> str:
         f'    {settings["launcher_key"]} {{ spawn "fuzzel"; }}',
         f'    {settings["terminal_key"]} {{ spawn "foot"; }}',
         "}",
-        "",
-    ))
+    ]
+    for rule in settings["window_rules"]:
+        app_pattern = "^" + re.escape(str(rule["app_id"])) + "$"
+        lines.extend((
+            "window-rule {",
+            f"    match app-id={json.dumps(app_pattern)}",
+            f"    open-on-workspace {json.dumps(str(rule['workspace']), ensure_ascii=False)}",
+            f"    open-floating {'true' if rule['floating'] else 'false'}",
+            "}",
+        ))
+    return "\n".join((*lines, ""))
 
 
 def _sha256(data: bytes) -> str:

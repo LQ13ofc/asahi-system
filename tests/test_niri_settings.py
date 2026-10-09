@@ -90,6 +90,42 @@ class NiriSettingsTests(unittest.TestCase):
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(launcher_key="Mod+Return", terminal_key="Mod+Return"))
 
+    def test_window_rules_are_exact_bounded_and_emit_valid_kdl(self):
+        rules = [{"app_id": "org.mozilla.firefox", "workspace": "web apps", "floating": True}]
+        rendered = niri_settings.render_kdl(self.settings(window_rules=rules))
+        self.assertIsNotNone(kdl.parse(rendered))
+        self.assertIn(r'match app-id="^org\\.mozilla\\.firefox$"', rendered)
+        self.assertIn('open-on-workspace "web apps"', rendered)
+        self.assertIn("open-floating true", rendered)
+        invalid = (
+            [{"app_id": "bad app; exec", "workspace": "web", "floating": False}],
+            [{"app_id": "com.example.app", "workspace": "bad; exec", "floating": False}],
+            [{"app_id": "com.example.app", "workspace": "web", "floating": 1}],
+            [{"app_id": "com.example.app", "workspace": "web", "floating": False}] * 2,
+            [{"app_id": f"app{i}", "workspace": "web", "floating": False}
+             for i in range(niri_settings.MAX_WINDOW_RULES + 1)],
+        )
+        for ruleset in invalid:
+            with self.subTest(rules=ruleset):
+                with self.assertRaises(niri_settings.NiriSettingsError):
+                    niri_settings.render_kdl(self.settings(window_rules=ruleset))
+
+    def test_state_loader_migrates_legacy_settings_without_window_rules(self):
+        legacy = dict(niri_settings.DEFAULTS)
+        legacy.pop("window_rules")
+        self.manager.state_dir.mkdir(mode=0o700, parents=True)
+        state = {
+            "schema_version": niri_settings.SCHEMA_VERSION,
+            "settings": legacy,
+            "previous_settings": legacy,
+            "settings_sha256": "0" * 64,
+        }
+        self.manager.state_path.write_text(json.dumps(state), encoding="utf-8")
+        self.manager.state_path.chmod(0o600)
+        migrated = self.manager._load_state()
+        self.assertEqual(migrated["settings"]["window_rules"], [])
+        self.assertEqual(migrated["previous_settings"]["window_rules"], [])
+
     def test_apply_persists_atomically_without_chmod_of_existing_xdg_directories(self):
         original_config_mode = stat.S_IMODE(self.config_home.stat().st_mode)
         original_niri_mode = stat.S_IMODE(self.niri_dir.stat().st_mode)
@@ -113,6 +149,19 @@ class NiriSettingsTests(unittest.TestCase):
         self.assertEqual(result["status"], "OK")
         self.assertEqual(self.manager.status()["settings"]["gaps"], 6)
         self.assertEqual(self.manager.status()["settings"]["border_enabled"], False)
+
+    def test_window_rule_updates_persist_and_rollback_as_one_transaction(self):
+        firefox = [{"app_id": "org.mozilla.firefox", "workspace": "web", "floating": False}]
+        chat = [{"app_id": "org.telegram.desktop", "workspace": "chat", "floating": True}]
+        self.manager.apply(self.settings(window_rules=firefox))
+        self.manager.apply(self.settings(window_rules=chat))
+        self.assertIn('open-on-workspace "chat"', self.manager.settings_path.read_text(encoding="utf-8"))
+        restored = self.manager.rollback()
+        self.assertEqual(restored["settings"]["window_rules"], firefox)
+        installed = self.manager.settings_path.read_text(encoding="utf-8")
+        self.assertIn('open-on-workspace "web"', installed)
+        self.assertNotIn('open-on-workspace "chat"', installed)
+        self.assertEqual(self.manager.status()["status"], "OK")
 
     def test_validator_failure_leaves_user_config_and_state_untouched(self):
         original = self.user_config.read_bytes()
