@@ -32,7 +32,8 @@ lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa
 is unchanged.
 
 Current Cloud validation: asahi-system compileall, baseline validation, and all
-205 unit tests pass at HEAD `7028f85`; CI for this new test commit is pending.
+205 unit tests pass at HEAD `7028f85`; Actions run `38002886855` passed for
+the new transaction tests and progress documentation.
 QuickShell
 has 39 passing Python tests, 59 loadable QML files, all reference scenes
 rendering locally, and qmllint exit 0 with 192 classified warnings. Hosted run
@@ -123,12 +124,11 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 
 ## Open work / next executable action
 
-1. Push the new transaction regression tests on asahi-system and verify Actions.
-2. Continue the requirement matrix for remaining Cloud-implementable product
+1. Continue the requirement matrix for remaining Cloud-implementable product
    behavior while keeping visual state in Quickshell and system lifecycle,
    installation and Niri-owned options in asahi-system. Monitor-specific output
    discovery and physical device behavior remain `M1_REQUIRED`.
-3. Keep PRs #8/#19 separate and draft. Do not merge to `main`/`master` or change
+2. Keep PRs #8/#19 separate and draft. Do not merge to `main`/`master` or change
    the production pin.
 ## M1 release gate
 
