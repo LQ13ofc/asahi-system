@@ -12,8 +12,8 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `ce45489`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `1ffdcd6`; optional Niri+ bridge, touchpad controls, and deferred Control Center action-row layout |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `f4133d0`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `79b093e`; optional Niri+ bridge, independent brightness failure state, and deferred Control Center action-row layout |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -32,17 +32,17 @@ lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa
 is unchanged.
 
 Current Cloud validation: asahi-system compileall, baseline validation, and all
-201 unit tests pass; Actions run 37999249999 passed at HEAD 3204742 (subsequent change ce45489 only updates this progress record).
-QuickShell has 38 passing Python tests, 59 loadable QML files, all reference
-scenes rendering locally, and qmllint exit 0 with 191 classified warnings.
-Hosted run 37999480027 reproduced the ControlCenter creation crash. Its GDB
-stack points to Qt Quick row positioning while a property binding updates. The
-first geometry change at 9e2adc4 did not resolve hosted SIGSEGV in run
-37999805430. HEAD 1ffdcd6 now defers the responsive action-row anchor update
-until after Row completion and uses Qt-managed implicit geometry; the targeted
-Control Center scene passes locally. Hosted runs for 1ffdcd6 are pending; lint
-runs after render failures and the GDB diagnostic remains conditional.
-
+201 unit tests pass; Actions run 38000033876 passed at HEAD f4133d0. QuickShell
+has 39 passing Python tests, 59 loadable QML files, all reference scenes
+rendering locally, and qmllint exit 0 with 192 classified warnings. Hosted run
+38000517181 passed for QuickShell code HEAD b444860: Python suite, QML load,
+full reference render, and lint. It includes a regression proving the UI reports
+an unavailable optional Niri+ brightness backend without remaining busy. HEAD
+79b093e updates only the documented warning counts; its Actions run is queued.
+The hosted ControlCenter SIGSEGV was resolved by deferring responsive Row anchor
+changes until component construction finishes and cancelling a pending relayout
+with the component's one-shot timer. The GDB stack had identified Qt Quick
+positioner/binding re-entry; no rendering scene is skipped or downgraded.
 ## Completed in this continuation
 
 - Preserved both pre-existing worktrees with checkpoint branches and WIP commits
@@ -90,7 +90,7 @@ runs after render failures and the GDB diagnostic remains conditional.
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage; integrated render still pending |
 | UI efficiency profiles | Shared stats service and lazy panel content | Implemented as interface-only profiles | Regression tests and Cloud parser experiment; no M1 performance claim |
-| Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | Default system install and shell operation do not require the other repository; 201 system tests and 37 visual tests; M1 session behavior remains required |
+| Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | Default system install and shell operation do not require the other repository; 201 system tests and 39 visual tests; M1 session behavior remains required |
 | Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | In progress | Combined integration, failure-path tests, screenshots, and CI still required |
 | Cause of observed ~4 GiB RAM | Memory collector/diagnostic tooling | Unknown | Requires longitudinal M1 captures; no cause inferred |
 
@@ -98,28 +98,27 @@ runs after render failures and the GDB diagnostic remains conditional.
 
 - asahi-system: `compileall`, baseline validator, and full unittest discovery;
   **201 tests passed**.
-- quickshell-: `compileall`, full unittest discovery; **37 tests passed**.
+- quickshell-: `compileall`, full unittest discovery; **39 tests passed**.
 - quickshell-: QML load: **59 files, 0 errors, 0 warnings**.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
   brightness, Control Center radios, touchpad preferences, and Niri bridge
   harnesses and isolated action-policy tests passed.
-- quickshell-: full offscreen render passed for all 71 reference scenes,
+- quickshell-: full offscreen render passed for all reference scenes,
   including Settings Center categories and Control Center.
-- quickshell-: `pyside6-qmllint` returned **0**, reporting 191 classified
-  warnings (160 unqualified, 20 missing-property, 6 import, 3 unresolved-type,
+- quickshell-: `pyside6-qmllint` returned **0**, reporting 192 classified
+  warnings (161 unqualified, 20 missing-property, 6 import, 3 unresolved-type,
   2 unused-imports). These are not silently treated as proof of a runtime bug;
   the classification is in `docs/validacao-qml.md`.
 
 ## Open work / next executable action
 
-1. Review the hosted full-scene result for QuickShell HEAD 1ffdcd6. If deferred
-   Row re-anchoring passes, update PR #8 evidence; if it fails, use the GDB
-   stack to continue isolating which control row triggers Qt Quick completion.
-2. Asahi-system core independence and optional QuickShell integration are covered
-   at HEAD 3204742; run 37999249999 passed.
+1. Confirm the docs-only QuickShell CI run for HEAD 79b093e, then update PR #8
+   evidence to the passing 39-test / 59-file / full-render candidate.
+2. Continue the product matrix on the two independent branches: visual settings
+   stay in Quickshell; system state, lifecycle, installation and Niri-owned
+   options stay in asahi-system. Add only optional bridge behavior between them.
 3. Keep PRs #8/#19 separate and draft. Do not merge to `main`/`master` or change
    the production pin.
-
 ## M1 release gate
 
 Still required on real Fedora Asahi: Niri accepts the generated settings KDL;
