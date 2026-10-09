@@ -138,6 +138,26 @@ Uma execução sem Niri registra `NOT_APPLICABLE` para a meta idle Niri. A marca
 `HIGH_BASELINE_CANDIDATE` significa apenas que a estimativa global ultrapassa a
 meta de projeto de 2 GiB; não identifica causa nem justifica reduzir cache.
 
+### Roteiro para interpretar uma captura de 4 GiB
+
+Use primeiro a cobertura das métricas. PSS global incompleto não pode ser
+tratado como PSS baixo, e um residual positivo não identifica qual componente o
+consome.
+
+| Evidência observada | Classificação de trabalho | Próxima comparação |
+|---|---|---|
+| `MemTotal-MemAvailable` alto, PSS global completo bem menor, `Cached`/Slab presentes, PSI e swap sem aumento relevante | `UNATTRIBUTED_MEMORY`; cache é uma hipótese observável, não um diagnóstico de memória recuperável | Conferir `MemAvailable`, `SReclaimable`/`SUnreclaim`, cgroup e DRM separadamente; não somar nem limpar cache |
+| PSS de `qs` e/ou filhos do Quickshell domina o inventário completo | `QUICKSHELL_DOMINANT_CANDIDATE` | Comparar perfil C com B em cinco runs equivalentes; só então testar uma alteração QML isolada |
+| PSS de Niri, serviços do sistema ou processos inesperados domina | `NIRI_BASE_OR_PROCESS_CANDIDATE` | Comparar A com B e revisar inventário/cgroups; investigar processo inesperado sem desativar serviços globalmente |
+| PSS/private dirty do mesmo PID + `start_time_ticks` cresce monotonicamente em todas as amostras | `POSSIBLE_LEAK_CANDIDATE` apenas acima do filtro heurístico de 1 MiB | Repetir com workload constante e verificar identidade, objetos retidos, buffers e cache; crescimento não confirma vazamento |
+| Só o uso global cresce, enquanto PSS por processo permanece estável ou incompleto | `GROWTH_OVER_TIME_UNATTRIBUTED` | Examinar cache, kernel, cgroups e pressão sem imputar a diferença à GPU |
+
+Esses nomes descrevem hipóteses de triagem e não são todos estados emitidos
+automaticamente pela CLI. `EXPECTED_RESIDENCY` não é inferida de uma captura:
+precisa de uma comparação entre sessões com as mesmas condições. A meta
+`HIGH_BASELINE_CANDIDATE` continua sendo a comparação global com 2 GiB, nunca
+uma afirmação de que Niri, Quickshell ou GPU expliquem o resultado.
+
 ## Protocolo A/B/C
 
 O coletor e comparador existentes continuam sendo a fonte para os perfis
