@@ -108,18 +108,22 @@ class NiriSessionTests(unittest.TestCase):
         self.assertEqual(lock["engine"]["architecture"], "aarch64")
         self.assertEqual(lock["engine"]["compatibility"], "M1_REQUIRED")
         if (ROOT / ".git").exists():
-            result = subprocess.run(["git", "-C", str(ROOT), "ls-tree", "HEAD", "external/quickshell"],
+            result = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--stage", "external/quickshell"],
                                     check=True, capture_output=True, text=True)
             fields = result.stdout.split()
             self.assertGreaterEqual(len(fields), 4)
             self.assertEqual(fields[0], "160000")
-            self.assertEqual(fields[1], "commit")
-            self.assertEqual(fields[2], lock["commit"])
+            self.assertEqual(fields[1], lock["commit"])
         else:
             self.skipTest("Cloud source archive has no Git tree metadata; CI validates the gitlink")
 
     def test_visual_qml_is_not_duplicated_in_asahi_system(self):
-        self.assertEqual(list(ROOT.rglob("*.qml")), [])
+        quickshell_checkout = ROOT / "external/quickshell"
+        visual_files = [
+            path for path in ROOT.rglob("*.qml")
+            if quickshell_checkout not in path.parents
+        ]
+        self.assertEqual(visual_files, [])
 
     def test_quickshell_lifecycle_and_no_niri_exec_once_duplication(self):
         unit = (ROOT / "sessions/systemd/asahi-quickshell.service").read_text()
