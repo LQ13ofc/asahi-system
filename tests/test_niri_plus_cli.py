@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, brightness, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status, wayland_ready
+from niri_plus import benchmark, brightness, cli, doctor, host, install, install_command, niri_settings, quickshell, rollback, source_update, status, wayland_ready
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -63,6 +63,31 @@ class NiriPlusCliTests(unittest.TestCase):
                 cli.main(["brightness", "set", "101"])
         self.assertEqual(exit_info.exception.code, 2)
         set_percent.assert_not_called()
+
+    def test_niri_settings_cli_exposes_status_apply_rollback_and_uses_stdin(self):
+        manager = mock.Mock()
+        manager.status.return_value = {"status": "NOT_CONFIGURED", "configured": False}
+        manager.rollback.return_value = {"status": "OK"}
+        with mock.patch.object(niri_settings, "NiriSettingsManager", return_value=manager), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["niri-settings", "status"]), 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "NOT_CONFIGURED")
+        manager.status.assert_called_once_with()
+        with mock.patch.object(niri_settings, "NiriSettingsManager", return_value=manager), \
+             mock.patch.object(niri_settings, "apply_from_stdin", return_value=0) as apply_stdin:
+            self.assertEqual(cli.main(["niri-settings", "apply"]), 0)
+        apply_stdin.assert_called_once_with(manager)
+        with mock.patch.object(niri_settings, "NiriSettingsManager", return_value=manager), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["niri-settings", "rollback"]), 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "OK")
+
+    def test_niri_settings_cli_help_lists_only_supported_actions(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit) as exit_info:
+            cli.main(["niri-settings", "--help"])
+        self.assertEqual(exit_info.exception.code, 0)
+        for action in ("status", "apply", "rollback"):
+            self.assertIn(action, output.getvalue())
 
     def test_status_on_simulated_host_is_read_only(self):
         with tempfile.TemporaryDirectory() as temp:

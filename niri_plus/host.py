@@ -136,11 +136,15 @@ def configuration_status(root: pathlib.Path, environment: dict[str, str] | None 
         source = config.read_text(encoding="utf-8")
     except OSError:
         return NOT_CONFIGURED
-    includes = re.findall(r'^\s*include\s+"([^"\n]+)"', source, flags=re.MULTILINE)
+    includes = re.findall(r'^\s*include(?:\s+optional=true)?\s+"([^"\n]+)"', source, flags=re.MULTILINE)
     required = {"keybinds.kdl", "outputs.kdl", "rules.kdl", "autostart.kdl"}
-    if len(includes) != len(required) or set(includes) != required:
+    settings_include = "~/.config/niri-plus/settings.kdl"
+    if len(includes) != len(required) + 1 or includes.count(settings_include) != 1:
         return WARNING
-    for included in includes:
+    regular_includes = [item for item in includes if item != settings_include]
+    if len(regular_includes) != len(required) or set(regular_includes) != required:
+        return WARNING
+    for included in regular_includes:
         path = pathlib.PurePosixPath(included)
         if path.is_absolute() or ".." in path.parts or not (config.parent / included).is_file():
             return WARNING

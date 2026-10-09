@@ -10,6 +10,7 @@ import json
 from unittest import mock
 
 import kdl
+from niri_plus import niri_settings
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -176,6 +177,8 @@ class NiriSessionTests(unittest.TestCase):
             target.mkdir(parents=True)
             for path in (ROOT / "niri").glob("*.kdl"):
                 (target / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            config_text = (target / "config.kdl").read_text(encoding="utf-8")
+            self.assertIn(niri_settings.SYSTEM_INCLUDE, config_text)
             self.assertEqual(host.configuration_status(root), host.OK)
             (target / "outputs.kdl").unlink()
             self.assertEqual(host.configuration_status(root), host.WARNING)

@@ -143,60 +143,152 @@ def _safe_regular(path: pathlib.Path, *, uid: int | None, allow_root: bool = Fal
     return info
 
 
-def _ensure_directory(path: pathlib.Path, *, uid: int, mode: int) -> None:
+def _read_regular(path: pathlib.Path, *, uid: int, allow_root: bool = False,
+                  private: bool = False) -> tuple[bytes, os.stat_result]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        if isinstance(error, FileNotFoundError):
+            raise
+        raise NiriSettingsError("arquivo de configuração indisponível ou inseguro") from error
+    try:
+        info = os.fstat(fd)
+        owners = {uid, 0} if allow_root else {uid}
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022:
+            raise NiriSettingsError("arquivo de configuração tem owner ou permissões inseguros")
+        if private and info.st_mode & 0o077:
+            raise NiriSettingsError("state Niri+ deve ser privado")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks), info
+    finally:
+        os.close(fd)
+
+
+def _safe_unlink(path: pathlib.Path, *, uid: int) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(path.parent, flags)
+    try:
+        try:
+            info = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid:
+            raise NiriSettingsError("arquivo a remover não pertence ao usuário")
+        os.unlink(path.name, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _validate_directory(path: pathlib.Path, *, uid: int, allow_root: bool = False,
+                        private: bool = False) -> os.stat_result:
     path = pathlib.Path(os.path.abspath(path))
     current = pathlib.Path(path.anchor)
     for part in path.parts[1:]:
         current = current / part
         try:
             info = current.lstat()
+        except OSError as error:
+            raise NiriSettingsError("diretório de configuração indisponível") from error
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise NiriSettingsError("caminho de configuração contém symlink ou não é diretório")
+        if current != path:
+            owners = {uid, 0}
+            sticky_root_tmp = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
+            if info.st_uid not in owners or (info.st_mode & 0o022 and not sticky_root_tmp):
+                raise NiriSettingsError("caminho de configuração atravessa diretório inseguro")
+    info = path.lstat()
+    owners = {uid, 0} if allow_root else {uid}
+    if info.st_uid not in owners or info.st_mode & 0o022 or (private and info.st_mode & 0o077):
+        raise NiriSettingsError("diretório de configuração tem owner ou permissões inseguros")
+    return info
+
+
+def _ensure_directory(path: pathlib.Path, *, uid: int, mode: int,
+                      private: bool = False) -> None:
+    """Create missing directories without changing any existing mode.
+
+    Ancestors may belong to root (for example /home), but the target must be
+    owned by the unprivileged settings owner. Symlink components are rejected
+    before any managed file is touched.
+    """
+    path = pathlib.Path(os.path.abspath(path))
+    current = pathlib.Path(path.anchor)
+    for part in path.parts[1:]:
+        current = current / part
+        created = False
+        try:
+            info = current.lstat()
         except FileNotFoundError:
             try:
                 current.mkdir(mode=mode)
+                created = True
             except FileExistsError:
                 pass
             info = current.lstat()
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise NiriSettingsError("diretório de configuração contém symlink ou não é diretório")
-    info = path.lstat()
-    if info.st_uid != uid or info.st_mode & 0o022:
-        raise NiriSettingsError("diretório de configuração tem owner ou permissões inseguros")
-    os.chmod(path, mode)
+        if created and current == path:
+            os.chmod(current, mode)
+        if current != path:
+            trusted_owner = info.st_uid in (0, uid)
+            sticky_root_tmp = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
+            if not trusted_owner or (info.st_mode & 0o022 and not sticky_root_tmp):
+                raise NiriSettingsError("caminho de configuração atravessa diretório com owner/permissões inseguros")
+    _validate_directory(path, uid=uid, private=private)
 
 
 def _atomic_write(path: pathlib.Path, data: bytes, *, uid: int, mode: int,
                   existing_owner: int | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Atomically replace one file inside an already validated directory."""
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        old = _safe_regular(path, uid=existing_owner if existing_owner is not None else uid,
-                            allow_root=existing_owner is None)
-        if existing_owner is None and old.st_uid not in (0, uid):
-            raise NiriSettingsError("owner de arquivo gerenciado mudou")
-        mode = stat.S_IMODE(old.st_mode)
-    except FileNotFoundError:
-        pass
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        directory_fd = os.open(path.parent, directory_flags)
+    except OSError as error:
+        raise NiriSettingsError("diretório de configuração indisponível ou inseguro") from error
+    temporary_name: str | None = None
     try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "wb", closefd=False) as output:
-            output.write(data)
-            output.flush()
-            os.fsync(fd)
-        os.close(fd)
-        fd = -1
-        os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        directory_info = os.fstat(directory_fd)
+        sticky_root_tmp = directory_info.st_uid == 0 and bool(directory_info.st_mode & stat.S_ISVTX)
+        if (not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid not in (uid, 0)
+                or (directory_info.st_mode & 0o022 and not sticky_root_tmp)):
+            raise NiriSettingsError("owner do diretório de configuração mudou")
         try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        try:
-            os.unlink(temporary)
+            old = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
         except FileNotFoundError:
-            pass
+            old = None
+        if old is not None:
+            if not stat.S_ISREG(old.st_mode) or old.st_uid not in ({existing_owner} if existing_owner is not None else {0, uid}) or old.st_mode & 0o022:
+                raise NiriSettingsError("arquivo de configuração existente tem tipo, owner ou permissões inseguros")
+            mode = stat.S_IMODE(old.st_mode)
+        temporary_name = f".{path.name}.{os.getpid()}.{os.urandom(6).hex()}"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(temporary_name, flags, mode, dir_fd=directory_fd)
+        try:
+            os.fchmod(fd, mode)
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(temporary_name, path.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        temporary_name = None
+        os.fsync(directory_fd)
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
 
 
 def _user_include_block(settings_path: pathlib.Path) -> str:
@@ -271,9 +363,16 @@ class NiriSettingsManager:
         explicit = self.environment.get("NIRI_CONFIG", "")
         if explicit:
             path = pathlib.Path(explicit)
-            if not path.is_file():
+            if not path.is_absolute() or not path.is_file():
                 raise NiriSettingsError("NIRI_CONFIG aponta para um arquivo indisponível")
-            scope = "user" if path.is_relative_to(self.config_home) else "system"
+            resolved = path.resolve(strict=False)
+            user_root = self.config_home.resolve(strict=False)
+            if resolved.is_relative_to(user_root):
+                scope = "user"
+            elif resolved == self.system_config.resolve(strict=False):
+                scope = "system"
+            else:
+                raise NiriSettingsError("NIRI_CONFIG aponta para fora das configurações Niri+ suportadas")
             return path, scope
         user = self.config_home / "niri/config.kdl"
         if user.exists() or user.is_symlink():
@@ -286,18 +385,13 @@ class NiriSettingsManager:
 
     def _read_config(self, path: pathlib.Path, scope: str) -> tuple[bytes, os.stat_result]:
         expected_owner = self.uid if scope == "user" else 0
-        info = _safe_regular(path, uid=expected_owner, allow_root=scope == "system")
-        try:
-            return path.read_bytes(), info
-        except OSError as error:
-            raise NiriSettingsError("config Niri não pôde ser lido") from error
+        _validate_directory(path.parent, uid=expected_owner, allow_root=scope == "system")
+        return _read_regular(path, uid=expected_owner, allow_root=scope == "system")
 
     def _load_state(self) -> dict[str, object] | None:
         try:
-            info = _safe_regular(self.state_path, uid=self.uid)
-            if info.st_mode & 0o077:
-                raise NiriSettingsError("state Niri+ deve ser privado")
-            raw = self.state_path.read_text(encoding="utf-8")
+            raw_bytes, _info = _read_regular(self.state_path, uid=self.uid, private=True)
+            raw = raw_bytes.decode("utf-8")
             state = json.loads(raw)
         except FileNotFoundError:
             return None
@@ -315,12 +409,15 @@ class NiriSettingsManager:
 
     def status(self) -> dict[str, object]:
         try:
+            if not self.home.is_absolute() or not self.config_home.is_absolute() or not self.state_home.is_absolute():
+                raise NiriSettingsError("HOME e diretórios XDG precisam ser absolutos")
             config, scope = self._active_config()
             content, _info = self._read_config(config, scope)
             text = content.decode("utf-8")
+            includes = _include_paths(text)
             integrated = (
-                SYSTEM_INCLUDE in text if scope == "system"
-                else str(self.settings_path) in text or _user_include_block(self.settings_path) in text
+                includes.count("~/.config/niri-plus/settings.kdl") == 1 if scope == "system"
+                else str(self.settings_path) in includes
             )
             state = self._load_state()
             managed = False
@@ -330,30 +427,40 @@ class NiriSettingsManager:
                 managed = True
                 settings = state["settings"]  # type: ignore[assignment]
                 try:
-                    installed = self.settings_path.read_bytes()
+                    installed, _info = _read_regular(self.settings_path, uid=self.uid, private=True)
                     state_matches = _sha256(installed) == state.get("settings_sha256")
-                except OSError:
+                except (OSError, NiriSettingsError):
                     state_matches = False
             binary = self.niri_binary or shutil.which("niri")
+            if not managed:
+                result_status = "NOT_CONFIGURED"
+            elif not integrated or state_matches is False:
+                result_status = "WARNING"
+            else:
+                result_status = "OK"
             return {
-                "status": "OK" if integrated and state_matches is not False else "WARNING" if integrated else "NOT_CONFIGURED",
+                "status": result_status,
                 "configured": managed,
+                "integrated": integrated,
+                "can_rollback": bool(state and state.get("previous_settings") is not None),
                 "managed_file_matches": state_matches,
                 "settings": settings,
                 "niri_validator": "AVAILABLE" if binary else "UNAVAILABLE",
                 "config_scope": scope,
                 "touchpad_settings": "NOT_SUPPORTED_SAFE_MERGE",
             }
-        except NiriSettingsError as error:
+        except (NiriSettingsError, UnicodeError, OSError) as error:
             return {
                 "status": "WARNING",
                 "configured": False,
+                "integrated": False,
+                "can_rollback": False,
                 "managed_file_matches": None,
                 "settings": dict(DEFAULTS),
                 "niri_validator": "AVAILABLE" if self.niri_binary or shutil.which("niri") else "UNAVAILABLE",
                 "config_scope": "unknown",
                 "touchpad_settings": "NOT_SUPPORTED_SAFE_MERGE",
-                "warning": str(error),
+                "warning": str(error) if isinstance(error, NiriSettingsError) else "config Niri não pôde ser lido",
             }
 
     def _validate_with_niri(self, config_path: pathlib.Path) -> tuple[bool, str]:
@@ -443,13 +550,11 @@ class NiriSettingsManager:
                 candidate.startswith("include optional=true ") and str(candidate_override) in candidate
                 for candidate in changed
             ):
-                marker, _added = _add_user_include(text, self.settings_path)
-                # The active system config already owns the optional include; if it is
-                # absent, the include contract is broken and the install must be repaired.
-                if "include optional=true" in text:
-                    raise NiriSettingsError("include Niri+ não pôde ser preparado para validação")
-                marker = marker.rstrip() + "\n" + f"include optional=true {json.dumps(str(candidate_override))}"
-                changed = marker.splitlines()
+                # Preserve unrelated optional includes. The validation copy gets
+                # one explicit candidate include at the end of the root config.
+                changed.extend((
+                    f"include optional=true {json.dumps(str(candidate_override))}",
+                ))
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text("\n".join(changed) + "\n", encoding="utf-8")
             os.chmod(destination, 0o600)
@@ -470,11 +575,20 @@ class NiriSettingsManager:
         settings = validate_settings(payload)
         if self.uid == 0:
             raise NiriSettingsError("rode niri+ niri-settings como o usuário da sessão, sem sudo")
-        _ensure_directory(self.config_home, uid=self.uid, mode=0o700 if self.config_home.name == "niri-plus" else 0o755)
-        _ensure_directory(self.settings_path.parent, uid=self.uid, mode=0o700)
-        _ensure_directory(self.state_dir, uid=self.uid, mode=0o700)
-        lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        if not self.home.is_absolute() or not self.config_home.is_absolute() or not self.state_home.is_absolute():
+            raise NiriSettingsError("HOME e diretórios XDG precisam ser absolutos")
+        _ensure_directory(self.config_home, uid=self.uid, mode=0o755)
+        _ensure_directory(self.settings_path.parent, uid=self.uid, mode=0o700, private=True)
+        _ensure_directory(self.state_dir, uid=self.uid, mode=0o700, private=True)
+        lock_flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
         try:
+            lock_fd = os.open(self.lock_path, lock_flags, 0o600)
+        except OSError as error:
+            raise NiriSettingsError("lock Niri+ indisponível ou inseguro") from error
+        try:
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != self.uid or lock_info.st_mode & 0o077:
+                raise NiriSettingsError("lock Niri+ tem owner ou permissões inseguros")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             return self._apply_locked(settings)
         finally:
@@ -501,14 +615,13 @@ class NiriSettingsManager:
             new_config_text, include_added = _add_user_include(old_config_text, self.settings_path)
 
         try:
-            old_settings_bytes = self.settings_path.read_bytes()
-            settings_info = _safe_regular(self.settings_path, uid=self.uid)
-            if settings_info.st_mode & 0o077:
-                raise NiriSettingsError("arquivo de preferências Niri+ deve ser privado")
+            old_settings_bytes, _settings_info = _read_regular(self.settings_path, uid=self.uid, private=True)
             if old_state is None or _sha256(old_settings_bytes) != old_state.get("settings_sha256"):
                 raise NiriSettingsError("arquivo de preferências foi alterado fora do Niri+; arquivo preservado")
         except FileNotFoundError:
             old_settings_bytes = None
+        except NiriSettingsError:
+            raise
         new_kdl = render_kdl(settings)
         temporary: tempfile.TemporaryDirectory[str] | None = None
         try:
@@ -520,65 +633,110 @@ class NiriSettingsManager:
             if temporary is not None:
                 temporary.cleanup()
 
-        old_state_bytes = self.state_path.read_bytes() if self.state_path.exists() else None
+        try:
+            old_state_bytes, _state_info = _read_regular(self.state_path, uid=self.uid, private=True)
+        except FileNotFoundError:
+            old_state_bytes = None
         user_config_written = False
         settings_written = False
+        state_written = False
         try:
             if scope == "user" and include_added:
-                if old_state is None and not self.backup_path.exists():
-                    _atomic_write(self.backup_path, old_config_bytes, uid=self.uid, mode=0o600, existing_owner=self.uid)
+                if old_state is None:
+                    try:
+                        backup_bytes, _backup_info = _read_regular(self.backup_path, uid=self.uid, private=True)
+                    except FileNotFoundError:
+                        _atomic_write(self.backup_path, old_config_bytes, uid=self.uid, mode=0o600, existing_owner=self.uid)
+                    else:
+                        if backup_bytes != old_config_bytes:
+                            raise NiriSettingsError("backup anterior já existe com outro conteúdo; arquivo preservado")
+                user_config_written = True
                 _atomic_write(config_path, new_config_text.encode("utf-8"), uid=self.uid,
                               mode=stat.S_IMODE(config_info.st_mode), existing_owner=self.uid)
-                user_config_written = True
+            settings_written = True
             _atomic_write(self.settings_path, new_kdl.encode("utf-8"), uid=self.uid, mode=0o600,
                           existing_owner=self.uid)
-            settings_written = True
             next_state = {
                 "schema_version": SCHEMA_VERSION,
                 "settings": settings,
-                "previous_settings": old_state.get("settings") if old_state else None,
+                "previous_settings": old_state.get("settings") if old_state else dict(DEFAULTS),
                 "settings_sha256": _sha256(new_kdl.encode("utf-8")),
                 "active_config_scope": scope,
                 "active_config_added_include": bool((old_state or {}).get("active_config_added_include", False) or include_added),
             }
+            state_written = True
             _atomic_write(self.state_path, (json.dumps(next_state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(),
                           uid=self.uid, mode=0o600)
         except Exception as error:
+            recovery_errors: list[str] = []
+            recovery_steps: list[Callable[[], None]] = []
+            if state_written:
+                if old_state_bytes is None:
+                    recovery_steps.append(lambda: _safe_unlink(self.state_path, uid=self.uid))
+                else:
+                    recovery_steps.append(lambda: _atomic_write(
+                        self.state_path, old_state_bytes, uid=self.uid, mode=0o600, existing_owner=self.uid
+                    ))
             if settings_written:
                 if old_settings_bytes is None:
-                    try:
-                        self.settings_path.unlink()
-                    except OSError:
-                        pass
+                    recovery_steps.append(lambda: _safe_unlink(self.settings_path, uid=self.uid))
                 else:
-                    _atomic_write(self.settings_path, old_settings_bytes, uid=self.uid, mode=0o600, existing_owner=self.uid)
+                    recovery_steps.append(lambda: _atomic_write(
+                        self.settings_path, old_settings_bytes, uid=self.uid, mode=0o600, existing_owner=self.uid
+                    ))
             if user_config_written:
-                _atomic_write(config_path, old_config_bytes, uid=self.uid,
-                              mode=stat.S_IMODE(config_info.st_mode), existing_owner=self.uid)
-            if old_state_bytes is None:
+                recovery_steps.append(lambda: _atomic_write(
+                    config_path, old_config_bytes, uid=self.uid,
+                    mode=stat.S_IMODE(config_info.st_mode), existing_owner=self.uid
+                ))
+            for recovery in recovery_steps:
                 try:
-                    self.state_path.unlink()
-                except OSError:
-                    pass
-            else:
-                _atomic_write(self.state_path, old_state_bytes, uid=self.uid, mode=0o600, existing_owner=self.uid)
+                    recovery()
+                except (OSError, NiriSettingsError) as recovery_error:
+                    recovery_errors.append(str(recovery_error))
+            if recovery_errors:
+                raise NiriSettingsError(
+                    "falha ao gravar configuração e recuperação incompleta; confira state e arquivos Niri+ "
+                    "antes de nova alteração"
+                ) from error
             if isinstance(error, NiriSettingsError):
                 raise
             raise NiriSettingsError("falha ao gravar configuração Niri+; arquivos anteriores restaurados") from error
-        return {"status": "OK", "configured": True, "settings": settings, "reload": "Niri observa includes e recarrega ao salvar"}
+        return {
+            "status": "OK", "configured": True, "can_rollback": True,
+            "settings": settings, "reload": "Niri observa includes e recarrega ao salvar",
+        }
 
     def rollback(self) -> dict[str, object]:
-        state = self._load_state()
-        if state is None or state.get("previous_settings") is None:
-            raise NiriSettingsError("não há uma versão anterior de configurações Niri+ para restaurar")
-        return self.apply(state["previous_settings"])
+        if self.uid == 0:
+            raise NiriSettingsError("rode niri+ niri-settings rollback como o usuário da sessão, sem sudo")
+        _ensure_directory(self.settings_path.parent, uid=self.uid, mode=0o700, private=True)
+        _ensure_directory(self.state_dir, uid=self.uid, mode=0o700, private=True)
+        try:
+            lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as error:
+            raise NiriSettingsError("lock Niri+ indisponível ou inseguro") from error
+        try:
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != self.uid or lock_info.st_mode & 0o077:
+                raise NiriSettingsError("lock Niri+ tem owner ou permissões inseguros")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            state = self._load_state()
+            if state is None or state.get("previous_settings") is None:
+                raise NiriSettingsError("não há uma versão anterior de configurações Niri+ para restaurar")
+            return self._apply_locked(state["previous_settings"])
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
 
 def apply_from_stdin(manager: NiriSettingsManager | None = None, *, stream=None) -> int:
     import sys
 
     stream = sys.stdin if stream is None else stream
-    raw = stream.read(65537)
+    # A single newline-delimited request works with Quickshell Process.stdin:
+    # the UI can send a bounded document without keeping the pipe open/closing it.
+    raw = stream.readline(65537)
     if len(raw) > 65536:
         print(json.dumps({"status": "ERROR", "message": "pedido maior que 64 KiB"}, ensure_ascii=False))
         return 2

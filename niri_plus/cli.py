@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 
-from . import benchmark, brightness, doctor, install_command, rollback, status, uninstall, update
+from . import benchmark, brightness, doctor, install_command, niri_settings, rollback, status, uninstall, update
 
 
 def version() -> str:
@@ -85,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     brightness_set = brightness_actions.add_parser("set", help="set the active session backlight from 0 to 100 percent")
     brightness_set.add_argument("percent", type=_brightness_percent)
     brightness_set.add_argument("--device", help="backlight name; required when more than one device exists")
+    settings_parser = commands.add_parser("niri-settings", help="manage safe user-level Niri preferences")
+    settings_actions = settings_parser.add_subparsers(dest="settings_action", required=True)
+    settings_actions.add_parser("status", help="show current user-level Niri preferences")
+    settings_actions.add_parser("apply", help="validate and apply one JSON request from stdin")
+    settings_actions.add_parser("rollback", help="restore the previous Niri+ preference set")
     commands.add_parser("uninstall", help="remove Niri+ managed files and tracked packages")
     return parser
 
@@ -148,6 +154,17 @@ def main(argv: list[str] | None = None) -> int:
         except brightness.BrightnessError as error:
             parser.error(str(error))
         print(f"Brilho alterado para {args.percent}% ({device}).")
+    elif args.command == "niri-settings":
+        manager = niri_settings.NiriSettingsManager()
+        if args.settings_action == "status":
+            print(json.dumps(manager.status(), ensure_ascii=False, sort_keys=True))
+        elif args.settings_action == "apply":
+            return niri_settings.apply_from_stdin(manager)
+        elif args.settings_action == "rollback":
+            try:
+                print(json.dumps(manager.rollback(), ensure_ascii=False, sort_keys=True))
+            except niri_settings.NiriSettingsError as error:
+                parser.error(str(error))
     elif args.command == "uninstall":
         return uninstall.run_uninstall()
     return 0
