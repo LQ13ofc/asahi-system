@@ -12,8 +12,8 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `5bccfd5`; candidate pin and optional visual integration work in progress |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `aa3c7dd`; Settings Center, harness lifecycle fixes, and CI follow-up |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `ad71678`; Niri core and visual integration are independent, pin-aware options |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `aa3c7dd` plus pending CI trace instrumentation; Settings Center and harness fixes |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -61,6 +61,11 @@ removing that runner-specific crash.
 - Added the Settings Center per-app rule editor and validated rule payloads;
   candidate integration pin and gitlink now point to the exact QuickShell RC SHA.
 - Added Python compilation to the asahi-system GitHub Actions validation job.
+- Made the Quickshell package, checkout, service and pin an explicit optional
+  integration: core install works without private repo access, and core-only
+  upgrades preserve any installed visual runtime without refreshing it.
+- Added regression coverage for default/explicit install modes, preserved
+  visual runtime and pin state, and independent host readiness/status/doctor.
 - In QuickShell, wide Settings Center choice groups now wrap below their
   labels, and Control Center uses a shared themed slider rather than Qt's
   platform-default control. Removed its now-unused Controls import.
@@ -79,6 +84,7 @@ removing that runner-specific crash.
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage; integrated render still pending |
 | UI efficiency profiles | Shared stats service and lazy panel content | Implemented as interface-only profiles | Regression tests and Cloud parser experiment; no M1 performance claim |
+| Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | 198 system tests; 36 visual tests; M1 session behavior remains required |
 | Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | In progress | Combined integration, failure-path tests, screenshots, and CI still required |
 | Cause of observed ~4 GiB RAM | Memory collector/diagnostic tooling | Unknown | Requires longitudinal M1 captures; no cause inferred |
 
@@ -91,8 +97,8 @@ removing that runner-specific crash.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
   brightness, Control Center radios, and Niri bridge harnesses passed. The
   the suite includes **36 tests**.
-- quickshell-: full offscreen render is being rechecked for all reference
-  scenes, including all Settings Center categories and the Control Center.
+- quickshell-: full offscreen render passed for all 71 reference scenes,
+  including Settings Center categories and Control Center.
 - quickshell-: `pyside6-qmllint` returned **0**, reporting 191 classified
   warnings (160 unqualified, 20 missing-property, 6 import, 3 unresolved-type,
   2 unused-imports). These are not silently treated as proof of a runtime bug;
@@ -100,10 +106,9 @@ removing that runner-specific crash.
 
 ## Open work / next executable action
 
-1. Resolve the two GitHub Actions SIGSEGVs in the QuickShell Control Center
-   subprocess tests; faulthandler is enabled for the next runner result.
-2. Commit/push the optional visual runtime contract on the asahi-system
-   candidate and verify its GitHub Actions result.
+1. Read the faulthandler trace for the two GitHub Actions SIGSEGVs in QuickShell
+   Control Center subprocess tests; fix the cause and rerun CI.
+2. Push asahi-system `ad71678` and verify its GitHub Actions result.
 3. Refresh PR #8/#19 evidence and update this matrix after both CI runs. Do not
    merge to `main`/`master` or change the production pin.
 
