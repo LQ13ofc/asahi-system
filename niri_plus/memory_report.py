@@ -660,10 +660,24 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
                     "classification": "OBSERVED_GROWTH_BELOW_SCREENING_FLOOR",
                     "note": "monotonic growth is retained as an observation but is too small for the leak-candidate screen; this does not rule out a leak",
                 })
+    pss_trend = trends.get("all_process_pss_bytes", {})
+    pss_trend_value = pss_trend.get("value", {}) if isinstance(pss_trend, dict) else {}
+    complete_pss_series = (
+        len(samples) >= 4
+        and pss_trend.get("status") == bm.AVAILABLE
+        and pss_trend_value.get("valid_samples") == len(samples)
+    )
+    growth_over_time = (
+        "OBSERVED_MONOTONIC_PSS_GROWTH"
+        if complete_pss_series
+        and pss_trend_value.get("monotonic_non_decreasing")
+        and pss_trend_value.get("delta", 0) > 0
+        else "NOT_ESTABLISHED"
+    )
     return {
         "sample_count": len(samples),
         "trends": trends,
-        "growth_over_time": "OBSERVED_MONOTONIC_PSS_GROWTH" if trends.get("all_process_pss_bytes", {}).get("value", {}).get("monotonic_non_decreasing") and trends["all_process_pss_bytes"]["value"]["delta"] > 0 else "NOT_ESTABLISHED",
+        "growth_over_time": growth_over_time,
         "possible_leak_candidates": leak_candidates,
         "subthreshold_process_growth": subthreshold_growth,
         "cached_memory": "Reported as separate meminfo fields; recoverability is not inferred.",

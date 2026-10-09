@@ -118,7 +118,10 @@ e [fonte Asahi no commit inspecionado](https://github.com/AsahiLinux/linux/tree/
 
 Cada amostra inclui inventário/PSS, Niri, Quickshell, filhos, contagem de
 processos e threads, CPU, memória disponível, swap, PSI e cgroups. A análise
-offline reporta deltas e monotonicidade. Só marca um processo como
+offline reporta deltas e monotonicidade; o estado global
+`OBSERVED_MONOTONIC_PSS_GROWTH` exige ao menos quatro amostras e PSS global
+válido em todas elas. Métricas ausentes mantêm a conclusão como
+`NOT_ESTABLISHED`. Só marca um processo como
 `POSSIBLE_LEAK_CANDIDATE` quando o mesmo par observado PID + `start_time_ticks`
 e os metadados de processo (nome, UID, executável e cgroup) permanecem
 consistentes, PSS/private-dirty não decrescem em todas as quatro amostras e ao

@@ -264,6 +264,21 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertEqual(analysis["growth_over_time"], "NOT_ESTABLISHED")
         self.assertEqual(analysis["possible_leak_candidates"], [])
 
+    def test_global_growth_requires_four_complete_pss_samples(self):
+        samples = []
+        for index, value in enumerate((100, 110, 120, 130)):
+            row = process(50, "worker", value, dirty=value // 2, start=123)
+            report = diagnostic_for([row], used=value)
+            if index == 2:
+                report["processes"]["all_process_pss_bytes"] = item(None, bm.UNAVAILABLE)
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": report})
+        analysis = memory_report.analyze_memory_series(samples)
+        trend = analysis["trends"]["all_process_pss_bytes"]["value"]
+        self.assertEqual(trend["valid_samples"], 3)
+        self.assertTrue(trend["monotonic_non_decreasing"])
+        self.assertEqual(analysis["growth_over_time"], "NOT_ESTABLISHED")
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+
     def test_pid_reuse_and_disappearing_process_do_not_become_leak_candidates(self):
         samples = []
         series_rows = (
