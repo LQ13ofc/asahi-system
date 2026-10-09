@@ -9,6 +9,17 @@ global da memória que não está prontamente disponível para novas alocações
 captura do M1, não é possível concluir se a diferença vem de processos, cache,
 kernel, buffers gráficos ou da forma como a métrica foi lida.
 
+O baseline histórico checked-in foi capturado em 2026-10-06 numa sessão
+Fedora Asahi Remix 44 com Plasma, não em Niri clean idle. Nele,
+`MemTotal=7,681,376 kB`, `MemAvailable=2,159,024 kB` e a subtração resulta em
+`5,522,352 kB` (aprox. 5.27 GiB). O mesmo instantâneo registra `Cached` em
+3.13 GiB, `Shmem` em 1.02 GiB, `AnonPages` em 2.72 GiB, swap usada em zero e
+vários processos Brave e Plasma. Essas categorias se sobrepõem e não podem ser
+somadas; são evidência de que o baseline antigo tinha muita memória de processo,
+cache e compartilhada, mas não explicam a observação atual de 4 GiB em Niri.
+Esse arquivo não é uma medição B ou C e não permite atribuir bytes ao Niri,
+Quickshell ou GPU.
+
 ## Comandos
 
 O relatório pontual é read-only em relação ao sistema e não exige root:
@@ -86,11 +97,18 @@ sistema e no PSS. O coletor desduplica `drm-client-id` e publica esses bytes
 separadamente. Sem contadores, informa `NOT_ACCOUNTED` ou `NOT_APPLICABLE`;
 não presume que o valor ausente seja zero.
 
-Na revisão Cloud de 2026-10-08, a árvore pública Asahi consultada não tinha um
-`show_fdinfo` para o driver DRM Asahi. Isso não prova qual interface existe no
-kernel Fedora Asahi instalado no Mac: essa diferença só pode ser resolvida por
-uma captura real. Referências: [formato DRM fdinfo do kernel](https://docs.kernel.org/gpu/drm-usage-stats.html)
-e [driver Asahi público](https://github.com/AsahiLinux/linux/tree/asahi/drivers/gpu/drm/asahi).
+Antes e depois de percorrer os `fdinfo`, o coletor compara `start_time_ticks`
+com o processo observado para não atribuir descritores de um PID reutilizado a
+outro processo. Se a identidade não puder ser comprovada, a vista DRM fica
+`UNAVAILABLE` sem agregado numérico.
+
+Na revisão Cloud, foram inspecionados os 22 arquivos Rust do driver DRM Asahi
+no commit público `77cb8f24c2381a8abb7272d7bbdec548d6426a8a`; não foi encontrado
+hook ou contador `fdinfo` específico do driver. A API genérica só publica
+contadores residentes quando o driver os fornece. O kernel Fedora Asahi pode
+ter patches ou revisão diferente; somente uma captura no Mac determina quais
+campos aparecem. Referências: [formato DRM fdinfo do kernel](https://docs.kernel.org/gpu/drm-usage-stats.html)
+e [fonte Asahi no commit inspecionado](https://github.com/AsahiLinux/linux/tree/77cb8f24c2381a8abb7272d7bbdec548d6426a8a/drivers/gpu/drm/asahi).
 
 ## Crescimento no tempo
 
@@ -99,8 +117,12 @@ processos e threads, CPU, memória disponível, swap, PSI e cgroups. A análise
 offline reporta deltas e monotonicidade. Só marca um processo como
 `POSSIBLE_LEAK_CANDIDATE` quando o mesmo par observado PID + `start_time_ticks`
 e os metadados de processo (nome, UID, executável e cgroup) permanecem
-consistentes, e PSS/private-dirty não decrescem em todas as quatro amostras.
-PID reutilizado com outro `start_time_ticks`, mudança de metadados, processos
+consistentes, PSS/private-dirty não decrescem em todas as quatro amostras e ao
+menos um deles cresce 1 MiB ou mais. Crescimentos monotônicos menores continuam
+visíveis em `subthreshold_process_growth`, sem serem chamados de vazamento. O
+limite de 1 MiB é um filtro heurístico acima do arredondamento de smaps, não foi
+calibrado no M1 e não prova que crescimentos maiores sejam vazamentos. PID
+reutilizado com outro `start_time_ticks`, mudança de metadados, processos
 que desaparecem e métricas PSS incompletas não geram candidato. O campo é uma
 pista, nunca diagnóstico: `start_time_ticks` tem resolução de ticks do kernel e
 não é uma prova criptográfica de identidade; carga funcional, objetos retidos

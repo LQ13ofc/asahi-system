@@ -71,6 +71,7 @@ Rollback restores backed-up files and removes only files created by this install
 - `niri+ uninstall`: removes tracked session files and only packages recorded as newly installed; it does not remove shared dependencies or protected system components.
 - `niri+ doctor`: read-only diagnostics, including managed-file checksums and M1-required hardware checks.
 - `niri+ benchmark [--runs N] [--output FILE]`: forwards arguments to the existing Phase A collector.
+- `niri+ memory [--series]`: read-only global/process/cgroup/optional DRM memory report; JSON includes sensitive process metadata and warns before writing.
 - `niri+ update`: safe unavailable stub; use `sudo niri+ install` for refresh and repair.
 
 ## Cloud checks and M1-required validation
