@@ -12,8 +12,8 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `3204742`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `9e2adc4`; optional Niri+ bridge, touchpad controls, and Control Center geometry fix |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `ce45489`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `1ffdcd6`; optional Niri+ bridge, touchpad controls, and deferred Control Center action-row layout |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -32,15 +32,16 @@ lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa
 is unchanged.
 
 Current Cloud validation: asahi-system compileall, baseline validation, and all
-201 unit tests pass; Actions run 37999249999 passed at HEAD 3204742. QuickShell
-has 38 passing Python tests, 59 loadable QML files, all reference scenes
-rendering locally, and qmllint exit 0 with 191 classified warnings. Hosted run
-37999480027 reproduced the ControlCenter creation crash. Its GDB stack points
-to Qt Quick row positioning while a property binding updates. HEAD 9e2adc4
-replaces `childrenRect` sizing on the action Row with intrinsic geometry and
-adds a regression test. Hosted runs 37999805430/37999809622 are checking the
-fix; the lint step now runs even if scene rendering fails, and the GDB
-diagnostic remains conditional.
+201 unit tests pass; Actions run 37999249999 passed at HEAD 3204742 (subsequent change ce45489 only updates this progress record).
+QuickShell has 38 passing Python tests, 59 loadable QML files, all reference
+scenes rendering locally, and qmllint exit 0 with 191 classified warnings.
+Hosted run 37999480027 reproduced the ControlCenter creation crash. Its GDB
+stack points to Qt Quick row positioning while a property binding updates. The
+first geometry change at 9e2adc4 did not resolve hosted SIGSEGV in run
+37999805430. HEAD 1ffdcd6 now defers the responsive action-row anchor update
+until after Row completion and uses Qt-managed implicit geometry; the targeted
+Control Center scene passes locally. Hosted runs for 1ffdcd6 are pending; lint
+runs after render failures and the GDB diagnostic remains conditional.
 
 ## Completed in this continuation
 
@@ -111,9 +112,9 @@ diagnostic remains conditional.
 
 ## Open work / next executable action
 
-1. Review the hosted full-scene result for QuickShell HEAD 9e2adc4. If the Row
-   geometry fix passes in CI, update PR #8 evidence; if it fails, use run
-   37999480027 as the baseline stack and continue isolating the Qt Quick binding.
+1. Review the hosted full-scene result for QuickShell HEAD 1ffdcd6. If deferred
+   Row re-anchoring passes, update PR #8 evidence; if it fails, use the GDB
+   stack to continue isolating which control row triggers Qt Quick completion.
 2. Asahi-system core independence and optional QuickShell integration are covered
    at HEAD 3204742; run 37999249999 passed.
 3. Keep PRs #8/#19 separate and draft. Do not merge to `main`/`master` or change
