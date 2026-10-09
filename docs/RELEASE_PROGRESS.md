@@ -12,12 +12,12 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `f4133d0`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `8436b19`; Niri core is independently installable, QuickShell integration is opt-in; RC pin updated to tested visual head |
 | `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `79b093e`; optional Niri+ bridge, independent brightness failure state, and deferred Control Center action-row layout |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
-its RC candidate separately to `ee0a9b8c7836b14485efaf7aca33849d0210570d`; this
+its RC candidate separately to `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`; this
 does not change the production pin.
 
 ### Repository independence contract
@@ -32,13 +32,14 @@ lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa
 is unchanged.
 
 Current Cloud validation: asahi-system compileall, baseline validation, and all
-201 unit tests pass; Actions run 38000033876 passed at HEAD f4133d0. QuickShell
+201 unit tests pass; Actions run 38000993990 passed at HEAD 8436b19. QuickShell
 has 39 passing Python tests, 59 loadable QML files, all reference scenes
 rendering locally, and qmllint exit 0 with 192 classified warnings. Hosted run
 38000517181 passed for QuickShell code HEAD b444860: Python suite, QML load,
 full reference render, and lint. It includes a regression proving the UI reports
 an unavailable optional Niri+ brightness backend without remaining busy. HEAD
-79b093e updates only the documented warning counts; its Actions run is queued.
+79b093e updates only the documented warning counts; Actions runs 38000692795
+and 38000697379 passed at that exact head.
 The hosted ControlCenter SIGSEGV was resolved by deferring responsive Row anchor
 changes until component construction finishes and cancelling a pending relayout
 with the component's one-shot timer. The GDB stack had identified Qt Quick
@@ -65,7 +66,9 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 - Added the installed split-library import test for `niri_settings.py` so the
   installed `/usr/local/lib/niri-plus` layout is exercised without host writes.
 - Added the Settings Center per-app rule editor and validated rule payloads;
-  candidate integration pin and gitlink now point to the exact QuickShell RC SHA.
+  candidate integration pin and gitlink now point to the exact CI-tested
+  QuickShell RC SHA `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`. Production's
+  known-good pin remains unchanged.
 - Added Python compilation to the asahi-system GitHub Actions validation job.
 - Made the Quickshell package, checkout, service and pin an explicit optional
   integration: core install works without private repo access, and core-only
@@ -112,8 +115,8 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 
 ## Open work / next executable action
 
-1. Confirm the docs-only QuickShell CI run for HEAD 79b093e, then update PR #8
-   evidence to the passing 39-test / 59-file / full-render candidate.
+1. Validate the combined staged install/rollback flow against the updated RC
+   gitlink while retaining core-only operation when the submodule is absent.
 2. Continue the product matrix on the two independent branches: visual settings
    stay in Quickshell; system state, lifecycle, installation and Niri-owned
    options stay in asahi-system. Add only optional bridge behavior between them.
