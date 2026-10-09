@@ -70,7 +70,9 @@ não tenta adivinhar quais argumentos ou caminhos são secretos.
   Cloud bloqueie `smaps_rollup` de processos alheios; o total global de PSS exige
   cobertura completa. Um componente ausente só recebe `NOT_APPLICABLE` quando a
   enumeração de PIDs foi completa; se algum PID não pôde ser identificado, sua
-  ausência permanece `UNAVAILABLE`.
+  ausência permanece `UNAVAILABLE`. Classificadores consultam `comm`, `argv[0]`
+  e executável quando legíveis; `xwayland-satellite` também reconhece seu
+  prefixo exato de 15 caracteres usado por `comm` quando o kernel o trunca.
 - **Grupos de processo:** `GRAPHICS_COMPONENTS` é uma vista de Niri, Quickshell,
   auxiliares e Xwayland. Serviços em `system.slice` são outra vista. O proxy
   `SAME_UID_USER_PROCESSES` inclui serviços de usuário e aplicativos. A coleta

@@ -24,16 +24,23 @@ QS_EXPECTED_ARGV = [
     "/usr/local/share/niri-plus/quickshell/shell.qml",
 ]
 
-def process_name(row: dict[str, Any]) -> str:
+def process_names(row: dict[str, Any]) -> set[str]:
+    """Return every safe name source available for a process snapshot."""
+    names = {str(row.get("name", ""))}
     argv = row.get("argv") or []
     if argv:
-        return pathlib.Path(argv[0]).name
-    return str(row.get("name", ""))
+        names.add(pathlib.Path(str(argv[0])).name)
+    executable = row.get("executable")
+    if isinstance(executable, dict) and executable.get("status") == AVAILABLE:
+        value = executable.get("value")
+        if isinstance(value, str) and value:
+            names.add(pathlib.Path(value).name)
+    return names
 
 
 def named(*names: str):
     expected = set(names)
-    return lambda row: row.get("name") in expected or process_name(row) in expected
+    return lambda row: bool(expected.intersection(process_names(row)))
 
 
 COMPONENT_MATCHERS = {
@@ -44,7 +51,9 @@ COMPONENT_MATCHERS = {
     "networkmanager": named("NetworkManager"),
     # /proc/PID/stat comm is capped at TASK_COMM_LEN, so long executable names
     # must also be matched through argv[0].
-    "xwayland_satellite": named("xwayland-satellite"),
+    # TASK_COMM_LEN reserves one byte for NUL, so this 18-character binary is
+    # truncated to the exact 15-character prefix when argv/exe are unreadable.
+    "xwayland_satellite": named("xwayland-satellite", "xwayland-satell"),
     "polkit_agent": named("lxqt-policykit-agent"),
     "plasma": named("plasmashell"),
     "kwin_wayland": named("kwin_wayland"),

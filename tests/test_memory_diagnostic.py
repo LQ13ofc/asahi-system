@@ -213,6 +213,19 @@ class MemoryDiagnosticTests(unittest.TestCase):
             bm.NOT_APPLICABLE,
         )
 
+    def test_truncated_xwayland_satellite_comm_stays_in_graphics_memory_group(self):
+        row = process(78, "xwayland-satell", 123)
+        row["argv"] = []
+        row["executable"] = item(None, bm.PERMISSION_REQUIRED)
+        report = diagnostic_for([row], used=1000)
+        inventory = report["processes"]["process_inventory"]
+        self.assertEqual(inventory[0]["observed_group"], "GRAPHICS_COMPONENTS")
+        self.assertEqual(inventory[0]["graphics_component"], "xwayland_satellite")
+        self.assertEqual(
+            report["processes"]["graphics_components"]["xwayland_satellite"]["pss_bytes"]["value"],
+            123,
+        )
+
     def test_longitudinal_trend_reports_growth_and_stable_process_candidate_only(self):
         samples = []
         base = 8 * 1024 * 1024

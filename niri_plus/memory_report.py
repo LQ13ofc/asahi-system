@@ -91,7 +91,7 @@ def classify_process(row: dict[str, Any], current_uid: int) -> tuple[str, str | 
         "plasma": bm.COMPONENT_MATCHERS["plasma"],
     }
     component = next((key for key, matcher in graphics_matchers.items() if matcher(row)), None)
-    if name in GRAPHICS_NAMES or executable in GRAPHICS_NAMES or argv_name in GRAPHICS_NAMES:
+    if component or name in GRAPHICS_NAMES or executable in GRAPHICS_NAMES or argv_name in GRAPHICS_NAMES:
         return "GRAPHICS_COMPONENTS", component or name
     cgroup = str(row.get("cgroup") or "")
     if "/system.slice/" in f"/{cgroup.strip('/')}/" or cgroup.startswith("/system.slice/") or cgroup == "/init.scope":
