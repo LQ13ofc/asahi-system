@@ -12,7 +12,7 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `8436b19`; Niri core is independently installable, QuickShell integration is opt-in; RC pin updated to tested visual head |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `7028f85`; Niri core is independently installable, optional QuickShell candidate install/rollback is transaction-tested |
 | `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `79b093e`; optional Niri+ bridge, independent brightness failure state, and deferred Control Center action-row layout |
 
 Production `main` still uses the known-good Quickshell pin
@@ -32,7 +32,8 @@ lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa
 is unchanged.
 
 Current Cloud validation: asahi-system compileall, baseline validation, and all
-201 unit tests pass; Actions run 38000993990 passed at HEAD 8436b19. QuickShell
+205 unit tests pass at HEAD `7028f85`; CI for this new test commit is pending.
+QuickShell
 has 39 passing Python tests, 59 loadable QML files, all reference scenes
 rendering locally, and qmllint exit 0 with 192 classified warnings. Hosted run
 38000517181 passed for QuickShell code HEAD b444860: Python suite, QML load,
@@ -94,13 +95,20 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage; integrated render still pending |
 | UI efficiency profiles | Shared stats service and lazy panel content | Implemented as interface-only profiles | Regression tests and Cloud parser experiment; no M1 performance claim |
 | Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | Default system install and shell operation do not require the other repository; 201 system tests and 39 visual tests; M1 session behavior remains required |
-| Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | In progress | Combined integration, failure-path tests, screenshots, and CI still required |
+| Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | Cloud integration scenarios pass; RC remains in progress | Reversible snapshot install is tested for bootstrap/apply/verification failures; real candidate 79 was staged in a temporary root and all 188 manifest files and pin metadata matched |
 | Cause of observed ~4 GiB RAM | Memory collector/diagnostic tooling | Unknown | Requires longitudinal M1 captures; no cause inferred |
 
 ## Validation so far
 
 - asahi-system: `compileall`, baseline validator, and full unittest discovery;
-  **201 tests passed**.
+  **205 tests passed**. New cases exercise core-only install, preservation of
+  production pin `55e92880d0aff75d235f283c839ec0990eaa9e17`, file modes, full
+  candidate staging and rollback on bootstrap/apply/verification failure.
+- asahi-system: an isolated local Git mirror resolved Quickshell commit
+  `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`; bootstrap installed the actual
+  candidate into a temporary `/usr/local`-shaped tree. All 188 runtime files
+  matched the snapshot manifest, and installed version/pin metadata matched.
+  No host system paths were written.
 - quickshell-: `compileall`, full unittest discovery; **39 tests passed**.
 - quickshell-: QML load: **59 files, 0 errors, 0 warnings**.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
@@ -115,11 +123,11 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 
 ## Open work / next executable action
 
-1. Validate the combined staged install/rollback flow against the updated RC
-   gitlink while retaining core-only operation when the submodule is absent.
-2. Continue the product matrix on the two independent branches: visual settings
-   stay in Quickshell; system state, lifecycle, installation and Niri-owned
-   options stay in asahi-system. Add only optional bridge behavior between them.
+1. Push the new transaction regression tests on asahi-system and verify Actions.
+2. Continue the requirement matrix for remaining Cloud-implementable product
+   behavior while keeping visual state in Quickshell and system lifecycle,
+   installation and Niri-owned options in asahi-system. Monitor-specific output
+   discovery and physical device behavior remain `M1_REQUIRED`.
 3. Keep PRs #8/#19 separate and draft. Do not merge to `main`/`master` or change
    the production pin.
 ## M1 release gate
@@ -137,7 +145,7 @@ above is not a substitute for these results.
 - Existing quickshell- PR #7: `9ef87cf` (initial Settings Center).
 - Existing quickshell- PR #6: `f0fb3ec` (Cloud CI).
 - Existing quickshell- PRs #4/#5: parser and residency work.
-- Current candidate-only checkpoints: asahi `da85d0e`; quickshell `435ca33`,
+- Current candidate-only checkpoints: asahi `7028f85`; quickshell `79b093e`,
   followed by merge `5305bd2`. Candidate implementation commits: asahi
   `6073e5e`, `4b2caf0`; quickshell `1ecac16`, `ee0a9b8`. Draft integration PRs: asahi
   #19 and quickshell #8. None has been merged into production.
