@@ -13,6 +13,7 @@ AVAILABLE = "AVAILABLE"
 UNAVAILABLE = "UNAVAILABLE"
 PERMISSION_REQUIRED = "PERMISSION_REQUIRED"
 NOT_APPLICABLE = "NOT_APPLICABLE"
+NOT_ACCOUNTED = "NOT_ACCOUNTED"
 PROFILE_OK = "OK"
 PROFILE_FAIL = "FAIL"
 
@@ -156,6 +157,11 @@ def parse_proc_status(text: str | None) -> dict[str, Any]:
                 result["nonvoluntary_ctxt_switches"] = int(line.split(":", 1)[1].strip())
             except ValueError:
                 pass
+        elif line.startswith("Threads:"):
+            try:
+                result["threads"] = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                pass
     return result
 
 
@@ -170,6 +176,188 @@ def parse_cgroup(text: str | None) -> str | None:
         if len(fields) == 3 and fields[0] == "0":
             return "/" + fields[2].lstrip("/")
     return None
+
+
+def parse_drm_fdinfo(text: str | None) -> dict[str, Any] | None:
+    """Parse standardized DRM client identity and resident-buffer counters.
+
+    DRM memory reporting is optional and driver-provided. The returned byte
+    counts describe buffer objects reported by that driver; they are not an
+    additional, independent pool of system RAM.
+    """
+    values: dict[str, str] = {}
+    if not text:
+        return None
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        key, raw = line.split(":", 1)
+        values[key.strip()] = raw.strip()
+    driver = values.get("drm-driver")
+    if not driver and not any(key.startswith("drm-") for key in values):
+        return None
+
+    identity = {
+        "driver": driver,
+        "client_id": values.get("drm-client-id"),
+        "pdev": values.get("drm-pdev"),
+        "client_name": values.get("drm-client-name"),
+    }
+    resident: dict[str, int] = {}
+    legacy: dict[str, int] = {}
+    malformed: list[str] = []
+    for key, raw in values.items():
+        if key.startswith("drm-resident-"):
+            region = key.removeprefix("drm-resident-")
+            parsed = _parse_drm_size(raw)
+            if parsed is None:
+                malformed.append(key)
+            else:
+                resident[region] = parsed
+        elif key.startswith("drm-memory-"):
+            # drm-memory-* is deprecated; accept it only as a fallback alias.
+            region = key.removeprefix("drm-memory-")
+            parsed = _parse_drm_size(raw)
+            if parsed is None:
+                malformed.append(key)
+            else:
+                legacy[region] = parsed
+    for region, size in legacy.items():
+        resident.setdefault(region, size)
+    return {**identity, "resident_bytes_by_region": resident, "malformed_keys": malformed}
+
+
+def _parse_drm_size(raw: str) -> int | None:
+    parts = raw.split()
+    if len(parts) not in (1, 2) or not parts[0].isdigit():
+        return None
+    multiplier = {None: 1, "KiB": 1024, "MiB": 1024 * 1024}.get(parts[1] if len(parts) == 2 else None)
+    return int(parts[0]) * multiplier if multiplier is not None else None
+
+
+def drm_fdinfo_snapshot(root: pathlib.Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collect optional per-client DRM fdinfo without inventing GPU memory."""
+    clients: dict[tuple[str, str, str], dict[str, Any]] = {}
+    raw_without_identity: list[dict[str, Any]] = []
+    scanned = 0
+    fdinfo_files = 0
+    drm_files = 0
+    permission_failures = 0
+    read_failures = 0
+    malformed = 0
+
+    for row in rows:
+        pid = row.get("pid")
+        if not isinstance(pid, int):
+            continue
+        base = root / "proc" / str(pid) / "fdinfo"
+        try:
+            entries = sorted(base.iterdir(), key=lambda item: item.name)
+        except PermissionError:
+            permission_failures += 1
+            continue
+        except OSError as exc:
+            # An exiting process is an ordinary race; permission remains
+            # visible, while a missing fdinfo directory is not a GPU failure.
+            if isinstance(exc, FileNotFoundError):
+                continue
+            read_failures += 1
+            continue
+        scanned += 1
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            fdinfo_files += 1
+            text, error = read_text(entry)
+            if text is None:
+                if error and ("Permission denied" in error or "Operation not permitted" in error):
+                    permission_failures += 1
+                elif not error or "No such file" not in error:
+                    read_failures += 1
+                continue
+            parsed = parse_drm_fdinfo(text)
+            if parsed is None:
+                continue
+            drm_files += 1
+            if parsed["malformed_keys"]:
+                malformed += len(parsed["malformed_keys"])
+            client_id = parsed.get("client_id")
+            # A missing standardized ID cannot be safely de-duplicated across
+            # inherited/passed DRM descriptors, so preserve the record but
+            # keep it out of the aggregate.
+            if not client_id:
+                raw_without_identity.append({"pid": pid, "process": row.get("name"), "fd": entry.name, **parsed})
+                continue
+            key = (str(parsed.get("driver") or "unknown"), str(parsed.get("pdev") or ""), str(client_id))
+            record = clients.get(key)
+            if record is None:
+                clients[key] = {
+                    "driver": parsed.get("driver"),
+                    "pdev": parsed.get("pdev"),
+                    "client_id": str(client_id),
+                    "client_name": parsed.get("client_name"),
+                    "pids": [pid],
+                    "processes": [row.get("name")],
+                    "resident_bytes_by_region": parsed["resident_bytes_by_region"],
+                    "duplicate_fd_count": 0,
+                    "conflicting_duplicate": False,
+                }
+            else:
+                record["duplicate_fd_count"] += 1
+                if pid not in record["pids"]:
+                    record["pids"].append(pid)
+                    record["processes"].append(row.get("name"))
+                if record["resident_bytes_by_region"] != parsed["resident_bytes_by_region"]:
+                    record["conflicting_duplicate"] = True
+
+    unique_clients = list(clients.values())
+    regions: dict[str, int] = {}
+    aggregation_reasons = []
+    if raw_without_identity:
+        aggregation_reasons.append("some DRM descriptors lack drm-client-id and cannot be de-duplicated")
+    if any(client["conflicting_duplicate"] for client in unique_clients):
+        aggregation_reasons.append("duplicate client descriptors reported conflicting counters")
+    if malformed:
+        aggregation_reasons.append(f"{malformed} malformed DRM memory counter(s)")
+    if any(not client["resident_bytes_by_region"] for client in unique_clients):
+        aggregation_reasons.append("some observed DRM clients exposed no resident-memory counters")
+    if not any(client["resident_bytes_by_region"] for client in unique_clients):
+        aggregation_reasons.append("driver exposed no standardized DRM resident-memory counters")
+    if not aggregation_reasons:
+        for client in unique_clients:
+            for region, size in client["resident_bytes_by_region"].items():
+                regions[region] = regions.get(region, 0) + size
+
+    if not drm_files and not permission_failures and not read_failures:
+        status = NOT_APPLICABLE
+        note = "no open DRM client fdinfo was found"
+    elif permission_failures and not drm_files:
+        status = PERMISSION_REQUIRED
+        note = "cannot inspect some process fdinfo directories"
+    elif aggregation_reasons:
+        status = UNAVAILABLE if malformed or read_failures else NOT_ACCOUNTED
+        note = "; ".join(aggregation_reasons)
+    elif permission_failures or read_failures:
+        status = UNAVAILABLE
+        note = "partial fdinfo scan; some process descriptors could not be read"
+    else:
+        status = AVAILABLE
+        note = "driver-reported DRM resident buffers; not additive to process PSS or global RAM"
+
+    return {
+        "status": status,
+        "note": note,
+        "value": {"resident_bytes_by_region": regions} if status == AVAILABLE else None,
+        "clients": unique_clients,
+        "clients_without_deduplication_id": raw_without_identity,
+        "coverage": {
+            "processes_scanned": scanned,
+            "fdinfo_files_seen": fdinfo_files,
+            "drm_files_seen": drm_files,
+            "permission_failures": permission_failures,
+            "read_failures": read_failures,
+        },
+    }
 
 
 def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -190,6 +378,11 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
         return result
 
     rows: list[dict[str, Any]] = []
+    uptime_text, uptime_error = read_text(proc / "uptime")
+    try:
+        uptime_seconds = float((uptime_text or "").split()[0])
+    except (IndexError, ValueError):
+        uptime_seconds = None
     outcomes = {
         "available": 0,
         "permission": 0,
@@ -197,6 +390,7 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
         "stat_permission": 0,
         "identity_changed": 0,
         "stat_unavailable": 0,
+        "pss_missing": 0,
         "pids_seen": 0,
         "rows_included": 0,
         "enumeration_available": 1,
@@ -237,12 +431,25 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
             argv = []
         status_text, _ = read_proc(pid_dir / "status")
         status_values = parse_proc_status(status_text)
+        try:
+            executable = os.readlink(pid_dir / "exe")
+            executable_metric = metric(AVAILABLE, executable)
+        except PermissionError as exc:
+            executable_metric = metric(PERMISSION_REQUIRED, note=str(exc))
+        except OSError as exc:
+            executable_metric = metric(error_status(str(exc)), note=str(exc))
+        runtime = (
+            max(0.0, uptime_seconds - parsed["start_time_ticks"] / ticks_per_second)
+            if uptime_seconds is not None else None
+        )
         cgroup_text, _ = read_proc(pid_dir / "cgroup")
         io_text, io_error = read_proc(pid_dir / "io")
         io_values = parse_proc_io(io_text)
 
         rollup_text, rollup_error = read_proc(pid_dir / "smaps_rollup", smaps_rollup=True)
         smaps = parse_smaps_rollup(rollup_text)
+        if "Pss" not in smaps:
+            outcomes["pss_missing"] += 1
         smaps_status = error_status(rollup_error) if rollup_error else AVAILABLE
         def smaps_metric(source: str) -> dict[str, Any]:
             if source in smaps:
@@ -258,7 +465,12 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
             "uid": status_values.get("uid"),
             "name": name,
             "argv": argv,
+            "executable": executable_metric,
             "cgroup": parse_cgroup(cgroup_text),
+            "threads": metric(AVAILABLE, status_values["threads"]) if "threads" in status_values else metric(UNAVAILABLE, note="Threads missing from /proc/PID/status"),
+            "children_count": metric(AVAILABLE, 0),
+            "runtime_seconds": metric(AVAILABLE, runtime) if runtime is not None else metric(error_status(uptime_error), note=uptime_error or "malformed /proc/uptime"),
+            "start_time_ticks": parsed["start_time_ticks"],
             "rss_bytes": smaps_metric("Rss"),
             "pss_bytes": smaps_metric("Pss"),
             "private_clean_bytes": smaps_metric("Private_Clean"),
@@ -305,6 +517,11 @@ def process_snapshot(root: pathlib.Path, ticks_per_second: int) -> tuple[list[di
             outcomes["unavailable"] += 1
         rows.append(row)
     outcomes["rows_included"] = len(rows)
+    children: dict[int, int] = {}
+    for row in rows:
+        children[row["ppid"]] = children.get(row["ppid"], 0) + 1
+    for row in rows:
+        row["children_count"] = metric(AVAILABLE, children.get(row["pid"], 0))
     outcomes.update(timing)
     outcomes.update(seconds)
     outcomes["scan_wall_seconds"] = time.perf_counter() - scan_started
@@ -560,12 +777,18 @@ def cgroup_snapshot(root: pathlib.Path, cgroup_path: str | None) -> dict[str, An
         return {
             "path": metric(UNAVAILABLE),
             "memory_current_bytes": metric(UNAVAILABLE),
+            "memory_stat": metric(UNAVAILABLE),
+            "memory_events": metric(UNAVAILABLE),
+            "memory_pressure": metric(UNAVAILABLE),
             "cpu_usage_usec": metric(UNAVAILABLE),
             "io_read_bytes": metric(UNAVAILABLE),
             "io_write_bytes": metric(UNAVAILABLE),
         }
     base = root / "sys/fs/cgroup" / cgroup_path.lstrip("/")
     memory_text, memory_error = read_text(base / "memory.current")
+    memory_stat_text, memory_stat_error = read_text(base / "memory.stat")
+    memory_events_text, memory_events_error = read_text(base / "memory.events")
+    memory_pressure_text, memory_pressure_error = read_text(base / "memory.pressure")
     cpu_text, cpu_error = read_text(base / "cpu.stat")
     io_text, io_error = read_text(base / "io.stat")
     cpu = parse_kv_lines(cpu_text or "")
@@ -591,6 +814,9 @@ def cgroup_snapshot(root: pathlib.Path, cgroup_path: str | None) -> dict[str, An
     return {
         "path": metric(AVAILABLE, cgroup_path),
         "memory_current_bytes": memory_metric,
+        "memory_stat": metric(AVAILABLE, parse_kv_lines(memory_stat_text)) if memory_stat_text is not None else metric(error_status(memory_stat_error), note=memory_stat_error),
+        "memory_events": metric(AVAILABLE, parse_kv_lines(memory_events_text)) if memory_events_text is not None else metric(error_status(memory_events_error), note=memory_events_error),
+        "memory_pressure": metric(AVAILABLE, memory_pressure_text.strip()) if memory_pressure_text is not None else metric(error_status(memory_pressure_error), note=memory_pressure_error),
         "cpu_usage_usec": metric(AVAILABLE, cpu["usage_usec"]) if "usage_usec" in cpu else metric(error_status(cpu_error), note=cpu_error),
         "io_read_bytes": metric(AVAILABLE, rbytes) if io_ok else metric(error_status(io_error), note=io_error),
         "io_write_bytes": metric(AVAILABLE, wbytes) if io_ok else metric(error_status(io_error), note=io_error),
@@ -725,10 +951,14 @@ def apply_process_coverage(
         reasons.append(f"stat unavailable for {outcomes['stat_unavailable']} process(es)")
     if outcomes.get("identity_changed", 0):
         reasons.append(f"PID identity changed during scan for {outcomes['identity_changed']} process(es)")
+    if outcomes.get("rows_included", 0) == 0:
+        reasons.append("no process rows were included in the snapshot")
     if outcomes.get("permission", 0):
         reasons.append(f"permission denied reading smaps_rollup for {outcomes['permission']} process(es)")
     if outcomes.get("unavailable", 0):
         reasons.append(f"smaps_rollup unavailable for {outcomes['unavailable']} process(es)")
+    if outcomes.get("pss_missing", 0):
+        reasons.append(f"Pss field missing from smaps_rollup for {outcomes['pss_missing']} process(es)")
     coverage = metric(AVAILABLE if not reasons else UNAVAILABLE, {
         "pids_seen": outcomes.get("pids_seen", 0),
         "rows_included": outcomes.get("rows_included", 0),
@@ -737,6 +967,7 @@ def apply_process_coverage(
         "stat_unavailable": outcomes.get("stat_unavailable", 0),
         "smaps_permission": outcomes.get("permission", 0),
         "smaps_unavailable": outcomes.get("unavailable", 0),
+        "pss_missing": outcomes.get("pss_missing", 0),
     }, "; ".join(reasons) if reasons else "all enumerated process identities were stable")
     if reasons:
         aggregate_names = ("pss_bytes", "rss_bytes", "private_clean_bytes", "private_dirty_bytes", "swap_pss_bytes")

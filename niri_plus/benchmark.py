@@ -406,6 +406,34 @@ def run_overhead_diagnostic(runs: int = 3, output: str | None = None, runner=sub
     return runner(command, check=False).returncode
 
 
+def run_memory_diagnostic(
+    json_output: str | None = None,
+    window: float = 2.0,
+    sample_period: float = 0.5,
+    series: bool = False,
+    include_60_minutes: bool = False,
+    runner=subprocess.run,
+) -> int:
+    collector = data_dir() / "scripts/collect-performance-baseline"
+    if not collector.is_file():
+        print(f"UNAVAILABLE: benchmark collector not found at {collector}", file=sys.stderr)
+        return 2
+    command = [
+        sys.executable,
+        str(collector),
+        "--memory-series" if series else "--memory-diagnostic",
+        "--memory-window",
+        str(window),
+        "--memory-sample-period",
+        str(sample_period),
+    ]
+    if include_60_minutes:
+        command.append("--include-60-minutes")
+    if json_output:
+        command.extend(["--output", json_output])
+    return runner(command, check=False).returncode
+
+
 def compare_benchmarks(
     plasma: str,
     niri_core: str,

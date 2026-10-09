@@ -49,6 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--niri-quickshell", required=True, help="validated profile C JSON")
     compare_parser.add_argument("--output", required=True, help="Markdown report path")
     compare_parser.add_argument("--json-output", help="optional machine-readable comparison JSON path")
+    memory_parser = commands.add_parser("memory", help="inspect global, process, cgroup and DRM memory read-only")
+    memory_parser.add_argument("--window", type=float, default=2.0,
+                               help="seconds for process CPU deltas (default: 2)")
+    memory_parser.add_argument("--sample-period", type=float, default=0.5,
+                               help="seconds between light process-presence samples")
+    memory_parser.add_argument("--json-output", help="write the full diagnostic as JSON")
+    memory_parser.add_argument("--series", action="store_true",
+                               help="collect at 0, 5, 15, and 30 minutes, then exit")
+    memory_parser.add_argument("--include-60-minutes", action="store_true",
+                               help="include an optional final +60 minute sample (requires --series)")
     commands.add_parser("uninstall", help="remove Niri+ managed files and tracked packages")
     return parser
 
@@ -87,6 +97,17 @@ def main(argv: list[str] | None = None) -> int:
         if not 1 <= args.window <= 300:
             parser.error("--window must be between 1 and 300 seconds")
         return benchmark.run_benchmark(args.profile, args.runs, args.window, args.output)
+    elif args.command == "memory":
+        if args.include_60_minutes and not args.series:
+            parser.error("--include-60-minutes requires --series")
+        if not 0.5 <= args.window <= 15:
+            parser.error("--window must be between 0.5 and 15 seconds")
+        if not 0.2 <= args.sample_period <= args.window:
+            parser.error("--sample-period must be between 0.2 seconds and --window")
+        return benchmark.run_memory_diagnostic(
+            args.json_output, args.window, args.sample_period,
+            args.series, args.include_60_minutes,
+        )
     elif args.command == "uninstall":
         return uninstall.run_uninstall()
     return 0

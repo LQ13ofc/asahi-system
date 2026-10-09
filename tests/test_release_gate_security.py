@@ -185,10 +185,13 @@ class GitSnapshotTests(unittest.TestCase):
         remote_commit = commit_all(self.asahi_seed, "release 0.1.2")
         git(["-C", str(self.asahi_seed), "push", "origin", "main"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        local_head_before = git(["-C", str(self.checkout), "rev-parse", "HEAD"]).stdout.strip()
         with self._snapshot() as snapshot:
             self.assertEqual(snapshot.system_commit, remote_commit)
             self.assertEqual((snapshot.root / "VERSION").read_text(), "0.1.2\n")
             self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
+        self.assertEqual(git(["-C", str(self.checkout), "rev-parse", "HEAD"]).stdout.strip(), local_head_before)
+        self.assertNotEqual(local_head_before, remote_commit)
 
     def test_install_with_source_already_at_remote_head_is_reproducible(self):
         with self._snapshot() as first:
