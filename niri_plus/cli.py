@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 
-from . import benchmark, doctor, install_command, rollback, status, uninstall, update
+from . import benchmark, brightness, doctor, install_command, rollback, status, uninstall, update
 
 
 def version() -> str:
@@ -15,6 +15,16 @@ def version() -> str:
     if candidate.is_file():
         return candidate.read_text(encoding="utf-8").strip()
     return "0.0.0"
+
+
+def _brightness_percent(value: str) -> int:
+    try:
+        percent = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer from 0 to 100") from error
+    if not 0 <= percent <= 100:
+        raise argparse.ArgumentTypeError("must be an integer from 0 to 100")
+    return percent
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
                                help="collect at 0, 5, 15, and 30 minutes, then exit")
     memory_parser.add_argument("--include-60-minutes", action="store_true",
                                help="include an optional final +60 minute sample (requires --series)")
+    brightness_parser = commands.add_parser("brightness", help="set screen brightness through systemd-logind")
+    brightness_actions = brightness_parser.add_subparsers(dest="brightness_action", required=True)
+    brightness_set = brightness_actions.add_parser("set", help="set the active session backlight from 0 to 100 percent")
+    brightness_set.add_argument("percent", type=_brightness_percent)
+    brightness_set.add_argument("--device", help="backlight name; required when more than one device exists")
     commands.add_parser("uninstall", help="remove Niri+ managed files and tracked packages")
     return parser
 
@@ -127,6 +142,12 @@ def main(argv: list[str] | None = None) -> int:
             args.json_output, args.window, args.sample_period,
             args.series, args.include_60_minutes,
         )
+    elif args.command == "brightness":
+        try:
+            device, _level = brightness.set_percent(args.percent, args.device)
+        except brightness.BrightnessError as error:
+            parser.error(str(error))
+        print(f"Brilho alterado para {args.percent}% ({device}).")
     elif args.command == "uninstall":
         return uninstall.run_uninstall()
     return 0

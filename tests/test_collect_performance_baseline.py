@@ -91,6 +91,13 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(version.returncode, 0, version.stderr)
             self.assertIn("Niri+ 0.1.10", version.stdout)
 
+            brightness_help = subprocess.run(
+                [sys.executable, "-I", str(installed_cli), "brightness", "set", "--help"],
+                cwd=temp, env=env, text=True, capture_output=True, check=False, timeout=15,
+            )
+            self.assertEqual(brightness_help.returncode, 0, brightness_help.stderr)
+            self.assertIn("--device", brightness_help.stdout)
+
             output = root / "memory.json"
             completed = subprocess.run(
                 [sys.executable, "-I", str(installed_cli), "memory", "--window", "0.5",

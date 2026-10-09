@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status, wayland_ready
+from niri_plus import benchmark, brightness, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status, wayland_ready
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -49,6 +49,20 @@ class NiriPlusCliTests(unittest.TestCase):
             self.assertEqual(cli.main(["status"]), 0)
         render.assert_called_once()
         self.assertIn("simulated status", output.getvalue())
+
+    def test_brightness_command_uses_logind_without_root(self):
+        with mock.patch.object(brightness, "set_percent", return_value=("apple-panel-bl", 50)) as set_percent, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["brightness", "set", "50", "--device", "apple-panel-bl"]), 0)
+        set_percent.assert_called_once_with(50, "apple-panel-bl")
+        self.assertIn("Brilho alterado para 50%", output.getvalue())
+
+    def test_brightness_cli_rejects_invalid_range_before_dbus(self):
+        with mock.patch.object(brightness, "set_percent") as set_percent, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as exit_info:
+                cli.main(["brightness", "set", "101"])
+        self.assertEqual(exit_info.exception.code, 2)
+        set_percent.assert_not_called()
 
     def test_status_on_simulated_host_is_read_only(self):
         with tempfile.TemporaryDirectory() as temp:
