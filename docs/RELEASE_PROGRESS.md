@@ -12,8 +12,8 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `d1ac213`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `87e7da7`; optional Niri+ bridge, touchpad controls, and deferred offscreen fixture setup |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `cafcba5`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `b355504`; optional Niri+ bridge, touchpad controls, and isolated action-policy tests |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -35,10 +35,13 @@ Current Cloud validation after this change: asahi-system compileall, baseline
 validation, and all 201 unit tests pass; GitHub Actions run 74 also passes.
 QuickShell passes all 37 Python tests, loads 59 QML files, renders every
 configured offscreen scene, and its Qt 6 lint exits successfully with 191
-classified warnings. GitHub Actions run 28 still failed because the scene
-scheduled fixture mutations during `QQuickView.setSource()`. The current head
-87e7da7 removes that scene callback and explicitly applies fixture state after
-the view loads; run 30 is validating this change.
+classified warnings. GitHub Actions runs 28, 30, 31, 33, and 34 reproduced a
+native SIGSEGV when the two Control Center behavior checks instantiated its
+visual QML tree in subprocesses. Current head b355504 isolates the pure action
+guards in a JavaScript module, tests their boundary cases with QJSEngine, and
+checks that the QML panel still connects those decisions to its real service
+authorities. The standard load/render harness still instantiates the complete
+panel; GitHub validation of this head is pending.
 
 ## Completed in this continuation
 
@@ -99,7 +102,7 @@ the view loads; run 30 is validating this change.
 - quickshell-: QML load: **59 files, 0 errors, 0 warnings**.
 - quickshell-: settings persistence, multi-screen, keyboard interaction,
   brightness, Control Center radios, touchpad preferences, and Niri bridge
-  harnesses passed.
+  harnesses and isolated action-policy tests passed.
 - quickshell-: full offscreen render passed for all 71 reference scenes,
   including Settings Center categories and Control Center.
 - quickshell-: `pyside6-qmllint` returned **0**, reporting 191 classified
@@ -109,9 +112,8 @@ the view loads; run 30 is validating this change.
 
 ## Open work / next executable action
 
-1. Check GitHub Actions run 30 for the two QuickShell offscreen panel subprocess
-   tests; if either still fails, use its faulthandler trace to isolate the Qt
-   scene load crash.
+1. Check GitHub Actions for QuickShell head `b355504`; confirm Python action
+   tests, QML load, and full render all pass on the hosted runner.
 2. Asahi-system run 74 passed after the guarded touchpad backend change.
 3. Refresh PR #8/#19 evidence and update this matrix after the QuickShell run. Do not
    merge to `main`/`master` or change the production pin.
