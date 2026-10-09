@@ -13,7 +13,7 @@ branches and the production Quickshell pin are unchanged.
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
 | `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `cafcba5`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `918b07c`; optional Niri+ bridge, touchpad controls, and isolated action-policy tests |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `b2bcd84`; optional Niri+ bridge, touchpad controls, and native render diagnostics |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -35,12 +35,12 @@ Current Cloud validation after this change: asahi-system compileall, baseline
 validation, and all 201 unit tests pass; GitHub Actions runs 74 and 76 pass.
 QuickShell passes all 37 Python tests and loads 59 QML files locally. The last
 complete local render/lint pass preceded the new optional process-start fallback.
-Hosted runs 28 through 35 exposed two different SIGSEGVs: isolated creation of
-the Control Center tree in behavior subprocesses, then full-scene rendering.
-Head 918b07c tests the action guards without constructing that visual tree in
-the unit tests and adds per-scene render progress. Hosted run 37 has passed
-Python and QML load and is currently rendering scenes to identify any remaining
-runner-specific crash.
+Hosted runs 28 through 37 exposed two SIGSEGVs: isolated creation of the Control
+Center tree in behavior subprocesses, then full-scene rendering. Run 37 isolated
+the latter to `QQuickView.setSource()` while loading `ControlCenter.qml`, before
+the window is shown. Head b2bcd84 keeps the pure action tests and adds a
+conditional GDB backtrace step for that scene; hosted run 41 is collecting the
+native stack.
 
 ## Completed in this continuation
 
@@ -111,8 +111,8 @@ runner-specific crash.
 
 ## Open work / next executable action
 
-1. Inspect QuickShell run 37's scene-level progress, fix the failing render
-   scene if necessary, then rerun CI to completion.
+1. Inspect QuickShell run 41's GDB stack for `ControlCenter.qml`, fix the
+   failing component or runner interaction, and rerun full render and CI.
 2. Asahi-system run 74 passed after the guarded touchpad backend change.
 3. Refresh PR #8/#19 evidence and update this matrix after the QuickShell run. Do not
    merge to `main`/`master` or change the production pin.
