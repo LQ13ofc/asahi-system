@@ -85,6 +85,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertEqual(processes["graphics_components"]["niri"]["pss_bytes"]["value"], 500 * 1024**2)
         self.assertEqual(processes["graphics_components"]["quickshell"]["pss_bytes"]["value"], 300 * 1024**2)
         self.assertEqual(processes["system_service_processes"]["pss_bytes"]["value"], 40 * 1024**2)
+        self.assertEqual(processes["collector_and_ancestors"]["pss_bytes"]["value"], 50 * 1024**2)
         self.assertEqual(processes["same_uid_user_processes"]["pid_count"], 2)
         self.assertEqual(processes["graphical_session_processes"]["status"], bm.NOT_ACCOUNTED)
         self.assertEqual(processes["non_graphics_component_process_count"], 2)
@@ -97,6 +98,7 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertIn("Do not add", rendered)
         self.assertIn("DRM/GPU memory", rendered)
         self.assertIn("Graphical-session PSS", rendered)
+        self.assertIn("Collector + ancestors PSS", rendered)
         self.assertIn("Used estimate (total-available)", rendered)
         self.assertIn("Unattributed residual", rendered)
 
@@ -106,6 +108,50 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertEqual(report["processes"]["all_process_pss_bytes"]["status"], bm.UNAVAILABLE)
         self.assertEqual(report["unattributed_memory_estimate_bytes"]["status"], bm.UNAVAILABLE)
         self.assertEqual(report["processes"]["graphics_components"]["niri"]["pss_bytes"]["status"], bm.UNAVAILABLE)
+
+    def test_incomplete_pid_scan_does_not_claim_niri_or_components_are_absent(self):
+        other = process(10, "shell", 500)
+        report = diagnostic_for(
+            [other],
+            coverage=bm.UNAVAILABLE,
+            coverage_detail={
+                "pids_seen": 2, "rows_included": 1, "identity_changed": 0,
+                "stat_permission": 1, "stat_unavailable": 0,
+                "smaps_permission": 0, "smaps_unavailable": 0,
+            },
+        )
+        niri = report["processes"]["graphics_components"]["niri"]["pss_bytes"]
+        self.assertEqual(niri["status"], bm.UNAVAILABLE)
+        self.assertIn("absence cannot be confirmed", niri["note"])
+        target = report["interpretation"]["baseline_target"]
+        self.assertEqual(target["status"], bm.UNAVAILABLE)
+        self.assertIn("cannot determine whether Niri was running", target["note"])
+
+    def test_complete_pid_scan_can_report_niri_not_applicable(self):
+        report = diagnostic_for([process(10, "shell", 500)])
+        niri = report["processes"]["graphics_components"]["niri"]["pss_bytes"]
+        self.assertEqual(niri["status"], bm.NOT_APPLICABLE)
+        self.assertIn("complete PID scan", niri["note"])
+        self.assertEqual(report["interpretation"]["baseline_target"]["status"], bm.NOT_APPLICABLE)
+
+    def test_absent_process_groups_are_not_misreported_as_zero_pss(self):
+        row = process(10, "niri", 500)
+        report = diagnostic_for([row])
+        system = report["processes"]["system_service_processes"]["pss_bytes"]
+        other = report["processes"]["other_uid_or_scope_processes"]["pss_bytes"]
+        self.assertEqual(system["status"], bm.NOT_APPLICABLE)
+        self.assertEqual(other["status"], bm.NOT_APPLICABLE)
+        self.assertNotIn("value", system)
+        self.assertIn("complete PID scan", system["note"])
+
+    def test_missing_cgroup_metadata_does_not_claim_system_services_are_absent(self):
+        row = process(10, "niri", 500)
+        row["cgroup"] = None
+        report = diagnostic_for([row])
+        system = report["processes"]["system_service_processes"]["pss_bytes"]
+        self.assertEqual(system["status"], bm.UNAVAILABLE)
+        self.assertNotIn("value", system)
+        self.assertIn("classification metadata incomplete", system["note"])
 
     def test_missing_pss_for_one_process_makes_global_pss_and_residual_unavailable(self):
         rows = [process(10, "niri", 500), process(11, "other", 200)]
@@ -188,17 +234,46 @@ class MemoryDiagnosticTests(unittest.TestCase):
             bm.NOT_APPLICABLE,
         )
 
+    def test_truncated_xwayland_satellite_comm_stays_in_graphics_memory_group(self):
+        row = process(78, "xwayland-satell", 123)
+        row["argv"] = []
+        row["executable"] = item(None, bm.PERMISSION_REQUIRED)
+        report = diagnostic_for([row], used=1000)
+        inventory = report["processes"]["process_inventory"]
+        self.assertEqual(inventory[0]["observed_group"], "GRAPHICS_COMPONENTS")
+        self.assertEqual(inventory[0]["graphics_component"], "xwayland_satellite")
+        self.assertEqual(
+            report["processes"]["graphics_components"]["xwayland_satellite"]["pss_bytes"]["value"],
+            123,
+        )
+
     def test_longitudinal_trend_reports_growth_and_stable_process_candidate_only(self):
         samples = []
-        for index, value in enumerate((100, 110, 120, 130)):
+        base = 8 * 1024 * 1024
+        values = (base, base + 256 * 1024, base + 768 * 1024, base + 1024 * 1024)
+        for index, value in enumerate(values):
             row = process(50, "worker", value, dirty=value // 2, start=123)
             report = diagnostic_for([row], used=value)
             samples.append({"elapsed_seconds": index * 300, "diagnostic": report})
         analysis = memory_report.analyze_memory_series(samples)
         self.assertEqual(analysis["growth_over_time"], "OBSERVED_MONOTONIC_PSS_GROWTH")
-        self.assertEqual(analysis["trends"]["all_process_pss_bytes"]["value"]["delta"], 30)
+        self.assertEqual(analysis["trends"]["all_process_pss_bytes"]["value"]["delta"], 1024 * 1024)
         self.assertEqual(len(analysis["possible_leak_candidates"]), 1)
         self.assertEqual(analysis["possible_leak_candidates"][0]["classification"], "POSSIBLE_LEAK_CANDIDATE")
+        self.assertEqual(analysis["possible_leak_candidates"][0]["minimum_candidate_growth_bytes"], 1024 * 1024)
+
+    def test_small_monotonic_process_growth_is_visible_but_not_a_leak_candidate(self):
+        samples = []
+        for index, value in enumerate((100, 110, 120, 130)):
+            row = process(50, "worker", value, dirty=value // 2, start=123)
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": diagnostic_for([row], used=value)})
+        analysis = memory_report.analyze_memory_series(samples)
+        self.assertEqual(analysis["growth_over_time"], "OBSERVED_MONOTONIC_PSS_GROWTH")
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+        observed = analysis["subthreshold_process_growth"]
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["pss_delta_bytes"], 30)
+        self.assertEqual(observed[0]["classification"], "OBSERVED_GROWTH_BELOW_SCREENING_FLOOR")
 
     def test_series_with_noise_is_not_reported_as_monotonic_growth_or_leak(self):
         samples = []
@@ -207,6 +282,21 @@ class MemoryDiagnosticTests(unittest.TestCase):
             report = diagnostic_for([row], used=value)
             samples.append({"elapsed_seconds": index * 300, "diagnostic": report})
         analysis = memory_report.analyze_memory_series(samples)
+        self.assertEqual(analysis["growth_over_time"], "NOT_ESTABLISHED")
+        self.assertEqual(analysis["possible_leak_candidates"], [])
+
+    def test_global_growth_requires_four_complete_pss_samples(self):
+        samples = []
+        for index, value in enumerate((100, 110, 120, 130)):
+            row = process(50, "worker", value, dirty=value // 2, start=123)
+            report = diagnostic_for([row], used=value)
+            if index == 2:
+                report["processes"]["all_process_pss_bytes"] = item(None, bm.UNAVAILABLE)
+            samples.append({"elapsed_seconds": index * 300, "diagnostic": report})
+        analysis = memory_report.analyze_memory_series(samples)
+        trend = analysis["trends"]["all_process_pss_bytes"]["value"]
+        self.assertEqual(trend["valid_samples"], 3)
+        self.assertTrue(trend["monotonic_non_decreasing"])
         self.assertEqual(analysis["growth_over_time"], "NOT_ESTABLISHED")
         self.assertEqual(analysis["possible_leak_candidates"], [])
 

@@ -14,6 +14,8 @@ O desenho e pesquisa de pacotes da sessão Niri estão em [`docs/niri-phase-b.md
 
 O protocolo A/B/C está em [`docs/benchmark-protocol.md`](docs/benchmark-protocol.md), e a auditoria estática do custo idle do `asahi-system` + Quickshell pinado está em [`docs/idle-performance-static-audit.md`](docs/idle-performance-static-audit.md). A classificação observacional dos serviços do snapshot continua em [`docs/service-classification.md`](docs/service-classification.md). `niri+ benchmark --profile plasma|niri-core|niri-quickshell` usa o collector existente com validação fail-closed e deltas numa janela de observação. A coleta é read-only; somente a preparação explícita de `niri-core` usa um mask **runtime** reversível do unit Quickshell, com restore dedicado e sem editar configuração persistente. Nenhuma captura Cloud x86_64 substitui teste no M1.
 
+Para investigar memória na sessão atual, `niri+ memory` mostra memória global, PSS por processo, Niri/Quickshell, swap/zswap, PSI e cgroups como vistas separadas; `niri+ memory --series` coleta snapshots finitos até +30 minutos. O formato e as limitações, inclusive privacidade de JSON, estão em [`docs/memory-diagnostics.md`](docs/memory-diagnostics.md).
+
 ## Validação no Cloud
 
 As verificações abaixo usam Python e o parser KDL isolado listado em `requirements-test.txt`; não mudam o sistema:
