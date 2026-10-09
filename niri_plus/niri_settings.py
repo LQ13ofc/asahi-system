@@ -1,8 +1,9 @@
 """Safe, user-scoped Niri configuration overrides.
 
-The generated KDL is deliberately limited to settings whose Niri 26.04 config
-sections merge without replacing unrelated input-device configuration. Niri's
-own validator remains the semantic authority.
+The generated KDL is deliberately limited to settings that can be merged
+without replacing unrelated configuration. Touchpad overrides are emitted only
+after the include tree proves that no separate touchpad block already exists;
+Niri's own validator remains the semantic authority.
 """
 
 from __future__ import annotations
@@ -27,6 +28,13 @@ SYSTEM_INCLUDE = 'include optional=true "~/.config/niri-plus/settings.kdl"'
 USER_INCLUDE_START = "// niri+ managed settings include: begin"
 USER_INCLUDE_END = "// niri+ managed settings include: end"
 
+TOUCHPAD_DEFAULTS: dict[str, bool] = {
+    "managed": False,
+    "tap": False,
+    "natural_scroll": False,
+    "disabled_on_external_mouse": False,
+}
+
 DEFAULTS: dict[str, object] = {
     "schema_version": SCHEMA_VERSION,
     "gaps": 6,
@@ -39,9 +47,10 @@ DEFAULTS: dict[str, object] = {
     "launcher_key": "Mod+Space",
     "terminal_key": "Mod+Return",
     "window_rules": [],
+    "touchpad": TOUCHPAD_DEFAULTS,
 }
 
-_LEGACY_SETTING_KEYS = set(DEFAULTS) - {"window_rules"}
+_LEGACY_SETTING_KEYS = set(DEFAULTS) - {"window_rules", "touchpad"}
 _APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z", re.ASCII)
 _WORKSPACE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,31}\Z", re.ASCII)
 MAX_WINDOW_RULES = 12
@@ -75,11 +84,19 @@ def _shortcut_is_safe(value: object) -> bool:
     return all(part in allowed for part in modifiers) and len(set(modifiers)) == len(modifiers)
 
 
+def _has_touchpad_block(text: str) -> bool:
+    return any(
+        re.search(r"\btouchpad\s*\{", line.split("//", 1)[0])
+        for line in text.splitlines()
+    )
+
+
 def validate_settings(payload: object) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) not in (set(DEFAULTS), _LEGACY_SETTING_KEYS):
         raise NiriSettingsError("o documento precisa conter exatamente os campos de Niri+ suportados")
     payload = dict(payload)
     payload.setdefault("window_rules", [])
+    payload.setdefault("touchpad", dict(TOUCHPAD_DEFAULTS))
     if payload.get("schema_version") != SCHEMA_VERSION or type(payload.get("schema_version")) is not int:
         raise NiriSettingsError("versão das preferências Niri+ incompatível")
     for key, lower, upper in (
@@ -101,6 +118,12 @@ def validate_settings(payload: object) -> dict[str, object]:
             raise NiriSettingsError(f"atalho não suportado para {key}")
     if payload["launcher_key"] == payload["terminal_key"]:
         raise NiriSettingsError("launcher e terminal não podem usar o mesmo atalho")
+    touchpad = payload.get("touchpad")
+    if not isinstance(touchpad, dict) or set(touchpad) != set(TOUCHPAD_DEFAULTS):
+        raise NiriSettingsError("touchpad precisa conter exatamente as opções suportadas")
+    if any(type(touchpad[key]) is not bool for key in TOUCHPAD_DEFAULTS):
+        raise NiriSettingsError("as opções de touchpad precisam ser booleanas")
+    payload["touchpad"] = dict(touchpad)
     rules = payload.get("window_rules")
     if not isinstance(rules, list) or len(rules) > MAX_WINDOW_RULES:
         raise NiriSettingsError(f"window_rules precisa ser uma lista de até {MAX_WINDOW_RULES} regras")
@@ -151,6 +174,17 @@ def render_kdl(payload: object) -> str:
         f'    {settings["terminal_key"]} {{ spawn "foot"; }}',
         "}",
     ]
+    touchpad = settings["touchpad"]
+    if touchpad["managed"]:
+        input_close = lines.index("}", lines.index("input {"))
+        lines[input_close:input_close] = [
+            "    touchpad {",
+            "        tap" if touchpad["tap"] else "        tap false",
+            "        natural-scroll" if touchpad["natural_scroll"] else "        natural-scroll false",
+            "        disabled-on-external-mouse" if touchpad["disabled_on_external_mouse"]
+            else "        disabled-on-external-mouse false",
+            "    }",
+        ]
     for rule in settings["window_rules"]:
         app_pattern = "^" + re.escape(str(rule["app_id"])) + "$"
         lines.extend((
@@ -486,7 +520,7 @@ class NiriSettingsManager:
                 "settings": settings,
                 "niri_validator": "AVAILABLE" if binary else "UNAVAILABLE",
                 "config_scope": scope,
-                "touchpad_settings": "NOT_SUPPORTED_SAFE_MERGE",
+                "touchpad_settings": "SUPPORTED_WITH_EXISTING_CONFIG_CHECK",
             }
         except (NiriSettingsError, UnicodeError, OSError) as error:
             return {
@@ -498,7 +532,7 @@ class NiriSettingsManager:
                 "settings": dict(DEFAULTS),
                 "niri_validator": "AVAILABLE" if self.niri_binary or shutil.which("niri") else "UNAVAILABLE",
                 "config_scope": "unknown",
-                "touchpad_settings": "NOT_SUPPORTED_SAFE_MERGE",
+                "touchpad_settings": "SUPPORTED_WITH_EXISTING_CONFIG_CHECK",
                 "warning": str(error) if isinstance(error, NiriSettingsError) else "config Niri não pôde ser lido",
             }
 
@@ -536,6 +570,8 @@ class NiriSettingsManager:
         os.chmod(candidate_override, 0o600)
         visited: set[pathlib.Path] = set()
         rewritten_root: pathlib.Path | None = None
+        manages_touchpad = _has_touchpad_block(override_content)
+        existing_touchpad_blocks: list[pathlib.Path] = []
 
         def stage_file(source: pathlib.Path, *, top: bool = False) -> pathlib.Path:
             nonlocal rewritten_root
@@ -560,6 +596,8 @@ class NiriSettingsManager:
                 text = (root_content if top else source.read_text(encoding="utf-8"))
             except (OSError, UnicodeError) as error:
                 raise NiriSettingsError("config KDL não pôde ser lido como UTF-8") from error
+            if manages_touchpad and _has_touchpad_block(text):
+                existing_touchpad_blocks.append(source)
 
             changed = []
             for line in text.splitlines():
@@ -579,6 +617,11 @@ class NiriSettingsManager:
                     continue
                 include_path = pathlib.Path(include_value)
                 if include_path.is_absolute() or include_value.startswith("~"):
+                    if manages_touchpad:
+                        raise NiriSettingsError(
+                            "não é possível provar que includes absolutos não configuram touchpad; "
+                            "remova ou migre o include antes de ativar a gestão Niri+"
+                        )
                     changed.append(line)
                     continue
                 if ".." in include_path.parts:
@@ -603,6 +646,12 @@ class NiriSettingsManager:
 
         try:
             stage_file(root_path, top=True)
+            if existing_touchpad_blocks:
+                paths = ", ".join(str(path) for path in existing_touchpad_blocks)
+                raise NiriSettingsError(
+                    "touchpad já está configurado fora do arquivo gerenciado; "
+                    f"migre ou remova o bloco existente antes de ativar Niri+ ({paths})"
+                )
             if rewritten_root is None:
                 raise NiriSettingsError("config Niri não pôde ser preparado para validação")
             return temporary, rewritten_root

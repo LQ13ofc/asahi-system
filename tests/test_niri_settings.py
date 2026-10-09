@@ -78,17 +78,58 @@ class NiriSettingsTests(unittest.TestCase):
 
     @staticmethod
     def settings(**changes):
-        return {**niri_settings.DEFAULTS, **changes}
+        return {
+            **niri_settings.DEFAULTS,
+            "touchpad": dict(niri_settings.TOUCHPAD_DEFAULTS),
+            **changes,
+        }
 
     def test_generated_kdl_parses_and_has_only_allowlisted_values(self):
         result = niri_settings.render_kdl(self.settings(gaps=12, border_enabled=True))
         self.assertIsNotNone(kdl.parse(result))
         self.assertIn("gaps 12", result)
+        self.assertNotIn("touchpad {", result)
         self.assertIn('Mod+Space { spawn "fuzzel"; }', result)
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(launcher_key='Mod+Space; exec "bad"'))
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(launcher_key="Mod+Return", terminal_key="Mod+Return"))
+
+    def test_touchpad_controls_emit_official_boolean_options_only_when_managed(self):
+        touchpad = {
+            "managed": True,
+            "tap": True,
+            "natural_scroll": False,
+            "disabled_on_external_mouse": True,
+        }
+        rendered = niri_settings.render_kdl(self.settings(touchpad=touchpad))
+        self.assertIsNotNone(kdl.parse(rendered))
+        self.assertIn("touchpad {", rendered)
+        self.assertIn("tap\n", rendered)
+        self.assertIn("natural-scroll false", rendered)
+        self.assertIn("disabled-on-external-mouse\n", rendered)
+        for invalid in (None, {**touchpad, "unknown": True}, {**touchpad, "tap": 1}):
+            with self.subTest(touchpad=invalid), self.assertRaises(niri_settings.NiriSettingsError):
+                niri_settings.render_kdl(self.settings(touchpad=invalid))
+
+    def test_touchpad_settings_refuse_existing_blocks_and_preserve_files(self):
+        original_config = self.user_config.read_bytes()
+        original_extra = self.niri_dir.joinpath("extra.kdl")
+        original_extra.write_text("input { touchpad { tap } }\n", encoding="utf-8")
+        touchpad = {**niri_settings.TOUCHPAD_DEFAULTS, "managed": True, "tap": True}
+        with self.assertRaisesRegex(niri_settings.NiriSettingsError, "já está configurado fora"):
+            self.manager.apply(self.settings(touchpad=touchpad))
+        self.assertEqual(self.user_config.read_bytes(), original_config)
+        self.assertEqual(original_extra.read_text(encoding="utf-8"), "input { touchpad { tap } }\n")
+        self.assertFalse(self.manager.settings_path.exists())
+        self.assertFalse(self.manager.state_path.exists())
+
+    def test_touchpad_settings_refuse_uninspectable_absolute_includes(self):
+        self.user_config.write_text('include optional=true "/etc/niri/custom.kdl"\n', encoding="utf-8")
+        touchpad = {**niri_settings.TOUCHPAD_DEFAULTS, "managed": True}
+        with self.assertRaisesRegex(niri_settings.NiriSettingsError, "includes absolutos"):
+            self.manager.apply(self.settings(touchpad=touchpad))
+        self.assertFalse(self.manager.settings_path.exists())
 
     def test_window_rules_are_exact_bounded_and_emit_valid_kdl(self):
         rules = [{"app_id": "org.mozilla.firefox", "workspace": "web apps", "floating": True}]
@@ -113,6 +154,7 @@ class NiriSettingsTests(unittest.TestCase):
     def test_state_loader_migrates_legacy_settings_without_window_rules(self):
         legacy = dict(niri_settings.DEFAULTS)
         legacy.pop("window_rules")
+        legacy.pop("touchpad")
         self.manager.state_dir.mkdir(mode=0o700, parents=True)
         state = {
             "schema_version": niri_settings.SCHEMA_VERSION,
