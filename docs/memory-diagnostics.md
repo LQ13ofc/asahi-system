@@ -73,6 +73,11 @@ não tenta adivinhar quais argumentos ou caminhos são secretos.
   ausência permanece `UNAVAILABLE`. Classificadores consultam `comm`, `argv[0]`
   e executável quando legíveis; `xwayland-satellite` também reconhece seu
   prefixo exato de 15 caracteres usado por `comm` quando o kernel o trunca.
+- **Custo do diagnóstico:** `all_process_pss_bytes` inclui o comando
+  `niri+ memory` e sua cadeia ancestral. `collector_and_ancestors` mostra esse
+  PSS separadamente; o proxy de processos do usuário os exclui. Durante uma
+  série longitudinal, o próprio coletor fica ativo e não deve ser confundido
+  com a residência normal da sessão.
 - **Grupos de processo:** `GRAPHICS_COMPONENTS` é uma vista de Niri, Quickshell,
   auxiliares e Xwayland. Serviços em `system.slice` são outra vista. O proxy
   `SAME_UID_USER_PROCESSES` inclui serviços de usuário e aplicativos. A coleta
