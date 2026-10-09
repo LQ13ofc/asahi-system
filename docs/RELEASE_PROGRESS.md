@@ -12,8 +12,8 @@ branches and the production Quickshell pin are unchanged.
 
 | Repository | Work branch | Base | Preserved checkpoint | Current work |
 |---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `cafcba5`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `b2bcd84`; optional Niri+ bridge, touchpad controls, and native render diagnostics |
+| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `3204742`; Niri core is independently installable, QuickShell integration is opt-in; guarded touchpad settings |
+| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `9e2adc4`; optional Niri+ bridge, touchpad controls, and Control Center geometry fix |
 
 Production `main` still uses the known-good Quickshell pin
 `55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
@@ -31,16 +31,16 @@ optional backend and report its absence. The integration branch's gitlink and
 lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa9e17`
 is unchanged.
 
-Current Cloud validation after this change: asahi-system compileall, baseline
-validation, and all 201 unit tests pass; GitHub Actions runs 74 and 76 pass.
-QuickShell passes all 37 Python tests and loads 59 QML files locally. The last
-complete local render/lint pass preceded the new optional process-start fallback.
-Hosted runs 28 through 37 exposed two SIGSEGVs: isolated creation of the Control
-Center tree in behavior subprocesses, then full-scene rendering. Run 37 isolated
-the latter to `QQuickView.setSource()` while loading `ControlCenter.qml`, before
-the window is shown. Head b2bcd84 keeps the pure action tests and adds a
-conditional GDB backtrace step for that scene; hosted run 41 is collecting the
-native stack.
+Current Cloud validation: asahi-system compileall, baseline validation, and all
+201 unit tests pass; Actions run 37999249999 passed at HEAD 3204742. QuickShell
+has 38 passing Python tests, 59 loadable QML files, all reference scenes
+rendering locally, and qmllint exit 0 with 191 classified warnings. Hosted run
+37999480027 reproduced the ControlCenter creation crash. Its GDB stack points
+to Qt Quick row positioning while a property binding updates. HEAD 9e2adc4
+replaces `childrenRect` sizing on the action Row with intrinsic geometry and
+adds a regression test. Hosted runs 37999805430/37999809622 are checking the
+fix; the lint step now runs even if scene rendering fails, and the GDB
+diagnostic remains conditional.
 
 ## Completed in this continuation
 
@@ -111,11 +111,13 @@ native stack.
 
 ## Open work / next executable action
 
-1. Inspect QuickShell run 41's GDB stack for `ControlCenter.qml`, fix the
-   failing component or runner interaction, and rerun full render and CI.
-2. Asahi-system run 74 passed after the guarded touchpad backend change.
-3. Refresh PR #8/#19 evidence and update this matrix after the QuickShell run. Do not
-   merge to `main`/`master` or change the production pin.
+1. Review the hosted full-scene result for QuickShell HEAD 9e2adc4. If the Row
+   geometry fix passes in CI, update PR #8 evidence; if it fails, use run
+   37999480027 as the baseline stack and continue isolating the Qt Quick binding.
+2. Asahi-system core independence and optional QuickShell integration are covered
+   at HEAD 3204742; run 37999249999 passed.
+3. Keep PRs #8/#19 separate and draft. Do not merge to `main`/`master` or change
+   the production pin.
 
 ## M1 release gate
 
