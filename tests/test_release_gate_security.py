@@ -10,6 +10,8 @@ import runpy
 import socket
 import struct
 import subprocess
+import sys
+import shutil
 import tempfile
 import threading
 import unittest
@@ -77,6 +79,8 @@ class GitSnapshotTests(unittest.TestCase):
         (self.asahi_seed / "integration/quickshell.lock.json").write_text(json.dumps({
             "schema_version": 1, "repository": self.qs_url,
             "checkout": "external/quickshell", "commit": pin,
+            "engine": {"nevra": "quickshell-0:0.3.1-2.fc44", "repository": "https://packages.invalid/",
+                       "gpg_key": "https://packages.invalid/key.gpg"},
         }, sort_keys=True) + "\n")
         (self.asahi_seed / "niri_plus").mkdir(exist_ok=True)
         (self.asahi_seed / "niri_plus/install_command.py").write_text(
@@ -95,6 +99,139 @@ class GitSnapshotTests(unittest.TestCase):
             allow_test_file_sources=True,
             **kwargs,
         )
+
+    def test_resolved_visual_commit_installs_as_one_reversible_host_transaction(self):
+        # Build a complete, isolated candidate from real Git objects, then run
+        # the actual snapshot bootstrap and system-file installer against a
+        # temporary root. This exercises their boundary without touching /usr.
+        for relative, content in {
+            "niri/config.kdl": "include \"keybinds.kdl\"\n",
+            "sessions/systemd/asahi-quickshell.service": "[Service]\nExecStart=/usr/bin/qs\n",
+            "niri_plus/cli.py": "# candidate CLI module\n",
+            "scripts/collect-performance-baseline": "#!/bin/sh\nexit 0\n",
+        }.items():
+            target = self.asahi_seed / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        bootstrap_source = pathlib.Path(__file__).resolve().parents[1] / "scripts/bootstrap-niri-plus"
+        shutil.copy2(bootstrap_source, self.asahi_seed / "scripts/bootstrap-niri-plus")
+        (self.asahi_seed / "scripts/collect-performance-baseline").chmod(0o755)
+        self._write_system_tree("0.1.2", self.qs_commit)
+        commit_all(self.asahi_seed, "complete candidate installation tree")
+        git(["-C", str(self.asahi_seed), "push", "origin", "main"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        real_run_path = snapshot_install.runpy.run_path
+        real_mkdtemp = tempfile.mkdtemp
+        original_transaction = snapshot_install.run_install_transaction
+        original_verify = snapshot_install._verify_committed_install
+
+        def exercise(host_root: pathlib.Path, snapshot, failure: str | None = None) -> None:
+            version = (snapshot.root / "VERSION").read_text(encoding="utf-8").strip()
+            qs_commit = snapshot.quickshell_commit
+            staged_roots = {
+                "lib": host_root / "usr/local/lib/niri-plus",
+                "data": host_root / "usr/local/share/niri-plus",
+                "bin": host_root / "usr/local/bin/niri+",
+                "state": host_root / "var/lib/niri-plus/bootstrap.json",
+                "backups": host_root / "var/lib/niri-plus/bootstrap-backups",
+            }
+            (host_root / "usr/local").mkdir(parents=True, exist_ok=True)
+
+            def run_snapshot_script(path, *args, **kwargs):
+                namespace = real_run_path(path, *args, **kwargs)
+                globals_ns = namespace["install_snapshot"].__globals__
+                globals_ns["LIB"] = staged_roots["lib"]
+                globals_ns["DATA"] = staged_roots["data"]
+                globals_ns["BIN"] = staged_roots["bin"]
+                globals_ns["STATE"] = staged_roots["state"]
+                globals_ns["BACKUPS"] = staged_roots["backups"]
+                globals_ns["EXPECTED_MANAGED"] = [str(staged_roots[key]) for key in ("lib", "data", "bin")]
+                return namespace
+
+            def staged_mkdtemp(suffix=None, prefix=None, dir=None):
+                if dir == "/usr/local":
+                    dir = str(host_root / "usr/local")
+                return real_mkdtemp(prefix=prefix, suffix=suffix, dir=dir)
+
+            def apply_candidate(*, defer_packages: bool, include_quickshell: bool) -> None:
+                install_command.install.install_files(host_root, include_quickshell=include_quickshell)
+                state = install_command.install.load_state(host_root)
+                state["applied_version"] = version
+                state["packages_installed_by_us"] = ["niri", "foot"]
+                install_command.install.update_quickshell_state(state, qs_commit, included=include_quickshell)
+                install_command.install.write_state(host_root, state)
+                if failure == "apply":
+                    raise RuntimeError("injected apply failure")
+
+            def verify_candidate(*_args) -> None:
+                if failure == "verify":
+                    raise RuntimeError("injected verify failure")
+                installed = json.loads(staged_roots["state"].read_text(encoding="utf-8"))
+                state = install_command.install.load_state(host_root)
+                if (installed["version"] != version
+                        or installed["quickshell_expected_commit"] != qs_commit
+                        or state["applied_version"] != version
+                        or state["quickshell"]["expected_commit"] != qs_commit):
+                    raise RuntimeError("simulated post-install verification failed")
+
+            def transaction(paths, bootstrap, apply, verify, finalize=lambda: None):
+                if failure == "bootstrap":
+                    resolved_bootstrap = bootstrap
+                    def fail_after_bootstrap():
+                        resolved_bootstrap()
+                        raise RuntimeError("injected bootstrap failure")
+                    bootstrap = fail_after_bootstrap
+                return original_transaction(paths, bootstrap, apply, verify, finalize, root=host_root)
+
+            def patched_bootstrap(path, *args, **kwargs):
+                return run_snapshot_script(path, *args, **kwargs)
+
+            with mock.patch.dict(os.environ, {}), \
+                 mock.patch.object(snapshot_install.source_update, "EXPECTED_REPOSITORY", self.asahi_url), \
+                 mock.patch.object(snapshot_install.source_update, "EXPECTED_QUICKSHELL_REPOSITORY", self.qs_url), \
+                 mock.patch("os.geteuid", return_value=0), \
+                 mock.patch("tempfile.mkdtemp", side_effect=staged_mkdtemp), \
+                 mock.patch.object(snapshot_install.runpy, "run_path", side_effect=patched_bootstrap), \
+                 mock.patch.object(snapshot_install, "run_install_transaction", side_effect=transaction), \
+                 mock.patch.object(snapshot_install, "_verify_committed_install", side_effect=verify_candidate), \
+                 mock.patch.object(install_command.install, "apply_install", side_effect=apply_candidate), \
+                 mock.patch.object(install_command.install, "install_locked_packages") as package_install, \
+                 mock.patch.object(install_command.install, "reload_invoking_user_manager"):
+                old_path = list(sys.path)
+                try:
+                    snapshot_install.apply_snapshot(snapshot.root, snapshot.manifest)
+                finally:
+                    sys.path[:] = old_path
+                if failure is None:
+                    package_install.assert_called_once()
+                    runtime = staged_roots["data"] / "quickshell"
+                    self.assertEqual((runtime / "shell.qml").read_text(encoding="utf-8"), "// visual pin one\n")
+                    marker = json.loads((staged_roots["data"] / "quickshell.snapshot.json").read_text())
+                    self.assertEqual(marker["commit"], qs_commit)
+                    self.assertEqual(install_command.install.load_state(host_root)["quickshell"]["expected_commit"], qs_commit)
+                    self.assertTrue((host_root / "usr/lib/systemd/user/asahi-quickshell.service").is_file())
+                    self.assertEqual(os.readlink(host_root / "usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service"),
+                                     "../asahi-quickshell.service")
+                else:
+                    package_install.assert_not_called()
+                    self.assertFalse(staged_roots["lib"].exists())
+                    self.assertFalse(staged_roots["data"].exists())
+                    self.assertFalse(staged_roots["bin"].exists())
+                    self.assertFalse(staged_roots["state"].exists())
+                    self.assertFalse((host_root / "etc/niri/config.kdl").exists())
+                    self.assertFalse((host_root / "usr/lib/systemd/user/asahi-quickshell.service").exists())
+
+        with self._snapshot() as snapshot:
+            self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
+            for failure in ("bootstrap", "apply", "verify"):
+                with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
+                    host_root = pathlib.Path(temp)
+                    with self.assertRaisesRegex(RuntimeError, f"injected {failure} failure"):
+                        exercise(host_root, snapshot, failure)
+            with tempfile.TemporaryDirectory() as temp:
+                host_root = pathlib.Path(temp)
+                exercise(host_root, snapshot)
 
     def test_temporary_bare_store_is_created_by_git_as_checkout_owner(self):
         parent = self.root / "owner-temp"
