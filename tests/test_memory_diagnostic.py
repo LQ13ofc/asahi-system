@@ -107,6 +107,31 @@ class MemoryDiagnosticTests(unittest.TestCase):
         self.assertEqual(report["unattributed_memory_estimate_bytes"]["status"], bm.UNAVAILABLE)
         self.assertEqual(report["processes"]["graphics_components"]["niri"]["pss_bytes"]["status"], bm.UNAVAILABLE)
 
+    def test_incomplete_pid_scan_does_not_claim_niri_or_components_are_absent(self):
+        other = process(10, "shell", 500)
+        report = diagnostic_for(
+            [other],
+            coverage=bm.UNAVAILABLE,
+            coverage_detail={
+                "pids_seen": 2, "rows_included": 1, "identity_changed": 0,
+                "stat_permission": 1, "stat_unavailable": 0,
+                "smaps_permission": 0, "smaps_unavailable": 0,
+            },
+        )
+        niri = report["processes"]["graphics_components"]["niri"]["pss_bytes"]
+        self.assertEqual(niri["status"], bm.UNAVAILABLE)
+        self.assertIn("absence cannot be confirmed", niri["note"])
+        target = report["interpretation"]["baseline_target"]
+        self.assertEqual(target["status"], bm.UNAVAILABLE)
+        self.assertIn("cannot determine whether Niri was running", target["note"])
+
+    def test_complete_pid_scan_can_report_niri_not_applicable(self):
+        report = diagnostic_for([process(10, "shell", 500)])
+        niri = report["processes"]["graphics_components"]["niri"]["pss_bytes"]
+        self.assertEqual(niri["status"], bm.NOT_APPLICABLE)
+        self.assertIn("complete PID scan", niri["note"])
+        self.assertEqual(report["interpretation"]["baseline_target"]["status"], bm.NOT_APPLICABLE)
+
     def test_missing_pss_for_one_process_makes_global_pss_and_residual_unavailable(self):
         rows = [process(10, "niri", 500), process(11, "other", 200)]
         rows[1]["pss_bytes"] = item(None, bm.PERMISSION_REQUIRED, "smaps_rollup denied")

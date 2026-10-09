@@ -158,11 +158,17 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
     def component_aggregate(items: list[dict[str, Any]]) -> dict[str, Any]:
         summary = aggregate(items)
         if not items:
+            status = bm.NOT_APPLICABLE if enumeration_complete else bm.UNAVAILABLE
+            note = (
+                "no process for this component was observed in the complete PID scan"
+                if enumeration_complete else
+                "process scan incomplete; component absence cannot be confirmed"
+            )
             for key in (
                 "pss_bytes", "rss_bytes", "private_clean_bytes", "private_dirty_bytes",
                 "uss_approx_bytes", "swap_pss_bytes",
             ):
-                summary[key] = bm.metric(bm.NOT_APPLICABLE, note="no process for this component was observed")
+                summary[key] = bm.metric(status, note=note)
         return summary
 
     decorated.sort(key=lambda row: number(row.get("pss_bytes")) if number(row.get("pss_bytes")) is not None else -1, reverse=True)
@@ -295,8 +301,12 @@ def build_memory_diagnostic(
     })
     niri_count = observation.get("components", {}).get("niri", {}).get("pid_count", 0)
     if not niri_count:
-        target_status = bm.NOT_APPLICABLE
-        target_note = "Niri process was not observed; Niri idle objective is not evaluated for this capture"
+        if enumeration_complete:
+            target_status = bm.NOT_APPLICABLE
+            target_note = "Niri process was not observed in a complete PID scan; Niri idle objective is not evaluated for this capture"
+        else:
+            target_status = bm.UNAVAILABLE
+            target_note = "process scan incomplete; cannot determine whether Niri was running or evaluate its idle objective"
     elif used is None:
         target_status = bm.UNAVAILABLE
         target_note = "global used estimate unavailable"

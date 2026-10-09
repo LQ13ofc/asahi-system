@@ -68,7 +68,9 @@ não tenta adivinhar quais argumentos ou caminhos são secretos.
   conhecido; o ranking deixa métricas indisponíveis explícitas. O PSS de um grupo
   pode continuar disponível quando todos os seus PIDs são legíveis, mesmo que o
   Cloud bloqueie `smaps_rollup` de processos alheios; o total global de PSS exige
-  cobertura completa.
+  cobertura completa. Um componente ausente só recebe `NOT_APPLICABLE` quando a
+  enumeração de PIDs foi completa; se algum PID não pôde ser identificado, sua
+  ausência permanece `UNAVAILABLE`.
 - **Grupos de processo:** `GRAPHICS_COMPONENTS` é uma vista de Niri, Quickshell,
   auxiliares e Xwayland. Serviços em `system.slice` são outra vista. O proxy
   `SAME_UID_USER_PROCESSES` inclui serviços de usuário e aplicativos. A coleta
