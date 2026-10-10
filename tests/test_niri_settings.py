@@ -90,10 +90,48 @@ class NiriSettingsTests(unittest.TestCase):
         self.assertIn("gaps 12", result)
         self.assertNotIn("touchpad {", result)
         self.assertIn('Mod+Space { spawn "fuzzel"; }', result)
+        self.assertIn("Mod+Q { close-window; }", result)
+        self.assertIn("Mod+H { focus-column-left; }", result)
+        self.assertIn("Mod+L { focus-column-right; }", result)
+        self.assertIn("Mod+K { focus-window-up; }", result)
+        self.assertIn("Mod+J { focus-window-down; }", result)
+        self.assertIn("Mod+Shift+H { move-column-left; }", result)
+        self.assertIn("Mod+Shift+L { move-column-right; }", result)
+        self.assertIn("Mod+V { toggle-window-floating; }", result)
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(launcher_key='Mod+Space; exec "bad"'))
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(launcher_key="Mod+Return", terminal_key="Mod+Return"))
+
+    def test_close_window_shortcut_is_allowlisted_and_cannot_collide(self):
+        rendered = niri_settings.render_kdl(self.settings(close_window_key="Mod+Shift+W"))
+        self.assertIsNotNone(kdl.parse(rendered))
+        self.assertIn("Mod+Shift+W { close-window; }", rendered)
+        for value in ('Mod+Q; quit', "Mod+Return", "Ctrl+Q", "Mod+H"):
+            with self.subTest(shortcut=value), self.assertRaises(niri_settings.NiriSettingsError):
+                niri_settings.render_kdl(self.settings(close_window_key=value))
+
+    def test_niri_focus_shortcuts_are_allowlisted_and_collision_checked(self):
+        rendered = niri_settings.render_kdl(self.settings(
+            focus_column_left_key="Mod+Left", focus_window_down_key="Mod+Down"
+        ))
+        self.assertIsNotNone(kdl.parse(rendered))
+        self.assertIn("Mod+Left { focus-column-left; }", rendered)
+        self.assertIn("Mod+Down { focus-window-down; }", rendered)
+        with self.assertRaisesRegex(niri_settings.NiriSettingsError, "atalhos.*distintos"):
+            niri_settings.render_kdl(self.settings(focus_window_up_key="Mod+Space"))
+        with self.assertRaises(niri_settings.NiriSettingsError):
+            niri_settings.render_kdl(self.settings(focus_column_right_key="Ctrl+L"))
+
+    def test_move_and_floating_shortcuts_are_allowlisted(self):
+        rendered = niri_settings.render_kdl(self.settings(
+            move_column_left_key="Mod+Shift+Left", toggle_floating_key="Mod+Shift+V"
+        ))
+        self.assertIsNotNone(kdl.parse(rendered))
+        self.assertIn("Mod+Shift+Left { move-column-left; }", rendered)
+        self.assertIn("Mod+Shift+V { toggle-window-floating; }", rendered)
+        with self.assertRaises(niri_settings.NiriSettingsError):
+            niri_settings.render_kdl(self.settings(move_column_right_key="Mod+Space"))
 
     def test_touchpad_controls_emit_official_boolean_options_only_when_managed(self):
         touchpad = {
@@ -167,6 +205,40 @@ class NiriSettingsTests(unittest.TestCase):
         migrated = self.manager._load_state()
         self.assertEqual(migrated["settings"]["window_rules"], [])
         self.assertEqual(migrated["previous_settings"]["window_rules"], [])
+
+    def test_state_loader_adds_default_shortcut_to_pre_feature_state(self):
+        legacy = dict(niri_settings.DEFAULTS)
+        legacy.pop("window_rules")
+        legacy.pop("touchpad")
+        legacy.pop("close_window_key")
+        legacy.pop("focus_column_left_key")
+        legacy.pop("focus_column_right_key")
+        legacy.pop("focus_window_up_key")
+        legacy.pop("focus_window_down_key")
+        legacy.pop("move_column_left_key")
+        legacy.pop("move_column_right_key")
+        legacy.pop("toggle_floating_key")
+        self.manager.state_dir.mkdir(mode=0o700, parents=True)
+        self.manager.state_path.write_text(json.dumps({
+            "schema_version": niri_settings.SCHEMA_VERSION,
+            "settings": legacy,
+            "previous_settings": legacy,
+            "settings_sha256": "0" * 64,
+        }), encoding="utf-8")
+        self.manager.state_path.chmod(0o600)
+        migrated = self.manager._load_state()
+        self.assertEqual(migrated["settings"]["close_window_key"], "Mod+Q")
+        self.assertEqual(migrated["previous_settings"]["close_window_key"], "Mod+Q")
+        self.assertEqual(migrated["settings"]["focus_column_left_key"], "Mod+H")
+        self.assertEqual(migrated["settings"]["move_column_left_key"], "Mod+Shift+H")
+
+    def test_close_window_only_state_migrates_navigation_defaults(self):
+        close_only = self.settings()
+        for key in niri_settings._NIRI_ACTION_SHORTCUT_FIELDS:
+            close_only.pop(key)
+        migrated = niri_settings.validate_settings(close_only)
+        self.assertEqual(migrated["focus_column_left_key"], "Mod+H")
+        self.assertEqual(migrated["focus_window_down_key"], "Mod+J")
 
     def test_apply_persists_atomically_without_chmod_of_existing_xdg_directories(self):
         original_config_mode = stat.S_IMODE(self.config_home.stat().st_mode)

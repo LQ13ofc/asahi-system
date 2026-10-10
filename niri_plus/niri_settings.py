@@ -46,11 +46,23 @@ DEFAULTS: dict[str, object] = {
     "keyboard_repeat_rate": 25,
     "launcher_key": "Mod+Space",
     "terminal_key": "Mod+Return",
+    "close_window_key": "Mod+Q",
+    "focus_column_left_key": "Mod+H",
+    "focus_column_right_key": "Mod+L",
+    "focus_window_up_key": "Mod+K",
+    "focus_window_down_key": "Mod+J",
+    "move_column_left_key": "Mod+Shift+H",
+    "move_column_right_key": "Mod+Shift+L",
+    "toggle_floating_key": "Mod+V",
     "window_rules": [],
     "touchpad": TOUCHPAD_DEFAULTS,
 }
 
-_LEGACY_SETTING_KEYS = set(DEFAULTS) - {"window_rules", "touchpad"}
+_NIRI_ACTION_SHORTCUT_FIELDS = {
+    "focus_column_left_key", "focus_column_right_key", "focus_window_up_key", "focus_window_down_key",
+    "move_column_left_key", "move_column_right_key", "toggle_floating_key",
+}
+_COMPAT_OPTIONAL_FIELDS = {"window_rules", "touchpad", "close_window_key", *_NIRI_ACTION_SHORTCUT_FIELDS}
 _APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z", re.ASCII)
 _WORKSPACE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,31}\Z", re.ASCII)
 MAX_WINDOW_RULES = 12
@@ -60,6 +72,10 @@ COLUMN_DISPLAY = {"normal", "tabbed"}
 SHORTCUT_KEYS = {
     "Mod+Space", "Mod+D", "Mod+P", "Mod+Return", "Mod+T", "Mod+Shift+Return",
     "Super+Space", "Super+D", "Super+P", "Super+Return", "Super+T", "Super+Shift+Return",
+    "Mod+Q", "Mod+W", "Mod+Shift+W", "Super+Q", "Super+W", "Super+Shift+W",
+    "Mod+H", "Mod+J", "Mod+K", "Mod+L", "Mod+Left", "Mod+Right", "Mod+Up", "Mod+Down",
+    "Mod+Shift+H", "Mod+Shift+L", "Mod+Shift+Left", "Mod+Shift+Right", "Mod+V", "Mod+Shift+V",
+    "Super+H", "Super+J", "Super+K", "Super+L",
 }
 _INCLUDE_LINE = re.compile(r'^\s*include(?:\s+optional=true)?\s+("(?:[^"\\]|\\.)*")')
 _KEY_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,31}\Z", re.ASCII)
@@ -92,11 +108,18 @@ def _has_touchpad_block(text: str) -> bool:
 
 
 def validate_settings(payload: object) -> dict[str, object]:
-    if not isinstance(payload, dict) or set(payload) not in (set(DEFAULTS), _LEGACY_SETTING_KEYS):
+    if (not isinstance(payload, dict) or not set(payload).issubset(DEFAULTS)
+            or not (set(DEFAULTS) - _COMPAT_OPTIONAL_FIELDS).issubset(payload)):
         raise NiriSettingsError("o documento precisa conter exatamente os campos de Niri+ suportados")
     payload = dict(payload)
     payload.setdefault("window_rules", [])
     payload.setdefault("touchpad", dict(TOUCHPAD_DEFAULTS))
+    for key in (
+        "close_window_key", "focus_column_left_key", "focus_column_right_key",
+        "focus_window_up_key", "focus_window_down_key", "move_column_left_key",
+        "move_column_right_key", "toggle_floating_key",
+    ):
+        payload.setdefault(key, DEFAULTS[key])
     if payload.get("schema_version") != SCHEMA_VERSION or type(payload.get("schema_version")) is not int:
         raise NiriSettingsError("versão das preferências Niri+ incompatível")
     for key, lower, upper in (
@@ -113,11 +136,16 @@ def validate_settings(payload: object) -> dict[str, object]:
         raise NiriSettingsError("valor inválido para center_focused_column")
     if payload.get("default_column_display") not in COLUMN_DISPLAY:
         raise NiriSettingsError("valor inválido para default_column_display")
-    for key in ("launcher_key", "terminal_key"):
+    shortcut_fields = (
+        "launcher_key", "terminal_key", "close_window_key", "focus_column_left_key",
+        "focus_column_right_key", "focus_window_up_key", "focus_window_down_key",
+        "move_column_left_key", "move_column_right_key", "toggle_floating_key",
+    )
+    for key in shortcut_fields:
         if not _shortcut_is_safe(payload.get(key)):
             raise NiriSettingsError(f"atalho não suportado para {key}")
-    if payload["launcher_key"] == payload["terminal_key"]:
-        raise NiriSettingsError("launcher e terminal não podem usar o mesmo atalho")
+    if len({payload[key] for key in shortcut_fields}) != len(shortcut_fields):
+        raise NiriSettingsError("atalhos do launcher, terminal, janelas e foco precisam ser distintos")
     touchpad = payload.get("touchpad")
     if not isinstance(touchpad, dict) or set(touchpad) != set(TOUCHPAD_DEFAULTS):
         raise NiriSettingsError("touchpad precisa conter exatamente as opções suportadas")
@@ -172,6 +200,14 @@ def render_kdl(payload: object) -> str:
         "binds {",
         f'    {settings["launcher_key"]} {{ spawn "fuzzel"; }}',
         f'    {settings["terminal_key"]} {{ spawn "foot"; }}',
+        f'    {settings["close_window_key"]} {{ close-window; }}',
+        f'    {settings["focus_column_left_key"]} {{ focus-column-left; }}',
+        f'    {settings["focus_column_right_key"]} {{ focus-column-right; }}',
+        f'    {settings["focus_window_up_key"]} {{ focus-window-up; }}',
+        f'    {settings["focus_window_down_key"]} {{ focus-window-down; }}',
+        f'    {settings["move_column_left_key"]} {{ move-column-left; }}',
+        f'    {settings["move_column_right_key"]} {{ move-column-right; }}',
+        f'    {settings["toggle_floating_key"]} {{ toggle-window-floating; }}',
         "}",
     ]
     touchpad = settings["touchpad"]

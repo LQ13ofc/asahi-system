@@ -90,10 +90,10 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 | Bar modules, order, position, per-monitor overrides | QuickShell `config/Preferences.qml`, `Bar.qml`, Settings Center | Implemented | Existing multi-screen and settings tests |
 | Panel behavior, notification privacy/history/DND | QuickShell panel/services and Settings Center | Implemented | Unit and offscreen checks |
 | Audio, Wi-Fi, Bluetooth, brightness | Existing PipeWire/NetworkManager/BlueZ services and Control Center | Implemented via existing backends | Cloud stubs only; hardware behavior is `M1_REQUIRED` |
-| Niri gaps, border, column layout, launcher, keyboard repeat, and per-app window rules | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL; legacy state without rules migrates in memory | KDL parsing, rule validation, persistence/rollback, migration, and bridge tests; actual compositor reload is `M1_REQUIRED` |
+| Niri gaps, border, column layout, launcher, terminal, close-window, focus/move columns, focus windows, floating toggle, keyboard repeat, and per-app rules | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL; old state receives defaults for new fields | KDL parsing, allowlist/collision, persistence/rollback, migration, and bridge tests; compositor validation/reload is `M1_REQUIRED` |
 | Trackpad/input configuration | `niri_settings.py`, Settings Center Input page | Implemented with explicit opt-in and collision checks | KDL/parser and preservation tests pass; real M1 device behavior remains `M1_REQUIRED` |
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
-| Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage; integrated render still pending |
+| Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage and offscreen rendering |
 | UI efficiency profiles | Shared stats service and lazy panel content | Implemented as interface-only profiles | Regression tests and Cloud parser experiment; no M1 performance claim |
 | Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | Default system install and shell operation do not require the other repository; 201 system tests and 39 visual tests; M1 session behavior remains required |
 | Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | Cloud integration scenarios pass; RC remains in progress | Reversible snapshot install is tested for bootstrap/apply/verification failures; real candidate 79 was staged in a temporary root and all 188 manifest files and pin metadata matched |
@@ -201,3 +201,126 @@ results in the release matrix, then continue any Cloud-implementable product
 work without promoting or merging the candidate. The final PR head and helper
 SHA-256 must be reported with the commands, not copied here in a self-referential
 form. Keep PRs #19/#8 unmerged and retain `main`'s stable Quickshell pin.
+
+## Incremento de atalhos do Settings Center — Cloud
+
+Trabalho em branches separadas, baseadas nos candidatos PR #19 (`002131b1…`)
+e PR #8 (`79b093e6…`); os heads candidatos e o pin estável não foram alterados.
+O backend e seus testes estão no branch `feature/niri-close-window-shortcut`,
+commits `672c70e` e `415dbfb`; PR #20 está aberto como draft sobre
+`integration/niri-plus-rc`. A integração visual está no branch
+`feature/settings-close-window-shortcut`, commits `7eba119` e `a94ce4e`, com PR
+#9 draft sobre `integration/settings-center-rc`.
+O backend `niri-settings` gera atalhos para launcher, terminal, fechar janela,
+foco/movimento de colunas e janelas, e alternar janela flutuante. Os valores têm
+allowlist fechada, colisão entre as dez ações é rejeitada, KDL é validado antes
+da gravação e estados anteriores recebem defaults sem perda das opções
+existentes. O Settings Center expõe seletores para essas ações, detecta suporte
+a partir do status do backend e desativa apenas controles novos quando o
+`niri+` for antigo.
+Quickshell continua independente: os demais painéis funcionam sem a CLI, e
+aplicações de configurações antigas omitem os campos que o backend antigo não
+conhece.
+
+Validação final do incremento: asahi `compileall`, 220 testes `unittest` e
+`scripts/validate_baseline.py` passaram. Quickshell `compileall`, 40 testes
+`unittest`, load de 59 QML (zero erros/avisos tardios), render completo de todas
+as cenas (99 imagens, exit 0) e render específico da página de atalhos passaram.
+A captura foi inspecionada; `SettingRow` recebeu espaçamento e composição em
+pilha para evitar colisão visual dos grupos maiores. O qmllint segue exit 0 com
+192 avisos classificados no relatório existente; nenhuma correção cega foi
+feita. A sintaxe KDL passa no parser Cloud; validar as ações com `niri validate`
+Fedora e no runtime continua `M1_REQUIRED`.
+
+PR #20: `https://github.com/LQ13ofc/asahi-system/pull/20`, draft na branch
+`feature/niri-close-window-shortcut`; CI manual `38051991004` passou no código
+atual. O workflow pull_request do repo só observa base `main`, então o PR
+encadeado ao RC não recebe check automático. PR #9 do quickshell-:
+`https://github.com/LQ13ofc/quickshell-/pull/9`, draft na branch
+`feature/settings-close-window-shortcut`; CI push `38051977771` e pull_request
+`38051981008` passaram no commit `a94ce4e`.
+Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
+e PR #8 `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
+
+Quickshell PR #10 draft: branch `feature/interface-profile-visualizer`, head
+`87ee934f44dca926afe59339868f2b92b04987ca`, base
+`integration/settings-center-rc`. Além dos perfis Efficiency/Balanced/Visual,
+o branch corrige uma corrida já presente no teste netctl: leitura de
+`/proc/PID/stat` após `exists()` podia perder o processo entre chamadas; agora
+lê um snapshot e compara starttime para não confundir PID reutilizado. O check
+push passa no Cloud local; o CI GitHub foi relançado nesse head após a correção.
+
+Quickshell PR #11 draft: branch `feature/music-visualizer-preference`, head
+`dc32bc4dfcf6b0729a4609e4a80ddb4bcd345fab`, base PR #10. Adiciona o toggle
+persistente de Cava em Settings > Painéis e schema v4; arquivos v1/v2/v3
+continuam válidos com o visualizador habilitado por default, gravando v4 na
+próxima edição. Desligar a opção ou usar Efficiency descarrega o visualizador;
+ligá-la em Balanced/Visual cria uma instância com os valores do perfil. Testes
+validam persistência após reinício, reset, import/export, migração v3,
+rejeição de tipos inválidos e lifecycle. Não requer nem invoca Niri+.
+
+Validação combinada no Cloud: compileall, 40 testes `unittest`, load de 59 QML
+sem erros/avisos tardios, render completo de todas as cenas e qmllint exit 0
+com 192 avisos classificados. A captura de Settings > Painéis foi inspecionada
+e não há colisão de layout. CI dos PRs #10/#11 passou nos heads acima. PR #20 teve validação manual em `7fb1c1c` aprovada
+(`38052764189`). O estado ainda não é CODE_COMPLETE; consumo real e lifecycle
+de Cava continuam `M1_REQUIRED`.
+
+## Lifecycle de clima opcional — Cloud
+
+Quickshell PR #12, branch `feature/weather-module-lifecycle`, commit
+`d8663f5`, base `integration/settings-center-rc`: o serviço de clima só busca
+ou agenda refresh se o módulo estiver visível em pelo menos um monitor. Ao
+ocultar em todos os monitores, cancela o processo em curso e timer; ao reabrir,
+reusa cache fresco e só faz uma nova busca se o cache venceu. O estado inicial
+oculto agora também reporta `off`. O harness verifica visibilidade por monitor,
+cache fresco/vencido, quantidade de requisições e cancelamento. Isso reduz
+trabalho da integração visual; não altera política de sistema nem prova ganho de
+CPU/RAM no M1.
+
+Cloud após a mudança: compileall e 40 testes `unittest` passaram; load de 59
+QML passou sem erros ou avisos tardios; render de todas as cenas passou;
+settings-check, multiscreen, interação por teclado e checks dos backends
+auxiliares passaram. `pyside6-qmllint` retorna 0 com 192 warnings já
+classificados em `docs/validacao-qml.md`. CI GitHub de PRs #10, #11 e #12
+passou nos heads atuais. Os PRs e pin de produção permanecem sem
+merge/alteração.
+
+A agenda foi auditada no mesmo ciclo: `Agenda.qml` não tem timer/processo; a
+busca começa ao carregar `CalendarPanel`, cujo conteúdo vive sob o `LazyLoader`
+do painel, e o timer local é apenas watchdog da busca. Não havia polling
+ocioso a remover. Um teste de contrato agora protege esse lifecycle.
+
+Quickshell PR #13 draft: branch `feature/brightness-monitor-demand`, head
+`2282a375a871fc718c94c5993e8c81729e2bfb9f`, base
+`integration/settings-center-rc`. `udevadm monitor` e a busca inicial do
+backlight agora só existem enquanto o indicador de brilho está visível em pelo
+menos um monitor ou o Control Center está vivo. Os consumidores sobrepostos
+compartilham um único watcher; fechar/ocultar o último para processos e retries.
+O painel pede refresh do sysfs ao assumir consumo. Testes cobrem nenhum
+consumidor, início em cada rota, ausência de duplicata, manter o watcher quando
+um dos dois consumidores fecha e parar/reiniciar pelo último consumidor.
+
+Cloud no head do PR #13: compileall, 41 testes `unittest`, 59 QML sem erros ou
+avisos tardios, render completo, lint com os mesmos 192 avisos classificados,
+settings-check, multiscreen, interação por teclado, bridge Niri, brilho com e
+sem CLI e Control Center power passaram. CI dos PRs #10–#13 passou. O watcher
+permanece event-driven; isso valida ciclo de vida no harness, não PSS/CPU,
+atualização por teclas físicas nem estado do sysfs no M1 (`M1_REQUIRED`).
+
+Quickshell PR #14 draft: branch `integration/cloud-settings-rc-20261010`, head
+`b440538d342822eac6cb046f0c0dd5e96212d6f2`, base `integration/settings-center-rc`.
+É um candidato integrado sobre o PR #8 imutável (`79b093e6…`), reunindo os
+heads/commits dos PRs #10–#13. Conflitos de harness e matriz de Settings foram
+resolvidos preservando tanto perfis/visualizador quanto clima/brightness. A
+suíte combinada passou: 43 testes `unittest`, compileall, 59 QML sem erros,
+render de todas as cenas, todos os comandos harness e qmllint exit 0 (192 avisos
+classificados em 126 arquivos). CI do PR #14 está pendente. Nenhum branch
+principal, pin de produção ou primeiro gate foi alterado.
+
+Próxima ação executável: após CI do PR #14, criar branch separado de
+`asahi-system` a partir do candidato PR #19 e atualizar somente o candidato
+experimental para o commit exato do PR #14, conciliando gitlink/lockfile e
+hashes do procedimento sem editar PR #19 ou o pin de produção. Reexecutar os
+testes de snapshot/instalação/rollback nesse branch; PRs #19/#8 e o primeiro
+procedimento físico continuam sendo a referência imutável original.
