@@ -467,6 +467,13 @@ Commits de auditoria já feitos: asahi-system `3c4797c` (Graphify), `adb4695`
 cobertura Graphify). Commits da nota final desta auditoria ainda serão
 acrescentados no branch.
 
-Próxima ação executável: confirmar `git diff --check`, concluir o commit do
-relatório/progresso, fazer push fast-forward da branch de auditoria sobre o PR
-#22, e aguardar CI nos PRs #15/#22. Nenhum pedido de teste físico foi feito.
+CI dos candidatos passou após o push: Quickshell PR #15 em `d2fe6d57…`, runs
+`38060336073` e `38060333049`; asahi-system PR #22 em `360d174d…`, run
+`38060438358`. O PR #23 manteve seu head e CI `38058990232` aprovado; PR #16
+continua aberto sem checks configurados. As anotações de migração do Node 20 e
+da imagem ubuntu-latest não afetaram os resultados.
+
+Próxima ação executável: confirmar o CI acionado pelo commit seguinte, que
+atualiza este registro de progresso; depois, se aprovado, o gate Cloud permite
+somente o experimento opt-in documentado no M1. Nenhum pedido de teste físico
+foi feito.

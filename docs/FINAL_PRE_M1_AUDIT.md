@@ -6,10 +6,10 @@ performed, and neither `main` nor `master` was changed.
 ## Decision
 
 **GO for the opt-in, reversible experimental M1 validation described in
-[`release-candidate-m1-pr22.md`](release-candidate-m1-pr22.md), after CI passes
-on the updated candidate heads.** This is not approval for a production
-release. Actual Fedora Asahi session behavior, hardware services, and memory
-measurements remain `M1_REQUIRED`.
+[`release-candidate-m1-pr22.md`](release-candidate-m1-pr22.md).** The updated
+PR #15 and PR #22 candidate heads passed CI. This is not approval for a
+production release. Actual Fedora Asahi session behavior, hardware services,
+and memory measurements remain `M1_REQUIRED`.
 
 ## Candidate identity and preservation
 
@@ -62,6 +62,16 @@ lifecycle defect remained in the Cloud candidate suites.
 - Graphify emitted 372 nodes / 713 edges from 16 source files. It reported 21
   code files with no nodes and 140 unclassified files, including `.qml`.
 
+GitHub CI:
+
+- Quickshell PR #15 head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`: both
+  `qml-and-python` runs passed (`38060336073`, `38060333049`), including the
+  bounded-scroll regression check.
+- asahi-system PR #22 head `360d174dd95296f89820b9a2e54899e78f3bdcd3`:
+  `static-validation` passed (`38060438358`).
+- Graphify PR #23 remains at its original head and its static validation passed
+  (`38058990232`). Graphify PR #16 has no CI checks configured.
+
 ## Risks and limits
 
 | Risk | Severity / disposition | Evidence boundary |
@@ -80,7 +90,7 @@ to `main`. The experimental procedure is separate and records the exact
 candidate Quickshell pin. Do not use old PR #19/PR #8 command material for this
 updated PR #22 candidate.
 
-Before running the documented experiment, require passing CI on the updated
-PR #15 and PR #22 heads and retain the saved known-good production record. A
+Before running the documented experiment, retain the saved known-good
+production record. A
 successful experiment would still require the M1 health, recovery, and
 benchmark checks before any release claim.
