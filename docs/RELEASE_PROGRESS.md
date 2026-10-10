@@ -149,3 +149,54 @@ above is not a substitute for these results.
   followed by merge `5305bd2`. Candidate implementation commits: asahi
   `6073e5e`, `4b2caf0`; quickshell `1ecac16`, `ee0a9b8`. Draft integration PRs: asahi
   #19 and quickshell #8. None has been merged into production.
+
+## Release Candidate installer gate — 2026-10-10
+
+State: `IMPLEMENTATION_IN_PROGRESS / CLOUD_VALIDATED_PARTIAL`. Work remains on
+the existing asahi-system PR #19 branch; `main` and the production Quickshell
+pin were not changed. At the start of this step PR #19 was open at
+`83bd12dbf9256bae9a8b6a57c7349e06830fc625`, mergeable, with CI successful.
+`origin/main` still pins Quickshell `55e92880d0aff75d235f283c839ec0990eaa9e17`;
+the candidate lock and gitlink both pin `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
+
+Implemented in the Cloud candidate branch (code commit
+`95af802ba07501555675d30badf46d82a3157ea2`; M1 procedure/progress
+documentation is pending a separate commit):
+
+- The ordinary `niri+ install` path remains unchanged: it validates a clean
+  source checkout on `main`, fetches only `refs/heads/main`, and consumes that
+  source commit's lock. It does not accept an RC ref or candidate SHA.
+- The explicit `scripts/niri-plus-rc-bootstrap` path requires the full PR #19
+  SHA and confirms the current pull-request head is exactly that SHA. Its
+  root-side Python trampoline reads the helper once, verifies the expected
+  SHA-256, and executes those same in-memory bytes. The helper then confirms
+  those bytes and `source_update.py` are the Git blobs in the exact commit.
+- Candidate snapshots are materialized only from verified Git objects into a
+  root-owned, write-protected temporary tree. The resolver validates canonical
+  origins, the PR ref/SHA, the gitlink, lock, Quickshell origin/SHA, manifest
+  digest, every blob hash, file mode, and snapshot path. A dirty or different
+  local worktree cannot supply privileged code.
+- Before applying, the helper validates and atomically saves the currently
+  installed production system/Quickshell commits in a root-owned `0600` record.
+  It requires a coherent production bootstrap state, lock, and runtime marker.
+  `--restore-known-good` resolves those exact commits, not a future `main` or
+  mutable branch. Existing install transactions restore managed files/state
+  when bootstrap, apply, verification, or package finalization fails.
+- `docs/release-candidate-m1.md` documents preparation, the hash-checked
+  in-memory bootstrap, candidate dry-run/apply, SDDM/Plasma recovery, exact
+  known-good restore, diagnostics, and M1-only checks. No physical test ran.
+
+Cloud validation after implementation: `test_release_gate_security.py` — 34
+tests passed, including full candidate-channel bootstrap/apply/verification
+failure rollback and exact known-good resolution. Full `unittest discover`:
+215 tests passed. `compileall`, `scripts/validate_baseline.py`, RC bootstrap
+`--help`, and `git diff --check` passed. Expected refusal/failure messages in
+the suite are test fixtures, not failing tests. PR CI must be rerun after push.
+The immutable PR #19 system SHA and helper hash for the M1 commands must be
+read from the final pushed head and reported separately; they are intentionally
+not copied into this self-referential document.
+
+Next executable action: commit the M1 procedure/progress documentation, push
+the two commits to PR #19, verify the new head and CI result, calculate the
+bootstrap SHA-256 from that immutable head, and provide the exact M1 commands.
+Keep PRs #19/#8 unmerged and retain `main`'s stable Quickshell pin.
