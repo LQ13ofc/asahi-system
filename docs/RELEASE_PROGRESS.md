@@ -215,8 +215,9 @@ O backend `niri-settings` gera atalhos para launcher, terminal, fechar janela,
 foco/movimento de colunas e janelas, e alternar janela flutuante. Os valores têm
 allowlist fechada, colisão entre as dez ações é rejeitada, KDL é validado antes
 da gravação e estados anteriores recebem defaults sem perda das opções
-existentes. O Settings Center expõe seletores para essas ações, detecta suporte a partir do
-status do backend e desativa apenas controles novos quando o `niri+` for antigo.
+existentes. O Settings Center expõe seletores para essas ações, detecta suporte
+a partir do status do backend e desativa apenas controles novos quando o
+`niri+` for antigo.
 Quickshell continua independente: os demais painéis funcionam sem a CLI, e
 aplicações de configurações antigas omitem os campos que o backend antigo não
 conhece.
@@ -232,18 +233,18 @@ feita. A sintaxe KDL passa no parser Cloud; validar as ações com `niri validat
 Fedora e no runtime continua `M1_REQUIRED`.
 
 PR #20: `https://github.com/LQ13ofc/asahi-system/pull/20`, draft na branch
-`feature/niri-close-window-shortcut`; CI manual `38051488356` passou no código
-da feature (workflow pull_request do repositório só observa base `main`, então
-PR de feature encadeado ao RC não recebe check automático). PR #9 do quickshell-:
-`https://github.com/LQ13ofc/quickshell-/pull/9`, draft, head
-branch `feature/settings-close-window-shortcut`; CI `38051456317` passou antes
-do incremento de ações adicionais; o CI atual será verificado após o push.
+`feature/niri-close-window-shortcut`; CI manual `38051991004` passou no código
+atual. O workflow pull_request do repo só observa base `main`, então o PR
+encadeado ao RC não recebe check automático. PR #9 do quickshell-:
+`https://github.com/LQ13ofc/quickshell-/pull/9`, draft na branch
+`feature/settings-close-window-shortcut`; CI push `38051977771` e pull_request
+`38051981008` passaram no commit `a94ce4e`.
 Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
 e PR #8 `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
 
-Próxima ação executável: publicar o incremento de ações de janela e verificar CI
-atual dos PRs #20/#9; depois continuar as opções funcionais pendentes do
-Settings Center em branches baseadas no RC. Descoberta de nome/mode/scale de
-outputs e validação de backlight permanecem `M1_REQUIRED`; nenhuma UI deverá
-simular essas opções no Cloud. PRs #19/#8 permanecem nos commits RC, sem merge
-ou mudança no pin de produção.
+Próxima ação executável: iniciar um branch de otimização dos perfis visuais e
+verificar como Efficiency/Balanced/Visual controlam a quantidade e o ciclo de
+vida do visualizador, usando o harness para comprovar o efeito. Depois, seguir
+com outras preferências do Settings Center. Descoberta de nome/mode/scale de
+outputs e validação de backlight permanecem `M1_REQUIRED`; PRs #19/#8 continuam
+nos commits RC, sem merge ou mudança no pin de produção.
