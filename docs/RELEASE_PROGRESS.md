@@ -315,12 +315,43 @@ heads/commits dos PRs #10–#13. Conflitos de harness e matriz de Settings foram
 resolvidos preservando tanto perfis/visualizador quanto clima/brightness. A
 suíte combinada passou: 43 testes `unittest`, compileall, 59 QML sem erros,
 render de todas as cenas, todos os comandos harness e qmllint exit 0 (192 avisos
-classificados em 126 arquivos). CI do PR #14 está pendente. Nenhum branch
-principal, pin de produção ou primeiro gate foi alterado.
+classificados em 126 arquivos). Ambos os checks CI do PR #14 passaram. Nenhum
+branch principal, pin de produção ou primeiro gate foi alterado.
 
-Próxima ação executável: após CI do PR #14, criar branch separado de
-`asahi-system` a partir do candidato PR #19 e atualizar somente o candidato
-experimental para o commit exato do PR #14, conciliando gitlink/lockfile e
-hashes do procedimento sem editar PR #19 ou o pin de produção. Reexecutar os
-testes de snapshot/instalação/rollback nesse branch; PRs #19/#8 e o primeiro
-procedimento físico continuam sendo a referência imutável original.
+## Candidato Cloud seguinte — Quickshell PR #14 + Niri+ PR #21
+
+Branch Asahi `feature/quickshell-pr14-candidate`, commit de implementação
+`abe940e1e70c7491ffd4252baefc0cc12fa2a3f5`, PR #21 draft baseado no PR #20.
+Esse branch deixa intactos o PR #19 (`002131b1…`), seu procedimento M1 e o pin
+de produção. O gitlink `external/quickshell` e `integration/quickshell.lock.json`
+fixam exatamente o candidato integrado do PR #14:
+`b440538d342822eac6cb046f0c0dd5e96212d6f2`.
+
+Para que o opt-in experimental continue coerente com essa nova combinação, o
+resolver/bootstrap deste branch verifica PR #21 e o pin Quickshell b440; o
+fluxo normal continua buscando `main`. O documento separado
+`docs/release-candidate-m1-next.md` usa o SHA da cabeça atual de PR #21, valida
+gitlink/lock e deriva o checksum do bootstrap do blob desse commit. O documento
+original `release-candidate-m1.md` permanece intocado para o primeiro gate
+PR #19 / Quickshell 79b.
+
+Cloud neste branch: baseline validator e compileall passaram; 221 testes
+`unittest` passaram, incluindo 34 verificações de snapshot/instalação/rollback
+e um contrato que mantém distintos os pinos dos procedimentos PR #19 e #21.
+O workflow manual `Validate baseline` passou no commit de implementação
+`abe940e` (run `38054567953`) e novamente no head `31a3fd2`
+(run `38054641614`). Nenhuma alteração no host ou teste M1.
+
+Quickshell avançou no PR #15 draft, sobre o PR #14 sem tocar em master ou no
+pin do candidato: head `0dc55d26f4dd2d281044ce6d4a043f5c751298df`. Sliders do
+Control Center agora têm nome/role acessíveis, entram na ordem de Tab e aceitam
+setas; Efficiency/reduced motion pausa os indicadores animados de atividade e
+conexão sem esconder texto de estado. No Cloud passaram compileall, 43 testes,
+load de 59 QML, render completo e qmllint código 0 com 192 avisos classificados.
+O workflow do PR #15 está em andamento (run `38055105197`).
+
+Próxima ação: confirmar o workflow do PR #15; se aprovado, incorporar esse
+incremento em uma nova branch candidata de integração e preparar um PR Asahi
+separado com o pin exato, sem mover PR #19/#21 nem o pin de produção. Em
+seguida continuar a matriz de requisitos implementáveis no Cloud; validação do
+compositor, teclado real e recursos físicos continuam `M1_REQUIRED`.
