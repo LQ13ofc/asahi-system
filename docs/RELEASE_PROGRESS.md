@@ -224,15 +224,24 @@ conhece.
 Validação final do incremento: asahi `compileall`, 219 testes `unittest` e
 `scripts/validate_baseline.py` passaram. Quickshell `compileall`, 40 testes
 `unittest`, load de 59 QML (zero erros/avisos tardios), render completo de todas
-as cenas com exit 0 e render específico da página de atalhos passaram. A captura
-foi inspecionada; `SettingRow` recebeu espaçamento e composição em pilha para
-evitar colisão visual dos grupos maiores. O qmllint segue exit 0 com 192 avisos
-classificados no relatório existente; nenhuma correção cega foi feita. A sintaxe
-KDL passa no parser Cloud; validar as ações com `niri validate` Fedora e no
-runtime continua `M1_REQUIRED`.
+as cenas (99 imagens, exit 0) e render específico da página de atalhos passaram.
+A captura foi inspecionada; `SettingRow` recebeu espaçamento e composição em
+pilha para evitar colisão visual dos grupos maiores. O qmllint segue exit 0 com
+192 avisos classificados no relatório existente; nenhuma correção cega foi
+feita. A sintaxe KDL passa no parser Cloud; validar as ações com `niri validate`
+Fedora e no runtime continua `M1_REQUIRED`.
 
-Próxima ação executável: verificar CI de PRs #20/#9; em seguida continuar as
-opções funcionais pendentes de Settings Center (monitor mode/scale permanece
-dependente de descoberta segura, mas outras preferências sem hardware seguem
-implementáveis no Cloud). PRs #19/#8 permanecem exatamente nos commits RC e não
-houve merge nem mudança no pin de produção.
+PR #20: `https://github.com/LQ13ofc/asahi-system/pull/20`, draft, head
+`b0248be803f5bcd4e9b07552c1bb63d2ada5a41e`; CI manual `38051488356` passou
+(workflow pull_request do repositório só observa base `main`, então PR de feature
+encadeado ao RC não recebe check automático). PR #9 do quickshell-:
+`https://github.com/LQ13ofc/quickshell-/pull/9`, draft, head
+`7eba119f1dea6572c597246563f3794a68d986f0`; CI `38051456317` passou.
+Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
+e PR #8 `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
+
+Próxima ação executável: continuar as opções funcionais pendentes do Settings
+Center em novas branches baseadas no RC. A descoberta de nome/mode/scale de
+outputs e validação de backlight permanecem `M1_REQUIRED`; nenhuma UI deverá
+simular essas opções no Cloud. PRs #19/#8 permanecem exatamente nos commits RC,
+sem merge ou mudança no pin de produção.
