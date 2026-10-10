@@ -90,7 +90,7 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 | Bar modules, order, position, per-monitor overrides | QuickShell `config/Preferences.qml`, `Bar.qml`, Settings Center | Implemented | Existing multi-screen and settings tests |
 | Panel behavior, notification privacy/history/DND | QuickShell panel/services and Settings Center | Implemented | Unit and offscreen checks |
 | Audio, Wi-Fi, Bluetooth, brightness | Existing PipeWire/NetworkManager/BlueZ services and Control Center | Implemented via existing backends | Cloud stubs only; hardware behavior is `M1_REQUIRED` |
-| Niri gaps, border, column layout, launcher, terminal, close-window, focus navigation, keyboard repeat, and per-app window rules | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL; old state receives defaults for new fields | KDL parsing, allowlist/collision, persistence/rollback, migration, and bridge tests; actual compositor validation/reload is `M1_REQUIRED` |
+| Niri gaps, border, column layout, launcher, terminal, close-window, focus/move columns, focus windows, floating toggle, keyboard repeat, and per-app rules | `niri_plus/niri_settings.py`, Niri Settings bridge | Implemented with allowlisted user-owned KDL; old state receives defaults for new fields | KDL parsing, allowlist/collision, persistence/rollback, migration, and bridge tests; compositor validation/reload is `M1_REQUIRED` |
 | Trackpad/input configuration | `niri_settings.py`, Settings Center Input page | Implemented with explicit opt-in and collision checks | KDL/parser and preservation tests pass; real M1 device behavior remains `M1_REQUIRED` |
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage and offscreen rendering |
@@ -207,21 +207,21 @@ form. Keep PRs #19/#8 unmerged and retain `main`'s stable Quickshell pin.
 Trabalho em branches separadas, baseadas nos candidatos PR #19 (`002131b1…`)
 e PR #8 (`79b093e6…`); os heads candidatos e o pin estável não foram alterados.
 O backend e seus testes estão no branch `feature/niri-close-window-shortcut`,
-commit `672c70e` (implementação) e `c3bda92` (progresso); PR #20 está aberto
-como draft sobre `integration/niri-plus-rc`. A integração visual está no branch
-`feature/settings-close-window-shortcut`, commit `7eba119`, com PR #9 draft
-sobre `integration/settings-center-rc`.
-O backend `niri-settings` agora gera atalhos configuráveis para fechar a janela
-focada e navegar foco horizontal/vertical. Os valores têm allowlist fechada,
-colisão entre as sete ações é rejeitada, KDL é validado antes da gravação e
-estados anteriores recebem defaults sem perda das opções existentes. O
-Settings Center expõe seletores para essas ações, detecta suporte a partir do
+commits `672c70e` e `415dbfb`; PR #20 está aberto como draft sobre
+`integration/niri-plus-rc`. A integração visual está no branch
+`feature/settings-close-window-shortcut`, commits `7eba119` e `a94ce4e`, com PR
+#9 draft sobre `integration/settings-center-rc`.
+O backend `niri-settings` gera atalhos para launcher, terminal, fechar janela,
+foco/movimento de colunas e janelas, e alternar janela flutuante. Os valores têm
+allowlist fechada, colisão entre as dez ações é rejeitada, KDL é validado antes
+da gravação e estados anteriores recebem defaults sem perda das opções
+existentes. O Settings Center expõe seletores para essas ações, detecta suporte a partir do
 status do backend e desativa apenas controles novos quando o `niri+` for antigo.
 Quickshell continua independente: os demais painéis funcionam sem a CLI, e
 aplicações de configurações antigas omitem os campos que o backend antigo não
 conhece.
 
-Validação final do incremento: asahi `compileall`, 219 testes `unittest` e
+Validação final do incremento: asahi `compileall`, 220 testes `unittest` e
 `scripts/validate_baseline.py` passaram. Quickshell `compileall`, 40 testes
 `unittest`, load de 59 QML (zero erros/avisos tardios), render completo de todas
 as cenas (99 imagens, exit 0) e render específico da página de atalhos passaram.
@@ -236,12 +236,14 @@ PR #20: `https://github.com/LQ13ofc/asahi-system/pull/20`, draft na branch
 da feature (workflow pull_request do repositório só observa base `main`, então
 PR de feature encadeado ao RC não recebe check automático). PR #9 do quickshell-:
 `https://github.com/LQ13ofc/quickshell-/pull/9`, draft, head
-`7eba119f1dea6572c597246563f3794a68d986f0`; CI `38051456317` passou.
+branch `feature/settings-close-window-shortcut`; CI `38051456317` passou antes
+do incremento de ações adicionais; o CI atual será verificado após o push.
 Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
 e PR #8 `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
 
-Próxima ação executável: continuar as opções funcionais pendentes do Settings
-Center em novas branches baseadas no RC. A descoberta de nome/mode/scale de
+Próxima ação executável: publicar o incremento de ações de janela e verificar CI
+atual dos PRs #20/#9; depois continuar as opções funcionais pendentes do
+Settings Center em branches baseadas no RC. Descoberta de nome/mode/scale de
 outputs e validação de backlight permanecem `M1_REQUIRED`; nenhuma UI deverá
-simular essas opções no Cloud. PRs #19/#8 permanecem exatamente nos commits RC,
-sem merge ou mudança no pin de produção.
+simular essas opções no Cloud. PRs #19/#8 permanecem nos commits RC, sem merge
+ou mudança no pin de produção.
