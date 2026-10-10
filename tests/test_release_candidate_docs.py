@@ -7,7 +7,7 @@ from niri_plus import source_update
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIRST_PIN = "79b093e60f72a2e31f29f819ca2e13d3a1f296e5"
 NEXT_PIN = "b440538d342822eac6cb046f0c0dd5e96212d6f2"
-CURRENT_PIN = "fadf99f1e95dd8763082b7553fb55216e42121a3"
+CURRENT_PIN = "d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3"
 
 
 class ReleaseCandidateDocsTests(unittest.TestCase):

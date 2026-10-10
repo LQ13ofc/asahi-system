@@ -4,7 +4,7 @@ This separate procedure tests the integrated Cloud candidate from PR #22. The or
 The production command remains pinned to `main`; the RC installer is a separate,
 explicit helper. It does not merge either PR or update the production Quickshell
 pin (`55e92880d0aff75d235f283c839ec0990eaa9e17`). The candidate Quickshell pin is
-`fadf99f1e95dd8763082b7553fb55216e42121a3`.
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`.
 
 Do not run these commands from a mutable project worktree. Use a fresh,
 user-owned `main` checkout as the Git credential/configuration source. Its
@@ -61,8 +61,8 @@ verify the candidate gitlink and lock agree on the requested Quickshell commit:
 GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never git -C "$RC_SOURCE" fetch --no-tags origin refs/pull/22/head
 export RC_SYSTEM_COMMIT="$(git -C "$RC_SOURCE" rev-parse --verify 'FETCH_HEAD^{commit}')"
 test "$(GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never git -C "$RC_SOURCE" ls-remote --exit-code --refs origin refs/pull/22/head | awk '{print $1}')" = "$RC_SYSTEM_COMMIT"
-test "$(git -C "$RC_SOURCE" rev-parse "$RC_SYSTEM_COMMIT:external/quickshell")" = fadf99f1e95dd8763082b7553fb55216e42121a3
-test "$(git -C "$RC_SOURCE" show "$RC_SYSTEM_COMMIT:integration/quickshell.lock.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')" = fadf99f1e95dd8763082b7553fb55216e42121a3
+test "$(git -C "$RC_SOURCE" rev-parse "$RC_SYSTEM_COMMIT:external/quickshell")" = d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3
+test "$(git -C "$RC_SOURCE" show "$RC_SYSTEM_COMMIT:integration/quickshell.lock.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])')" = d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3
 ```
 
 Derive the bootstrap checksum from the immutable Git blob, then fetch the same
@@ -120,7 +120,7 @@ niri_plus_rc --candidate-commit "$RC_SYSTEM_COMMIT" --dry-run
 ```
 
 Only continue if the output lists the intended PR #22 SHA and Quickshell
-`fadf99f1e95dd8763082b7553fb55216e42121a3`, and identifies the previous
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`, and identifies the previous
 production commits as known-good. Then install:
 
 ```sh
@@ -146,7 +146,7 @@ niri+ status
 niri+ doctor
 ```
 
-Confirm the installed Quickshell commit is `fadf99f1e95dd8763082b7553fb55216e42121a3`,
+Confirm the installed Quickshell commit is `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`,
 the Wayland-ready user services are active once, audio/network remain available,
 and the Niri session can log out normally. Do not change SDDM or disable global
 services during this trial.
