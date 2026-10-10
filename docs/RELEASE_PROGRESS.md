@@ -416,3 +416,57 @@ Próxima ação: confirmar CI do PR #22 no head após este registro. Se passar,
 continuar verificando a matriz de requisitos implementáveis no Cloud, mantendo
 os pins anteriores imutáveis. Compositor, teclado físico, serviços e recursos
 reais continuam `M1_REQUIRED`.
+
+## Auditoria final pré-M1 — Cloud
+
+Branch local de auditoria `audit/final-pre-m1`, derivada do PR #22. O PR #22
+continua sem merge e será atualizado por fast-forward após a revisão local. O
+Quickshell PR #15 também foi atualizado por fast-forward; o PR #23 (Graphify
+asahi-system) e o PR #16 (Graphify Quickshell) permanecem abertos, sem merge e
+com seus heads originais. Nenhuma branch `main`/`master` foi alterada.
+
+Pins: `origin/main` continua em `55e92880d0aff75d235f283c839ec0990eaa9e17`;
+gitlink, lock e verificador RC #22 agora usam Quickshell
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`. O procedimento atualizado é
+`docs/release-candidate-m1-pr22.md`; o procedimento antigo PR #19 / PR #8 segue
+separado e intacto.
+
+Graphify está fixado em 0.9.84 e é somente auxiliar. O grafo asahi-system tem
+890 nós / 2.439 relações em 42 arquivos-fonte, sem atravessar o submodule
+Quickshell. O grafo Quickshell tem 372 nós / 713 relações em 16 arquivos-fonte;
+21 arquivos detectados não produziram nós e 140 arquivos permanecem
+inclassificados, incluindo QML. KDL, systemd e QML foram avaliados por testes
+específicos, sem atribuir essa cobertura ao grafo.
+
+Achados confirmados corrigidos:
+
+- `.graphifyignore` agora exclui `external/quickshell/`, evitando misturar os
+  domínios dos repositórios; teste Graphify cobre a regra.
+- Control Center limitou a altura disponível pelo monitor e tornou o conteúdo
+  rolável, com scrollbar; novo teste Cloud impede corte/alcance impossível das
+  integrações e está incluído no workflow Quickshell.
+
+Validação Cloud final: asahi-system baseline validator OK, compileall OK e 237
+testes `unittest` OK. Quickshell compileall OK, 45 `unittest` OK, 13 comandos
+do harness OK (59 QML carregados, render integral, persistência, multimonitor,
+teclado, serviços, lifecycle, perfis e layout do Control Center). `pyside6-
+qmllint` terminou com código 0: 193 avisos em 126 arquivos, classificados em
+`docs/validacao-qml.md`. `systemd-analyze verify` no Cloud não conseguiu
+confirmar os executáveis `qs`/PolicyKit ausentes e o user manager não está
+disponível; os contratos estáticos da sessão passaram. Nada disso é evidência
+de execução no M1.
+
+Decisão registrada em `docs/FINAL_PRE_M1_AUDIT.md`: GO apenas para o experimento
+opt-in e reversível no M1, depois de CI aprovado nos novos heads; NO-GO para
+release de produção. RAM real, ciclo Wayland/Niri, GPU, áudio/rede, suspend,
+recovery Plasma e atribuição dos 4 GiB continuam `M1_REQUIRED`.
+
+Commits de auditoria já feitos: asahi-system `3c4797c` (Graphify), `adb4695`
+(exclusão do submodule), `0a3e117`/`b08759e` (pin candidato); Quickshell
+`f7fe3e5` (Graphify), `fadf99f` (rolagem Control Center), `d2fe6d5` (limites de
+cobertura Graphify). Commits da nota final desta auditoria ainda serão
+acrescentados no branch.
+
+Próxima ação executável: confirmar `git diff --check`, concluir o commit do
+relatório/progresso, fazer push fast-forward da branch de auditoria sobre o PR
+#22, e aguardar CI nos PRs #15/#22. Nenhum pedido de teste físico foi feito.

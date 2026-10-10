@@ -14,4 +14,4 @@ Para worktrees em diretórios diferentes, passe o caminho real do checkout `quic
 
 Os `.graphifyignore` excluem baseline do M1, capturas de experimentos, saídas geradas e padrões comuns de credenciais. O grafo continua sendo derivado e não substitui a leitura do código-fonte.
 
-Smoke test Cloud do candidato de auditoria: após excluir explicitamente o submodule `external/quickshell/`, o grafo de `asahi-system` contém 886 nós e 2.439 relações de 42 arquivos-fonte. O checkout visual não é analisado dentro do grafo de sistema; cada repositório gera seu próprio grafo. Arquivos QML, KDL, systemd e outros sem extensão suportada continuam exigindo auditoria e testes específicos.
+Smoke test Cloud do candidato de auditoria: após excluir explicitamente o submodule `external/quickshell/`, o grafo de `asahi-system` contém 890 nós e 2.439 relações de 42 arquivos-fonte. O checkout visual não é analisado dentro do grafo de sistema; cada repositório gera seu próprio grafo. Arquivos QML, KDL, systemd e outros sem extensão suportada continuam exigindo auditoria e testes específicos.
