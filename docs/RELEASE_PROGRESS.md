@@ -48,7 +48,8 @@ production `main` pin is still `55e92880d0aff75d235f283c839ec0990eaa9e17`.
   Asahi Actions run `38055455933`; the earlier Gaming CLI head
   `1e841e99b626ff27afd0e8b324a60d2f6b9c43f2` passed run `38056017599`. Actions
   run `38056128364` passed on code head
-  `984b8c97c38853b5fcf0a8a621b32912138e2e55`.
+  `984b8c97c38853b5fcf0a8a621b32912138e2e55`; run `38056189794` passed on
+  progress-document head `e267722e7dafc9dcf82d7e9f3c8d082c784798cc`.
 
 ### Remaining release gate
 
@@ -60,9 +61,12 @@ Niri runtime application of generated KDL, Wayland services/devices, suspend,
 Honeykrisp/Gamescope behavior, and measured CPU/RAM/frametime remain
 `M1_REQUIRED`. Cloud validation does not establish those claims.
 
-Next executable action: publish the updated progress and validation details on
-PR #22, then continue any additional Cloud-fixable issues found in cumulative
-candidate review without changing production pins.
+Next release action: the Cloud candidate is ready for review; the remaining
+gate is the documented Fedora Asahi M1 validation after the candidate is
+accepted for that gate. Until those measurements exist, Gamescope/Honeykrisp
+compatibility and hardware performance remain unverified. Any new CI or review
+finding that can be reproduced in Cloud returns to implementation before the
+hardware gate.
 
 Historical PR #19 first-gate checkpoint: production `main` used the known-good
 Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17`, while that separate
