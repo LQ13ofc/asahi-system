@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, brightness, cli, doctor, host, install, install_command, niri_settings, quickshell, rollback, source_update, status, wayland_ready
+from niri_plus import benchmark, brightness, cli, doctor, host, install, install_command, niri_settings, plugin_command, quickshell, recovery, rollback, source_update, status, wayland_ready
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -303,14 +303,17 @@ class NiriPlusCliTests(unittest.TestCase):
     def test_default_apply_does_not_request_the_visual_repository(self):
         with mock.patch.object(cli.install_command, "run_install", return_value=0) as run:
             self.assertEqual(cli.main(["install"]), 0)
-        run.assert_called_once_with(False, include_quickshell=False)
+        run.assert_called_once_with(False)
 
     def test_optional_visual_integration_is_explicit_in_dry_run(self):
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            self.assertEqual(cli.main(["install", "--dry-run", "--with-quickshell"]), 0)
-        self.assertIn("Quickshell visual pin:", output.getvalue())
-        self.assertIn("asahi-quickshell.service", output.getvalue())
+        with self.assertRaises(SystemExit) as error:
+            cli.main(["install", "--dry-run", "--with-quickshell"])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_plugin_install_is_the_explicit_quickshell_entrypoint(self):
+        with mock.patch.object(cli.plugin_command, "run_install", return_value=0) as run:
+            self.assertEqual(cli.main(["plugin", "install", "quickshell"]), 0)
+        run.assert_called_once_with("quickshell")
 
     def test_niri_only_package_transaction_does_not_enable_visual_repository(self):
         with mock.patch.object(install.shutil, "which", return_value="/usr/bin/dnf"), \
@@ -333,7 +336,7 @@ class NiriPlusCliTests(unittest.TestCase):
             root = pathlib.Path(temp)
             install.install_files(root, include_quickshell=False)
             state = install.load_state(root)
-            state["applied_version"] = "0.1.10"
+            state["applied_version"] = "0.1.12"
             state["quickshell"] = {"expected_commit": None, "known_good_commit": None}
             install.write_state(root, state)
             report = host.host_report(root, machine="aarch64", runner=missing_runner)

@@ -43,6 +43,8 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
     lines.extend(["\nQuickshell integration", f"  Binary/version: {qs['version_status']} ({qs['version']})",
                   f"  RPM engine: {qs['package_status']} ({qs['package_version']}, expected {qs['package_expected']})",
                   f"  Checkout/config: {qs['checkout_status']} ({qs['installed_commit']} expected {qs['expected_commit']})",
+                  f"  Plugin manifest: {qs.get('managed_plugin_state', host.UNAVAILABLE)}; installed commit: "
+                  f"{qs.get('managed_plugin_commit', host.UNAVAILABLE)}",
                   f"  State pin: {qs['state_pin_status']} ({qs['state_expected_commit']})",
                   f"  Runtime snapshot: {qs['runtime_link_status']}",
                   f"  Known-good commit: {qs['known_good_commit']}; dirty: {qs['dirty']}",

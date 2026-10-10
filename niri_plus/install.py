@@ -245,13 +245,13 @@ def load_state(root: pathlib.Path) -> dict[str, Any]:
         raise InstallError(f"cannot read install state {path}: {exc}") from exc
 
 
-def render_plan(*, include_quickshell: bool = True) -> None:
+def render_plan(*, include_quickshell: bool = True, data_dir: pathlib.Path | None = None) -> None:
     print("Niri+ install plan (dry-run; no host changes)")
     print("Explicit packages:")
     for package in PACKAGES:
         print(f"  - {package}")
     if include_quickshell:
-        lock_path = REPO / "integration/quickshell.lock.json"
+        lock_path = (data_dir or REPO) / "integration/quickshell.lock.json"
         try:
             lock = json.loads(lock_path.read_text(encoding="utf-8"))
             print(f"  - {lock['engine']['nevra']} (assinatura verificada, COPR temporário; aarch64)")
@@ -330,9 +330,15 @@ def install_files(root: pathlib.Path, *, include_quickshell: bool = True) -> tup
     return state, changed
 
 
-def rollback_files(root: pathlib.Path) -> list[str]:
+def rollback_files(root: pathlib.Path, selected_paths: set[str] | None = None) -> list[str]:
     state = load_state(root)
-    entries = state.get("entries", {})
+    all_entries = state.get("entries", {})
+    entries = all_entries if selected_paths is None else {
+        relative: entry for relative, entry in all_entries.items() if relative in selected_paths
+    }
+    if selected_paths is not None and set(entries) != selected_paths:
+        missing = sorted(selected_paths - set(entries))
+        raise InstallError("refusing partial plugin removal; managed entries are missing: " + ", ".join(missing))
     messages = []
 
     # Validate backups, edited-file destinations and every managed parent before
@@ -397,8 +403,18 @@ def rollback_files(root: pathlib.Path) -> list[str]:
             messages.append(f"restored symlink {relative}")
         else:
             messages.append(f"removed {relative}")
-    if state_path.exists():
-        state_path.unlink()
+    if selected_paths is None:
+        if state_path.exists():
+            state_path.unlink()
+    else:
+        state["entries"] = {relative: entry for relative, entry in all_entries.items() if relative not in selected_paths}
+        state.setdefault("quickshell", {})["expected_commit"] = None
+        # The RPM remains installed and may be shared by a standalone qs
+        # checkout. Relinquish Niri+ package ownership instead of uninstalling it.
+        state["packages_installed_by_us"] = [
+            package for package in state.get("packages_installed_by_us", []) if package != QUICKSHELL_PACKAGE
+        ]
+        write_state(root, state)
     return messages
 
 
@@ -406,20 +422,65 @@ def installed_rpm_packages() -> set[str]:
     return installed_rpm_packages_for((*PACKAGES, QUICKSHELL_PACKAGE))
 
 
-def install_locked_packages(engine: dict[str, str] | None = None) -> None:
+def _package_command(engine: dict[str, str] | None = None, *, allow_quickshell_update: bool = False,
+                     recovery_bundle: pathlib.Path | None = None) -> list[str]:
     if shutil.which("dnf") is None:
         raise InstallError("dnf was not found")
     if engine is not None and (not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key")):
         raise InstallError("Quickshell engine package lock is incomplete")
-    if engine is None:
-        command = ["dnf", "install", "-y", "--setopt=install_weak_deps=False", *PACKAGES]
-    else:
-        command = [
-            "dnf", "install", "-y", "--setopt=install_weak_deps=False",
+    installed = installed_rpm_packages_for((*PACKAGES, QUICKSHELL_PACKAGE))
+    missing_core = [package for package in PACKAGES if package not in installed]
+    visual_package: str | None = None
+    if engine is not None:
+        from . import quickshell
+        expected = engine["nevra"].removeprefix("quickshell-") + "." + engine.get("architecture", "aarch64")
+        rpm_state, rpm_version = quickshell._rpm_version(pathlib.Path("/"), subprocess.run)
+        if QUICKSHELL_PACKAGE not in installed or rpm_state == "NOT_INSTALLED":
+            visual_package = engine["nevra"]
+        elif rpm_state != "OK":
+            raise InstallError("installed Quickshell RPM version cannot be verified; refusing an update")
+        elif rpm_version != expected:
+            if not allow_quickshell_update:
+                raise InstallError(
+                    "Quickshell RPM is independently installed at a different version; refusing to replace it"
+                )
+            from . import recovery
+            if (recovery_bundle is None
+                    or not recovery.has_rpm_payload(recovery_bundle, QUICKSHELL_PACKAGE, rpm_version)):
+                raise InstallError(
+                    "Quickshell engine update requires a verified cached RPM for offline rollback; "
+                    "no system files were changed"
+                )
+            visual_package = engine["nevra"]
+    if not missing_core and visual_package is None:
+        return []
+    command = ["dnf", "install", "-y", "--setopt=install_weak_deps=False"]
+    if visual_package:
+        command.extend([
             f"--repofrompath=niri-plus-quickshell,{engine['repository']}", "--enablerepo=niri-plus-quickshell",
             "--setopt=niri-plus-quickshell.gpgcheck=1", f"--setopt=niri-plus-quickshell.gpgkey={engine['gpg_key']}",
-            *PACKAGES, engine["nevra"],
-        ]
+        ])
+    command.extend(missing_core)
+    if visual_package:
+        command.append(visual_package)
+    return command
+
+
+def validate_package_plan(engine: dict[str, str] | None = None, *,
+                          allow_quickshell_update: bool = False,
+                          recovery_bundle: pathlib.Path | None = None) -> list[str]:
+    """Resolve local package ownership/version policy without modifying RPM state."""
+    return _package_command(engine, allow_quickshell_update=allow_quickshell_update,
+                            recovery_bundle=recovery_bundle)
+
+
+def install_locked_packages(engine: dict[str, str] | None = None, *,
+                            allow_quickshell_update: bool = False,
+                            recovery_bundle: pathlib.Path | None = None) -> None:
+    command = _package_command(engine, allow_quickshell_update=allow_quickshell_update,
+                               recovery_bundle=recovery_bundle)
+    if not command:
+        return
     try:
         subprocess.run(command, check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
@@ -438,7 +499,8 @@ def update_quickshell_state(state: dict[str, Any], pinned_commit: str | None, *,
 
 def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, str] | None = None,
                   machine: str | None = None, *, defer_packages: bool = False,
-                  include_quickshell: bool = True) -> None:
+                  include_quickshell: bool = True,
+                  recovery_bundle: pathlib.Path | None = None) -> None:
     release = os_release if os_release is not None else parse_os_release()
     arch = machine if machine is not None else platform.machine()
     errors = target_mismatches(release, arch)
@@ -463,6 +525,9 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
             raise InstallError("Quickshell engine package lock is incomplete")
     else:
         engine = None
+    allow_quickshell_update = QUICKSHELL_PACKAGE in state.get("packages_installed_by_us", [])
+    validate_package_plan(engine, allow_quickshell_update=allow_quickshell_update,
+                          recovery_bundle=recovery_bundle)
     legacy_entries = set(state.get("entries", {})) & LEGACY_MANAGED_PATHS
     if legacy_entries:
         tracked_packages = state.get("packages_installed_by_us", [])
@@ -481,7 +546,8 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
     _, changed = install_files(root, include_quickshell=include_quickshell)
     if not defer_packages:
         try:
-            install_locked_packages(engine)
+            install_locked_packages(engine, allow_quickshell_update=allow_quickshell_update,
+                                    recovery_bundle=recovery_bundle)
         except InstallError as exc:
             rollback_files(root)
             retained = load_state(root)

@@ -6,7 +6,7 @@ import argparse
 import json
 import pathlib
 
-from . import benchmark, brightness, doctor, gaming, install_command, niri_settings, rollback, status, uninstall, update
+from . import benchmark, brightness, doctor, gaming, install_command, niri_settings, plugin_command, preflight, recovery, rollback, status, uninstall, update
 
 
 def version() -> str:
@@ -35,8 +35,23 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status", help="show read-only installation status")
     install_parser = commands.add_parser("install", help="install the Niri+ session")
     install_parser.add_argument("--dry-run", action="store_true", help="show the plan without changing the host")
-    install_parser.add_argument("--with-quickshell", action="store_true",
-                                help="also install the optional Quickshell visual integration")
+    install_parser.add_argument("--with-quickshell", action="store_true", help=argparse.SUPPRESS)
+    plugin_parser = commands.add_parser("plugin", help="manage trusted optional integrations")
+    plugin_actions = plugin_parser.add_subparsers(dest="plugin_action", required=True)
+    plugin_actions.add_parser("list", help="list known plugins and their managed state")
+    plugin_status = plugin_actions.add_parser("status", help="show status for one known plugin")
+    plugin_status.add_argument("name", choices=("quickshell",))
+    plugin_install = plugin_actions.add_parser("install", help="explicitly install one optional plugin")
+    plugin_install.add_argument("name", choices=("quickshell",))
+    plugin_remove = plugin_actions.add_parser("remove", help="remove one Niri+ managed plugin")
+    plugin_remove.add_argument("name", choices=("quickshell",))
+    commands.add_parser("preflight", help="run read-only checks before installing a candidate")
+    recovery_parser = commands.add_parser("recovery", help="prepare or restore protected offline recovery state")
+    recovery_actions = recovery_parser.add_subparsers(dest="recovery_action", required=True)
+    recovery_actions.add_parser("prepare", help="save current Niri+ managed files to a protected offline bundle")
+    recovery_actions.add_parser("status", help="verify the local offline recovery bundle")
+    recovery_restore = recovery_actions.add_parser("restore", help="restore a verified bundle offline (requires root)")
+    recovery_restore.add_argument("--bundle", type=pathlib.Path)
     commands.add_parser("update", help="check/apply a trusted Niri+ release (not yet available)")
     rollback_parser = commands.add_parser("rollback", help="restore Niri+ managed files")
     rollback_parser.add_argument("--remove-packages", action="store_true", help="also remove only explicitly tracked packages")
@@ -113,7 +128,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         print(status.render_status(version()))
     elif args.command == "install":
-        return install_command.run_install(args.dry_run, include_quickshell=args.with_quickshell)
+        if args.with_quickshell:
+            parser.error("--with-quickshell was replaced by `sudo niri+ plugin install quickshell`")
+        return install_command.run_install(args.dry_run)
+    elif args.command == "plugin":
+        if args.plugin_action == "list":
+            return plugin_command.run_list()
+        if args.plugin_action == "status":
+            return plugin_command.run_status(args.name)
+        if args.plugin_action == "install":
+            return plugin_command.run_install(args.name)
+        return plugin_command.run_remove(args.name)
+    elif args.command == "preflight":
+        print(preflight.render())
+    elif args.command == "recovery":
+        try:
+            if args.recovery_action == "prepare":
+                print(f"Prepared protected offline recovery bundle: {recovery.prepare_bundle()}")
+            elif args.recovery_action == "status":
+                print(recovery.status())
+            else:
+                print(recovery.restore(args.bundle))
+        except (recovery.RecoveryError, OSError) as error:
+            print(f"Offline recovery failed: {error}")
+            return 2
     elif args.command == "update":
         return update.run_update()
     elif args.command == "rollback":

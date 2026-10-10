@@ -109,7 +109,9 @@ class GitSnapshotTests(unittest.TestCase):
             "niri/config.kdl": "include \"keybinds.kdl\"\n",
             "sessions/systemd/asahi-quickshell.service": "[Service]\nExecStart=/usr/bin/qs\n",
             "niri_plus/cli.py": "# candidate CLI module\n",
+            "niri_plus/recovery_core.py": "#!/usr/bin/python3 -I\n# standalone recovery fixture\n",
             "scripts/collect-performance-baseline": "#!/bin/sh\nexit 0\n",
+            "scripts/collect-m1-release-gate.sh": "#!/usr/bin/env bash\nexit 0\n",
         }.items():
             target = self.asahi_seed / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +123,7 @@ class GitSnapshotTests(unittest.TestCase):
         candidate_commit = commit_all(self.asahi_seed, "complete candidate installation tree")
         git(["-C", str(self.asahi_seed), "push", "origin", "main"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:{source_update.RELEASE_CANDIDATE_REF}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         real_run_path = snapshot_install.runpy.run_path
@@ -138,6 +140,7 @@ class GitSnapshotTests(unittest.TestCase):
                 "bin": host_root / "usr/local/bin/niri+",
                 "state": host_root / "var/lib/niri-plus/bootstrap.json",
                 "backups": host_root / "var/lib/niri-plus/bootstrap-backups",
+                "recovery": host_root / "usr/local/libexec/niri-plus-recover",
             }
             (host_root / "usr/local").mkdir(parents=True, exist_ok=True)
 
@@ -147,9 +150,11 @@ class GitSnapshotTests(unittest.TestCase):
                 globals_ns["LIB"] = staged_roots["lib"]
                 globals_ns["DATA"] = staged_roots["data"]
                 globals_ns["BIN"] = staged_roots["bin"]
+                globals_ns["RECOVERY"] = staged_roots["recovery"]
                 globals_ns["STATE"] = staged_roots["state"]
                 globals_ns["BACKUPS"] = staged_roots["backups"]
-                globals_ns["EXPECTED_MANAGED"] = [str(staged_roots[key]) for key in ("lib", "data", "bin")]
+                globals_ns["LEGACY_MANAGED"] = [str(staged_roots[key]) for key in ("lib", "data", "bin")]
+                globals_ns["EXPECTED_MANAGED"] = [str(staged_roots[key]) for key in ("lib", "data", "bin", "recovery")]
                 return namespace
 
             def staged_mkdtemp(suffix=None, prefix=None, dir=None):
@@ -157,7 +162,8 @@ class GitSnapshotTests(unittest.TestCase):
                     dir = str(host_root / "usr/local")
                 return real_mkdtemp(prefix=prefix, suffix=suffix, dir=dir)
 
-            def apply_candidate(*, defer_packages: bool, include_quickshell: bool) -> None:
+            def apply_candidate(*, root=pathlib.Path("/"), defer_packages: bool, include_quickshell: bool,
+                                recovery_bundle=None) -> None:
                 install_command.install.install_files(host_root, include_quickshell=include_quickshell)
                 state = install_command.install.load_state(host_root)
                 state["applied_version"] = version
@@ -178,7 +184,7 @@ class GitSnapshotTests(unittest.TestCase):
                         or state["quickshell"]["expected_commit"] != qs_commit):
                     raise RuntimeError("simulated post-install verification failed")
 
-            def transaction(paths, bootstrap, apply, verify, finalize=lambda: None):
+            def transaction(paths, bootstrap, apply, verify, finalize=lambda: None, *, root=pathlib.Path("/")):
                 if failure == "bootstrap":
                     resolved_bootstrap = bootstrap
                     def fail_after_bootstrap():
@@ -203,11 +209,11 @@ class GitSnapshotTests(unittest.TestCase):
                  mock.patch.object(install_command.install, "reload_invoking_user_manager"):
                 old_path = list(sys.path)
                 try:
-                    snapshot_install.apply_snapshot(snapshot.root, snapshot.manifest)
+                    snapshot_install.apply_snapshot(snapshot.root, snapshot.manifest, root=host_root)
                 finally:
                     sys.path[:] = old_path
                 if failure is None:
-                    package_install.assert_called_once()
+                    package_install.assert_not_called()
                     runtime = staged_roots["data"] / "quickshell"
                     self.assertEqual((runtime / "shell.qml").read_text(encoding="utf-8"), "// visual pin one\n")
                     marker = json.loads((staged_roots["data"] / "quickshell.snapshot.json").read_text())
@@ -375,6 +381,33 @@ class GitSnapshotTests(unittest.TestCase):
         self.assertFalse(any("fetch" in command and self.qs_url in command for command in commands))
         self.assertIn("--without-quickshell", invoked)
 
+    def test_release_candidate_core_only_verifies_pin_without_fetching_private_quickshell(self):
+        self._write_system_tree("0.1.12", self.qs_commit)
+        candidate = commit_all(self.asahi_seed, "core-only candidate with explicit visual opt-in")
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:{source_update.RELEASE_CANDIDATE_REF}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        commands = []
+
+        def record_runner(args, **kwargs):
+            commands.append([str(value) for value in args])
+            return subprocess.run(args, **kwargs)
+
+        with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit):
+            with self._snapshot(release_candidate=True, expected_system_commit=candidate,
+                                include_quickshell=False, runner=record_runner) as snapshot:
+                manifest = source_update.validate_snapshot(
+                    snapshot.root, snapshot.manifest,
+                    expected_repository=self.asahi_url,
+                    expected_quickshell_repository=self.qs_url,
+                    allow_test_file_sources=True,
+                )
+                self.assertFalse(snapshot.include_quickshell)
+                self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
+                self.assertEqual(manifest["channel"], "release-candidate")
+                self.assertEqual(manifest["quickshell"]["files"], [])
+                self.assertFalse((snapshot.root / "external/quickshell").exists())
+        self.assertFalse(any("fetch" in command and self.qs_url in command for command in commands))
+
     def test_install_with_source_already_at_remote_head_is_reproducible(self):
         with self._snapshot() as first:
             first_sha = first.system_commit
@@ -385,7 +418,7 @@ class GitSnapshotTests(unittest.TestCase):
     def test_release_candidate_requires_exact_pr_head_and_ignores_mutable_worktree(self):
         self._write_system_tree("0.1.9-rc", self.qs_commit)
         candidate = commit_all(self.asahi_seed, "release candidate immutable source")
-        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:refs/pull/22/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:{source_update.RELEASE_CANDIDATE_REF}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         git(["-C", str(self.checkout), "switch", "-c", "worktree-experiment"])
         dirty_file = self.checkout / "niri_plus/install_command.py"
@@ -402,7 +435,7 @@ class GitSnapshotTests(unittest.TestCase):
                 self.assertEqual(snapshot.system_commit, candidate)
                 self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
                 self.assertEqual(manifest["channel"], "release-candidate")
-                self.assertEqual(manifest["system"]["branch"], "refs/pull/22/head")
+                self.assertEqual(manifest["system"]["branch"], source_update.RELEASE_CANDIDATE_REF)
                 self.assertNotIn("untracked-secret.txt", {item["path"] for item in manifest["system"]["files"]})
                 self.assertNotEqual((snapshot.root / "niri_plus/install_command.py").read_text(), dirty_file.read_text())
         self.assertEqual(dirty_file.read_text(), "# uncommitted code must never enter the privileged snapshot\n")
@@ -414,7 +447,7 @@ class GitSnapshotTests(unittest.TestCase):
     def test_release_candidate_rejects_quickshell_lock_divergence_and_unexpected_pin(self):
         self._write_system_tree("0.1.9-rc", self.qs_commit)
         candidate = commit_all(self.asahi_seed, "release candidate lock")
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:{source_update.RELEASE_CANDIDATE_REF}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", "0" * 40):
             with self.assertRaisesRegex(source_update.SourceUpdateError, "approved Release Candidate Quickshell"):
@@ -426,7 +459,7 @@ class GitSnapshotTests(unittest.TestCase):
         bootstrap = pathlib.Path(__file__).resolve().parents[1] / "scripts/bootstrap-niri-plus"
         shutil.copy2(bootstrap, self.asahi_seed / "scripts/bootstrap-niri-plus")
         candidate = commit_all(self.asahi_seed, "candidate bootstrap contract")
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:{source_update.RELEASE_CANDIDATE_REF}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit), \
              mock.patch.object(source_update, "EXPECTED_REPOSITORY", self.asahi_url), \
@@ -457,7 +490,7 @@ class GitSnapshotTests(unittest.TestCase):
     def test_production_install_path_still_requires_clean_main_and_reads_main_pin(self):
         self._write_system_tree("0.1.9-candidate-but-not-main", self.qs_commit)
         candidate = commit_all(self.asahi_seed, "non-production candidate")
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:{source_update.RELEASE_CANDIDATE_REF}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with self._snapshot() as snapshot:
             self.assertEqual(snapshot.system_commit, self.initial_system_commit)
@@ -505,7 +538,7 @@ class GitSnapshotTests(unittest.TestCase):
 
         def git_output(_source, _owner, _groups, *args, **_kwargs):
             if args[:2] == ("ls-remote", "--exit-code"):
-                return f"{system_commit}\trefs/pull/22/head"
+                return f"{system_commit}\t{source_update.RELEASE_CANDIDATE_REF}"
             if args[0] == "rev-parse" and args[-1] == "FETCH_HEAD^{commit}":
                 return system_commit
             if args[0] == "rev-parse" and args[-1] == f"{system_commit}:niri_plus/source_update.py":
@@ -574,14 +607,17 @@ class GitSnapshotTests(unittest.TestCase):
                 return FakeSnapshotContext(
                     self.asserted_candidate.get("expected_system_commit", good_system_sha),
                     self.asserted_candidate.get("expected_quickshell_commit", quickshell_sha),
+                    self.asserted_candidate.get("include_quickshell", True),
                 )
 
-            def install_from_snapshot(self, snapshot):
+            def install_from_snapshot(self, snapshot, *, plugin_action="none"):
                 self.installed_snapshot = snapshot
+                self.installed_plugin_action = plugin_action
 
         class FakeSnapshotContext:
-            def __init__(self, system_commit, quickshell_commit):
-                self.snapshot = SimpleNamespace(system_commit=system_commit, quickshell_commit=quickshell_commit)
+            def __init__(self, system_commit, quickshell_commit, include_quickshell):
+                self.snapshot = SimpleNamespace(system_commit=system_commit, quickshell_commit=quickshell_commit,
+                                                include_quickshell=include_quickshell)
             def __enter__(self):
                 return self.snapshot
             def __exit__(self, *_args):
@@ -596,10 +632,13 @@ class GitSnapshotTests(unittest.TestCase):
                 "_identity": lambda _source: (SimpleNamespace(pw_dir=temp, pw_name="owner"), []),
                 "_remote": lambda *_args: "https://github.com/LQ13ofc/asahi-system.git",
                 "_load_committed_resolver": lambda *_args, **_kwargs: resolver,
+                "_managed_quickshell_state": lambda: "installed",
+                "_quickshell_running": lambda: False,
                 "_current_known_good": lambda: {"system_commit": good_system_sha,
                                                  "quickshell_commit": good_quickshell_sha},
                 "_prefixed": lambda _root, _path: pathlib.Path(temp) / "no-known-good-record",
                 "_save_known_good": mock.MagicMock(),
+                "_target_check": lambda: None,
             }), mock.patch.object(namespace["os"], "geteuid", return_value=0), \
                  contextlib.redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(helper["main"]([
@@ -618,6 +657,8 @@ class GitSnapshotTests(unittest.TestCase):
                 "_identity": lambda _source: (SimpleNamespace(pw_dir=temp, pw_name="owner"), []),
                 "_remote": lambda *_args: "https://github.com/LQ13ofc/asahi-system.git",
                 "_load_committed_resolver": lambda *_args, **_kwargs: resolver,
+                "_managed_quickshell_state": lambda: "installed",
+                "_quickshell_running": lambda: False,
                 "_current_known_good": lambda: {"system_commit": good_system_sha,
                                                  "quickshell_commit": good_quickshell_sha},
                 "_prefixed": lambda _root, _path: pathlib.Path(temp) / "no-known-good-record",
@@ -637,6 +678,7 @@ class GitSnapshotTests(unittest.TestCase):
                 "_identity": lambda _source: (SimpleNamespace(pw_dir=temp, pw_name="owner"), []),
                 "_remote": lambda *_args: "https://github.com/LQ13ofc/asahi-system.git",
                 "_load_committed_resolver": lambda *_args, **_kwargs: resolver,
+                "_managed_quickshell_state": lambda: "installed",
                 "_load_known_good": lambda: saved,
                 "_clear_known_good": clear_good,
                 "_target_check": lambda: None,
@@ -652,6 +694,34 @@ class GitSnapshotTests(unittest.TestCase):
             })
             self.assertEqual(resolver.installed_snapshot.system_commit, good_system_sha)
             clear_good.assert_called_once_with()
+
+    def test_rc_dry_run_rejects_incompatible_host_before_git_or_plugin_fetch(self):
+        system_sha = "c" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            helper_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/niri-plus-rc-bootstrap"
+            helper = runpy.run_path(str(helper_path), run_name="niri_plus_rc_bad_host_test")
+            namespace = helper["main"].__globals__
+            resolver = mock.MagicMock()
+            remote = mock.MagicMock()
+            load_resolver = mock.MagicMock(return_value=resolver)
+
+            def reject_host():
+                raise helper["BootstrapError"]("apply is limited to Fedora Asahi Remix 44 on aarch64")
+
+            with mock.patch.dict(namespace, {
+                "_target_check": reject_host,
+                "_identity": mock.MagicMock(),
+                "_remote": remote,
+                "_load_committed_resolver": load_resolver,
+            }), mock.patch.object(namespace["os"], "geteuid", return_value=0), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                result = helper["main"]([
+                    "--source-root", temp, "--bootstrap-commit", system_sha,
+                    "--candidate-commit", system_sha, "--dry-run",
+                ])
+            self.assertEqual(result, 2)
+            remote.assert_not_called()
+            load_resolver.assert_not_called()
 
     def test_wrong_origin_branch_and_dirty_source_are_rejected_before_fetch(self):
         git(["-C", str(self.checkout), "remote", "set-url", "origin", "https://example.invalid/wrong.git"])
@@ -730,7 +800,7 @@ class GitSnapshotTests(unittest.TestCase):
              mock.patch.object(install_command.source_update, "resolved_snapshot", side_effect=error), \
              mock.patch.object(install_command.source_update, "install_from_snapshot") as apply, \
              contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(install_command.run_install(include_quickshell=True), 2)
+            self.assertEqual(install_command.run_install(plugin_action="install"), 2)
         apply.assert_not_called()
         self.assertIn("no changes were applied", output.getvalue())
 

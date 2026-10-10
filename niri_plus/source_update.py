@@ -26,7 +26,7 @@ BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 EXPECTED_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
 EXPECTED_QUICKSHELL_REPOSITORY = "https://github.com/LQ13ofc/quickshell-.git"
 EXPECTED_BRANCH = "main"
-RELEASE_CANDIDATE_PULL_REQUEST = 22
+RELEASE_CANDIDATE_PULL_REQUEST = 24
 RELEASE_CANDIDATE_QUICKSHELL_COMMIT = "d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3"
 RELEASE_CANDIDATE_REF = f"refs/pull/{RELEASE_CANDIDATE_PULL_REQUEST}/head"
 QUICKSHELL_PATH = "external/quickshell"
@@ -507,10 +507,10 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
                       expected_system_commit: str | None = None,
                       known_good_restore: bool = False,
                       expected_quickshell_commit: str | None = None) -> Iterator[Snapshot]:
-    """Resolve production main by default, or an explicitly pinned PR #22 RC.
+    """Resolve production main by default, or an explicitly pinned PR RC.
 
     The ordinary path remains deliberately main-only. The RC mode is opt-in,
-    requires a full commit SHA, verifies that PR #22 currently resolves to that
+    requires a full commit SHA, verifies that the configured candidate PR currently resolves to that
     exact commit, and accepts only the RC's fixed Quickshell gitlink/lock pin.
     """
     source_root = (source_root or discover_source_root()).resolve()
@@ -518,9 +518,9 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
         raise SourceUpdateError("release-candidate install and known-good restore are mutually exclusive")
     if release_candidate:
         if not re.fullmatch(r"[0-9a-f]{40}", str(expected_system_commit or "")):
-            raise SourceUpdateError("release-candidate install requires the full 40-character PR #22 commit SHA")
-        if not include_quickshell:
-            raise SourceUpdateError("release-candidate install requires the pinned Quickshell integration")
+            raise SourceUpdateError(
+                f"release-candidate install requires the full 40-character PR #{RELEASE_CANDIDATE_PULL_REQUEST} commit SHA"
+            )
     elif known_good_restore:
         if (not re.fullmatch(r"[0-9a-f]{40}", str(expected_system_commit or ""))
                 or not re.fullmatch(r"[0-9a-f]{40}", str(expected_quickshell_commit or ""))
@@ -574,7 +574,7 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
         )
         if release_candidate and qs_commit != RELEASE_CANDIDATE_QUICKSHELL_COMMIT:
             raise SourceUpdateError(
-                "PR #22 does not pin the approved Release Candidate Quickshell commit "
+                f"PR #{RELEASE_CANDIDATE_PULL_REQUEST} does not pin the approved Release Candidate Quickshell commit "
                 f"{RELEASE_CANDIDATE_QUICKSHELL_COMMIT}"
             )
         if known_good_restore and qs_commit != expected_quickshell_commit:
@@ -777,7 +777,8 @@ def validate_snapshot(root: pathlib.Path, manifest_path: pathlib.Path, *,
     return {**manifest, "snapshot_sha256": supplied_digest}
 
 
-def install_from_snapshot(snapshot: Snapshot, runner: Runner = subprocess.run) -> None:
+def install_from_snapshot(snapshot: Snapshot, runner: Runner = subprocess.run, *,
+                          plugin_action: str = "none") -> None:
     validate_snapshot(
         snapshot.root, snapshot.manifest,
         expected_repository=snapshot.expected_repository,
@@ -796,6 +797,10 @@ def install_from_snapshot(snapshot: Snapshot, runner: Runner = subprocess.run) -
                "--snapshot-root", str(snapshot.root), "--manifest", str(snapshot.manifest)]
     if not snapshot.include_quickshell:
         command.append("--without-quickshell")
+    if plugin_action != "none":
+        if plugin_action not in {"install", "update", "migrate"}:
+            raise SourceUpdateError("unsupported plugin transaction action")
+        command.extend(["--plugin-action", plugin_action])
     try:
         runner(command, check=True, env=env, stdin=subprocess.DEVNULL, cwd=str(snapshot.root))
     except (OSError, subprocess.SubprocessError) as exc:

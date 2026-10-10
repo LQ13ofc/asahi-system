@@ -4,8 +4,8 @@
 This file must be SHA-256 checked against the value published with the RC
 instructions and executed through the documented in-memory verifier. It never
 imports Python from the source checkout. It extracts source_update.py only
-from the exact PR #22 Git commit, verifies its Git blob ID, and then uses that
-committed resolver to construct the closed root-owned install snapshot.
+from the exact reviewed PR Git commit, verifies its Git blob ID, and then uses
+that committed resolver to construct the closed root-owned install snapshot.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import pathlib
 import platform
 import pwd
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ import tempfile
 
 SYSTEM_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
 SYSTEM_REPOSITORY_SSH = "git@github.com:LQ13ofc/asahi-system.git"
-PR_REF = "refs/pull/22/head"
+PR_REF = "refs/pull/24/head"
 SOURCE_MODULE = "niri_plus/source_update.py"
 BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 VISUAL_DATA = pathlib.Path("/usr/local/share/niri-plus")
@@ -130,17 +131,17 @@ def _load_committed_resolver(source: pathlib.Path, owner, groups, expected_commi
         advertised = _owner_git(source, owner, groups, "ls-remote", "--exit-code", "--refs", "origin", PR_REF)
         rows = [line.split() for line in advertised.splitlines() if line.split()]
         if len(rows) != 1 or len(rows[0]) != 2 or rows[0][1] != PR_REF:
-            raise BootstrapError("GitHub did not advertise exactly one PR #22 head")
+            raise BootstrapError(f"GitHub did not advertise exactly one PR #{PR_REF.split('/')[2]} head")
         if rows[0][0] != expected_commit:
-            raise BootstrapError(f"PR #22 head differs from requested commit: {rows[0][0]}")
+            raise BootstrapError(f"candidate PR head differs from requested commit: {rows[0][0]}")
         _owner_git(source, owner, groups, "fetch", "--no-tags", "origin", PR_REF)
     else:
-        # Recovery remains pinned to the reviewed bootstrap commit even if PR #22
-        # advances or closes after the candidate has been installed.
+        # Recovery remains pinned to the reviewed bootstrap commit even if the
+        # candidate PR advances or closes after installation.
         _owner_git(source, owner, groups, "fetch", "--no-tags", "origin", expected_commit)
     fetched = _owner_git(source, owner, groups, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
     if fetched != expected_commit:
-        raise BootstrapError("fetched PR #22 commit differs from the requested immutable SHA")
+        raise BootstrapError("fetched candidate PR commit differs from the requested immutable SHA")
     blob_oid = _owner_git(source, owner, groups, "rev-parse", f"{expected_commit}:{SOURCE_MODULE}")
     if not re.fullmatch(r"[0-9a-f]{40}", blob_oid):
         raise BootstrapError("committed source resolver has an invalid Git blob ID")
@@ -287,6 +288,100 @@ def _current_known_good(root: pathlib.Path = pathlib.Path("/")) -> dict:
     return record
 
 
+def _managed_quickshell_state(root: pathlib.Path = pathlib.Path("/")) -> str:
+    """Return installed/legacy/absent from managed state, never from `qs`."""
+    paths = (
+        (pathlib.Path("/var/lib/niri-plus/plugins.json"), "manifest"),
+        (pathlib.Path("/var/lib/niri-plus/bootstrap.json"), "bootstrap"),
+        (pathlib.Path("/var/lib/asahi-system/niri-performance/state.json"), "install state"),
+    )
+    parsed: dict[str, dict] = {}
+    for absolute, label in paths:
+        path = _prefixed(root, absolute)
+        if not path.exists() and not path.is_symlink():
+            continue
+        try:
+            metadata = path.lstat()
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or metadata.st_mode & 0o022
+                    or (root == pathlib.Path("/") and metadata.st_uid != 0)):
+                raise BootstrapError(f"managed Quickshell {label} is not a safe regular file")
+            parsed[label] = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise BootstrapError(f"managed Quickshell {label} cannot be validated") from exc
+
+    manifest = parsed.get("manifest")
+    if manifest is not None:
+        registry = manifest.get("plugins") if isinstance(manifest, dict) else None
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != 1 or not isinstance(registry, dict):
+            raise BootstrapError("managed Quickshell manifest has an unsupported schema")
+        if set(registry) - {"quickshell"}:
+            raise BootstrapError("managed plugin manifest contains an unapproved plugin")
+        if "quickshell" in registry:
+            if not isinstance(registry["quickshell"], dict):
+                raise BootstrapError("managed Quickshell manifest record is invalid")
+            return "installed"
+
+    bootstrap = parsed.get("bootstrap", {})
+    if not isinstance(bootstrap, dict):
+        raise BootstrapError("Niri+ bootstrap state is invalid")
+    expected = bootstrap.get("quickshell_expected_commit")
+    if expected:
+        if not re.fullmatch(r"[0-9a-f]{40}", str(expected)):
+            raise BootstrapError("legacy Quickshell pin is invalid")
+        return "legacy"
+
+    install_state = parsed.get("install state", {})
+    if not isinstance(install_state, dict):
+        raise BootstrapError("Niri+ package ownership state is invalid")
+    installed_visual = install_state.get("quickshell", {})
+    if not isinstance(installed_visual, dict):
+        raise BootstrapError("Niri+ Quickshell install state is invalid")
+    legacy_pin = installed_visual.get("expected_commit")
+    if legacy_pin:
+        if not re.fullmatch(r"[0-9a-f]{40}", str(legacy_pin)):
+            raise BootstrapError("legacy Quickshell install-state pin is invalid")
+        return "legacy"
+    return "absent"
+
+
+def _candidate_plugin_plan(root: pathlib.Path = pathlib.Path("/"), *, explicit_opt_in: bool = False,
+                           state: str | None = None) -> tuple[bool, str]:
+    state = state if state is not None else _managed_quickshell_state(root)
+    include = explicit_opt_in or state != "absent"
+    action = {"installed": "update", "legacy": "migrate"}.get(
+        state, "install" if explicit_opt_in else "none",
+    )
+    return include, action
+
+
+def _quickshell_running(proc_root: pathlib.Path = pathlib.Path("/proc")) -> bool | None:
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = [part for part in (entry / "cmdline").read_bytes().split(b"\0") if part]
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        if argv and pathlib.Path(os.fsdecode(argv[0])).name == "qs":
+            return True
+        try:
+            executable = (entry / "exe").readlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        if pathlib.Path(executable).name == "qs":
+            return True
+    return False
+
+
 def _save_known_good(root: pathlib.Path = pathlib.Path("/")) -> dict:
     destination = _prefixed(root, KNOWN_GOOD)
     if destination.exists() or destination.is_symlink():
@@ -349,11 +444,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-root", type=pathlib.Path, required=True,
                         help="normal user's asahi-system checkout; its working-tree contents are never executed")
     parser.add_argument("--bootstrap-commit", required=True,
-                        help="exact PR #22 commit containing this hash-pinned bootstrap")
+                        help="exact reviewed PR commit containing this hash-pinned bootstrap")
     actions = parser.add_mutually_exclusive_group(required=True)
-    actions.add_argument("--candidate-commit", help="exact full PR #22 head SHA")
+    actions.add_argument("--candidate-commit", help="exact full reviewed PR head SHA")
     actions.add_argument("--restore-known-good", action="store_true",
                          help="restore the exact production system and Quickshell commits saved before RC install")
+    parser.add_argument("--with-quickshell", action="store_true",
+                        help="explicitly install Quickshell when no managed integration is already present")
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--dry-run", action="store_true", help="verify and print both exact commits; do not apply")
     modes.add_argument("--apply", action="store_true", help="apply the verified snapshot transaction")
@@ -366,11 +463,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.candidate_commit and (not re.fullmatch(r"[0-9a-f]{40}", args.candidate_commit)
                                   or args.candidate_commit != args.bootstrap_commit):
-        print("--candidate-commit must equal the full bootstrap/PR #22 commit SHA.", file=sys.stderr)
+        print("--candidate-commit must equal the full bootstrap/PR commit SHA.", file=sys.stderr)
         return 2
+    if args.restore_known_good and args.with_quickshell:
+        parser.error("--with-quickshell applies only to candidate installation")
     if not args.dry_run and not args.apply:
         parser.error("choose --dry-run or --apply")
     try:
+        # Even a dry-run is a target preflight: do not fetch private plugin
+        # content or present a usable install plan for an unsupported host.
+        _target_check()
         if args.source_root.is_symlink():
             raise BootstrapError("source root must not be a symlink")
         source = args.source_root.resolve(strict=True)
@@ -386,41 +488,59 @@ def main(argv: list[str] | None = None) -> int:
                 source, owner, groups, args.bootstrap_commit, temp_root,
                 require_current_pr=not args.restore_known_good,
             )
+            current_plugin_state = _managed_quickshell_state()
             if args.restore_known_good:
                 saved = _load_known_good()
+                include_quickshell = True
+                plugin_action = ("update" if current_plugin_state == "installed" else
+                                 "migrate" if current_plugin_state == "legacy" else "install")
                 snapshot_context = resolver.resolved_snapshot(
                     source,
-                    include_quickshell=True,
+                    include_quickshell=include_quickshell,
                     known_good_restore=True,
                     expected_system_commit=saved["system_commit"],
                     expected_quickshell_commit=saved["quickshell_commit"],
                 )
                 label = "KNOWN-GOOD PRODUCTION RESTORE"
             else:
+                include_quickshell, plugin_action = _candidate_plugin_plan(
+                    explicit_opt_in=args.with_quickshell, state=current_plugin_state,
+                )
+                if args.apply and include_quickshell and plugin_action in {"update", "migrate"}:
+                    running = _quickshell_running()
+                    if running is not False:
+                        raise BootstrapError(
+                            "Quickshell update requires an ended graphical session; "
+                            "qs is running or process state is unavailable"
+                        )
                 marker = _prefixed(pathlib.Path("/"), KNOWN_GOOD)
-                saved = (_load_known_good() if marker.exists() or marker.is_symlink()
-                         else _current_known_good())
+                saved = (_load_known_good() if marker.exists() or marker.is_symlink() else
+                         _current_known_good() if current_plugin_state != "absent" else None)
                 snapshot_context = resolver.resolved_snapshot(
-                    source, include_quickshell=True, release_candidate=True,
+                    source, include_quickshell=include_quickshell, release_candidate=True,
                     expected_system_commit=args.candidate_commit,
                 )
                 label = "EXPERIMENTAL RELEASE CANDIDATE"
             with snapshot_context as snapshot:
                 if args.apply:
-                    _target_check()
-                    if not args.restore_known_good:
+                    if not args.restore_known_good and current_plugin_state != "absent":
                         _save_known_good()
-                    resolver.install_from_snapshot(snapshot)
+                    resolver.install_from_snapshot(snapshot, plugin_action=plugin_action)
                     if args.restore_known_good:
                         _clear_known_good()
                     print("Installation transaction completed.")
                 else:
                     print(label + " — dry-run; host unchanged")
                     print(f"asahi-system: {snapshot.system_commit}")
-                    print(f"Quickshell:   {snapshot.quickshell_commit}")
-                    if not args.restore_known_good:
+                    if snapshot.include_quickshell:
+                        print(f"Quickshell:   {snapshot.quickshell_commit} (included)")
+                    else:
+                        print(f"Quickshell:   {snapshot.quickshell_commit} (not fetched; explicit opt-in required)")
+                    if not args.restore_known_good and saved is not None:
                         print(f"known-good asahi-system: {saved['system_commit']}")
                         print(f"known-good Quickshell:   {saved['quickshell_commit']}")
+                    elif not args.restore_known_good:
+                        print("known-good source pair: none; offline recovery will preserve the exact current managed files")
                     print("The verified install plan was not applied.")
         finally:
             temporary.cleanup()

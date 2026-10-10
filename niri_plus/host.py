@@ -377,6 +377,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
                 runner: Runner = subprocess.run) -> dict:
     from . import quickshell
     from . import install
+    from . import plugins
 
     machine = machine or platform.machine()
     release = read_os_release(root)
@@ -435,6 +436,22 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
     quickshell_state = state.get("quickshell", {})
     quickshell_info["known_good_commit"] = quickshell_state.get("known_good_commit") or NOT_CONFIGURED
     quickshell_info["state_expected_commit"] = quickshell_state.get("expected_commit") or NOT_CONFIGURED
+    try:
+        managed_plugin_state, managed_plugin_record = plugins.quickshell_state(root)
+    except plugins.PluginError as error:
+        managed_plugin_state, managed_plugin_record = "invalid", None
+        quickshell_info["status"] = WARNING
+        quickshell_info["warnings"].append(f"Managed Quickshell plugin state is invalid: {error}")
+    quickshell_info["managed_plugin_state"] = managed_plugin_state
+    quickshell_info["managed_plugin_commit"] = (
+        managed_plugin_record.get("commit") if managed_plugin_record else NOT_CONFIGURED
+    )
+    if managed_plugin_state == "legacy":
+        quickshell_info["status"] = WARNING
+        quickshell_info["warnings"].append("Validated 0.1.9 Quickshell state is ready for explicit candidate migration.")
+    elif managed_plugin_state.startswith("installed-"):
+        quickshell_info["status"] = WARNING
+        quickshell_info["warnings"].append("Managed Quickshell plugin manifest, lock, runtime or lifecycle is inconsistent.")
     if installed_version and not quickshell_enabled:
         quickshell_info["state_pin_status"] = NOT_CONFIGURED
         quickshell_info["status"] = NOT_CONFIGURED
