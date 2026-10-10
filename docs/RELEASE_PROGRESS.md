@@ -339,10 +339,19 @@ Cloud neste branch: baseline validator e compileall passaram; 221 testes
 `unittest` passaram, incluindo 34 verificações de snapshot/instalação/rollback
 e um contrato que mantém distintos os pinos dos procedimentos PR #19 e #21.
 O workflow manual `Validate baseline` passou no commit de implementação
-`abe940e` (run `38054567953`). Nenhuma alteração no host ou teste M1.
+`abe940e` (run `38054567953`) e novamente no head `31a3fd2`
+(run `38054641614`). Nenhuma alteração no host ou teste M1.
 
-Próxima ação: reexecutar o workflow manual no head final do PR #21 depois deste
-registro de progresso, então verificar a instalação RC em ambiente isolado com
-gitlink/lock b440 e checksum derivado do blob atual. Depois seguir às demais
-pendências implementáveis no Cloud; teste do sistema gráfico, sessão e recursos
-reais continuam `M1_REQUIRED`.
+Quickshell avançou no PR #15 draft, sobre o PR #14 sem tocar em master ou no
+pin do candidato: head `0dc55d26f4dd2d281044ce6d4a043f5c751298df`. Sliders do
+Control Center agora têm nome/role acessíveis, entram na ordem de Tab e aceitam
+setas; Efficiency/reduced motion pausa os indicadores animados de atividade e
+conexão sem esconder texto de estado. No Cloud passaram compileall, 43 testes,
+load de 59 QML, render completo e qmllint código 0 com 192 avisos classificados.
+O workflow do PR #15 está em andamento (run `38055105197`).
+
+Próxima ação: confirmar o workflow do PR #15; se aprovado, incorporar esse
+incremento em uma nova branch candidata de integração e preparar um PR Asahi
+separado com o pin exato, sem mover PR #19/#21 nem o pin de produção. Em
+seguida continuar a matriz de requisitos implementáveis no Cloud; validação do
+compositor, teclado real e recursos físicos continuam `M1_REQUIRED`.
