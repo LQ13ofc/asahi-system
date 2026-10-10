@@ -37,6 +37,12 @@ integrações ou pacotes. Se o bundle não puder ser preparado/verificado, a
 instalação aborta antes da primeira mutação. Depois de uma aplicação bem
 sucedida, confira o bundle e o preflight com os comandos novos:
 
+O PR #25 corrige o bloqueio observado na migração 0.1.9. O recovery não
+percorre, empacota nem restaura `/var/lib/niri-plus/bootstrap-backups`; mantém
+esse histórico no host sem alterações. Um link antigo para o submódulo dentro
+desse diretório não é seguido nem recriado pela recuperação. Symlinks ativos
+fora desse histórico continuam sujeitos às validações estritas.
+
 ```sh
 niri+ preflight
 niri+ recovery status
@@ -55,12 +61,12 @@ instalação independente de `qs` não ativa o plugin.
 ## D. Commits e hashes
 
 Use um clone novo e pertencente ao usuário normal. Os comandos abaixo obtêm a
-head aberta do PR #24 sem trocar de branch e conferem o gitlink e lockfile com
+head aberta do PR #25 sem trocar de branch e conferem o gitlink e lockfile com
 o pin aprovado do Quickshell. `git fetch` não executa arquivos do checkout como
 root:
 
 ```sh
-export RC_PR=24
+export RC_PR=25
 export RC_QUICKSHELL_COMMIT=d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3
 export RC_SOURCE="$HOME/Projects/niri-plus-release-source"
 export RC_DIR="$HOME/.cache/niri-plus-release"
@@ -88,8 +94,9 @@ printf '%s  %s\n' "$RC_BOOTSTRAP_SHA256" "$RC_DIR/niri-plus-rc-bootstrap" | sha2
 ```
 
 O canal normal continua em `main` e o pin de produção em
-`55e92880d0aff75d235f283c839ec0990eaa9e17`. Somente o helper opt-in abaixo
-instala o head RC exato e o Quickshell `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`.
+`55e92880d0aff75d235f283c839ec0990eaa9e17`. O candidato do PR #25 é Niri+
+`0.1.13`; somente o helper opt-in abaixo instala o head RC exato e o Quickshell
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`.
 
 ## E. Dry-run experimental
 

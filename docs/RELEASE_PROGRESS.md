@@ -4,29 +4,31 @@ Updated: 2026-10-10
 
 ## Current release gate status
 
-`PRE_M1_GATE_READY / CLOUD_VALIDATED / M1_REQUIRED`. This candidate adds the
-closed Quickshell plugin lifecycle, joint updates, standalone offline recovery,
-read-only preflight, and a corrected experimental RC flow. PR #22 and
-Quickshell PR #15 remain unchanged and unmerged. No physical M1 test ran.
+`PRE_M1_GATE_READY / CLOUD_VALIDATED / M1_REQUIRED`, pending CI for correction
+PR #25. The M1 0.1.9 host failed while creating the offline recovery bundle
+because a legacy backup contained an absolute symlink to the user's Quickshell
+checkout. The backup is append-only historical data; recovery now excludes that
+tree instead of walking or restoring it. Active managed symlinks remain subject
+to strict validation. No M1 files were accessed or modified by this work.
 
 ## Candidate references and preserved state
 
 | Component | Ref | Current policy |
 |---|---|---|
-| `asahi-system` | PR #24 draft, head recorded by GitHub; based on PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` | candidate version `0.1.12`; RC helper verifies the exact open PR head |
+| `asahi-system` | PR #25 draft, branch `fix/recovery-legacy-quickshell-symlink`; based on PR #24 | candidate version `0.1.13`; RC helper verifies the exact open PR head |
 | `quickshell-` | PR #15 exact commit `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` | candidate visual pin, unchanged |
 | production | `origin/main` commit `5339e34811763c6169f64d15aaae738982fa1738` | Niri+ `0.1.9`, Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17` |
 
-No production branch, PR #22/#15, Graphify PR #23/#16, or known-good pin was
-modified. Quickshell source remains a separate repository and optional runtime;
-the system CLI does not copy QML into asahi-system.
+Production `main`, PR #24, PR #22/#15, Graphify PR #23/#16, and the known-good
+Quickshell pin were not modified. Quickshell source remains a separate
+repository and optional runtime; the system CLI does not copy QML into
+asahi-system.
 
 ## Candidate commits
 
-- `713e6e2` — plugin lifecycle, joint update, preflight and offline recovery.
-- `eb6c79b` — final M1, plugin/update and offline recovery procedures.
-- `f241898`, `b975807`, `7137c1b` — CI targeting and release-gate records.
-- PR #24 remains a draft against `main`; no merge was performed.
+- `39d9507` — recovery excludes append-only backup history without following
+  its legacy absolute symlinks; adds regression and offline restore coverage.
+- PR #25 is a draft against `main`; no merge was performed.
 
 ## Completed in this continuation
 
@@ -51,7 +53,7 @@ with `NOKEY` is rejected). Newly owned RPMs are removed only when the previous
 inventory proves they were absent, using offline DNF and `--noautoremove`; if
 cached DNF cannot prove optional cleanup, managed-file restoration still
 completes and the remaining RPMs are reported.
-- RC bootstrap is now pinned to PR #24 and exact Quickshell commit
+- RC bootstrap is now pinned to PR #25 and exact Quickshell commit
 `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`; production resolver remains
 main-only. RC Quickshell install requires `--with-quickshell` when no managed
 plugin exists and updates an existing plugin as a pair. Dry-run now rejects an
@@ -61,6 +63,14 @@ explicit RC flow; prior PR #19/#21/#22 procedures are visibly archived.
 it does not have. That version can provide `status`/`doctor`; the explicit RC
 dry-run is read-only, and candidate apply builds/verifies recovery before its
 first host mutation.
+- The confirmed legacy `share/quickshell` symlink was inside
+  `/var/lib/niri-plus/bootstrap-backups`, not the active managed Quickshell
+  runtime. That directory is append-only: install creates new timestamped
+  entries and does not edit existing ones. Emergency recovery restores the
+  active managed paths and does not use old bootstrap archives. The offline
+  bundle therefore excludes the whole history tree; it does not follow,
+  package, rewrite, or restore historical links. Active managed symlinks still
+  reject absolute targets and escaping relative paths.
 - Added full first-test procedure, collector installer, plugin/update and offline
 recovery documentation. The RC bootstrap checksum and exact system commit must
 be derived from the final PR head; no stale checksum is published here.
@@ -79,17 +89,16 @@ Quickshell fetch, and incompatible-host rejection before network access.
 running-process probe.
 - `python3 -m unittest discover -s tests -p 'test_release_candidate_docs.py' -v`:
 1 passed.
-- Full `python3 -m unittest discover -s tests -v`: 287 passed.
+- Full `python3 -m unittest discover -s tests -v`: 292 passed.
 - `scripts/validate_baseline.py`, `compileall`, both bootstrap `py_compile`
 checks, collector `bash -n`, and `git diff --check`: passed.
 - Quickshell PR #15 exact head: compileall and 45 tests passed; 59 QML files
 loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
 unresolved-type, 2 unused-imports). No Quickshell files were changed here.
-- Draft PR #24 targets `main` cumulatively so the configured workflow applies;
-GitHub Actions run `38081337554` passed compileall, baseline validation, and the
-complete unittest suite on head `7137c1b40a3f7aa355cc4077519b2dace9d4521f`.
-Earlier run `38081223316` also passed on the preceding candidate head.
+- Draft PR #25 targets `main` cumulatively. GitHub Actions validation is pending
+  for its latest head; local compileall, baseline validation, 292 tests, and
+  `git diff --check` passed.
 PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15
 head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` are unchanged; their latest
 Actions runs are successful.

@@ -33,10 +33,10 @@ class ReleaseCandidateDocsTests(unittest.TestCase):
         self.assertIn("--with-quickshell --dry-run", current)
         self.assertIn("--with-quickshell --apply", current)
         self.assertNotIn("```sh\nsudo niri+ install --dry-run", current)
-        self.assertIn("0.1.12", (ROOT / "VERSION").read_text(encoding="utf-8"))
-        self.assertEqual(source_update.RELEASE_CANDIDATE_PULL_REQUEST, 24)
+        self.assertIn("0.1.13", (ROOT / "VERSION").read_text(encoding="utf-8"))
+        self.assertEqual(source_update.RELEASE_CANDIDATE_PULL_REQUEST, 25)
         self.assertEqual(source_update.RELEASE_CANDIDATE_QUICKSHELL_COMMIT, CURRENT_PIN)
-        self.assertEqual(source_update.RELEASE_CANDIDATE_REF, "refs/pull/24/head")
+        self.assertEqual(source_update.RELEASE_CANDIDATE_REF, "refs/pull/25/head")
 
 
 if __name__ == "__main__":
