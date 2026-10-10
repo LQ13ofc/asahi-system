@@ -23,9 +23,11 @@ sys.path.insert(0, str(ROOT))
 LIB = pathlib.Path("/usr/local/lib/niri-plus")
 DATA = pathlib.Path("/usr/local/share/niri-plus")
 BIN = pathlib.Path("/usr/local/bin/niri+")
+RECOVERY = pathlib.Path("/usr/local/libexec/niri-plus-recover")
 STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 BACKUPS = pathlib.Path("/var/lib/niri-plus/bootstrap-backups")
-EXPECTED_MANAGED = [str(LIB), str(DATA), str(BIN)]
+LEGACY_MANAGED = [str(LIB), str(DATA), str(BIN)]
+EXPECTED_MANAGED = [str(LIB), str(DATA), str(BIN), str(RECOVERY)]
 
 
 def launcher() -> str:
@@ -71,6 +73,14 @@ def _copy(source: pathlib.Path, destination: pathlib.Path) -> None:
         shutil.copy2(source, destination, follow_symlinks=False)
 
 
+def preserve_optional_quickshell(current_data: pathlib.Path, staged_data: pathlib.Path) -> None:
+    """Carry an existing optional visual runtime through a core-only upgrade."""
+    for name in ("quickshell", "quickshell.snapshot.json"):
+        source = current_data / name
+        if source.exists() or source.is_symlink():
+            _copy(source, staged_data / name)
+
+
 def _remove(path: pathlib.Path) -> None:
     if path.is_symlink() or (path.exists() and not path.is_dir()):
         path.unlink()
@@ -79,7 +89,7 @@ def _remove(path: pathlib.Path) -> None:
 
 
 def _validate_ownership() -> tuple[dict, bool]:
-    for path in (STATE.parent, LIB.parent, DATA.parent, BIN.parent, BACKUPS):
+    for path in (STATE.parent, LIB.parent, DATA.parent, BIN.parent, RECOVERY.parent, BACKUPS):
         check_no_symlink_parents(path)
     if STATE.is_symlink():
         raise RuntimeError("bootstrap ownership state is a symlink; refusing to follow it")
@@ -89,11 +99,14 @@ def _validate_ownership() -> tuple[dict, bool]:
         if not STATE.is_file() or metadata.st_uid != 0 or metadata.st_mode & 0o022:
             raise RuntimeError("bootstrap ownership state has unsafe type, owner, or permissions")
         state = json.loads(STATE.read_text(encoding="utf-8"))
-        if state.get("schema_version") not in (1, 2) or state.get("managed") != EXPECTED_MANAGED:
+        if (state.get("schema_version") not in (1, 2)
+                or state.get("managed") not in (LEGACY_MANAGED, EXPECTED_MANAGED)):
             raise RuntimeError("bootstrap ownership state is unknown; refusing to overwrite destinations")
-    elif any(path.exists() or path.is_symlink() for path in (LIB, DATA, BIN)):
+        if RECOVERY not in [pathlib.Path(value) for value in state["managed"]] and (RECOVERY.exists() or RECOVERY.is_symlink()):
+            raise RuntimeError("offline recovery helper exists without Niri+ ownership state")
+    elif any(path.exists() or path.is_symlink() for path in (LIB, DATA, BIN, RECOVERY)):
         raise RuntimeError("Niri+ bootstrap destinations exist without ownership state")
-    if any(path.is_symlink() for path in (LIB, DATA, BIN)):
+    if any(path.is_symlink() for path in (LIB, DATA, BIN, RECOVERY)):
         raise RuntimeError("a managed bootstrap destination is a symlink; refusing to replace it")
     return state, bool(state)
 
@@ -106,8 +119,26 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
     manifest = source_update.validate_snapshot(snapshot_root, manifest_path)
     system = manifest["system"]
     quickshell = manifest["quickshell"]
-    if system.get("branch") != "main" or system.get("repository") != source_update.EXPECTED_REPOSITORY:
-        raise RuntimeError("snapshot is not from the approved asahi-system main source")
+    include_quickshell = quickshell.get("included", True)
+    channel = manifest.get("channel", "production")
+    if system.get("repository") != source_update.EXPECTED_REPOSITORY:
+        raise RuntimeError("snapshot is not from the approved asahi-system repository")
+    if channel == "production":
+        if system.get("branch") != "main":
+            raise RuntimeError("production snapshot is not from the approved asahi-system main source")
+    elif channel == "release-candidate":
+        if (manifest.get("pull_request") != source_update.RELEASE_CANDIDATE_PULL_REQUEST
+                or system.get("branch") != source_update.RELEASE_CANDIDATE_REF
+                or manifest.get("expected_system_commit") != system.get("commit")
+                or quickshell.get("commit") != source_update.RELEASE_CANDIDATE_QUICKSHELL_COMMIT):
+            raise RuntimeError("release-candidate snapshot identity or Quickshell pin is invalid")
+    elif channel == "known-good-restore":
+        if (system.get("branch") != f"commit:{system.get('commit')}"
+                or manifest.get("expected_system_commit") != system.get("commit")
+                or manifest.get("expected_quickshell_commit") != quickshell.get("commit")):
+            raise RuntimeError("known-good restore snapshot does not match its saved immutable commits")
+    else:
+        raise RuntimeError("snapshot channel is not supported")
     if quickshell.get("repository") != source_update.EXPECTED_QUICKSHELL_REPOSITORY:
         raise RuntimeError("snapshot Quickshell origin is not approved")
     version = (snapshot_root / "VERSION").read_text(encoding="utf-8").strip()
@@ -118,7 +149,7 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
         raise RuntimeError("snapshot Quickshell lock and fetched visual snapshot disagree")
 
     state, has_state = _validate_ownership()
-    changed = any(not path.exists() for path in (LIB, DATA, BIN))
+    changed = any(not path.exists() for path in (LIB, DATA, BIN, RECOVERY))
     stage = pathlib.Path(tempfile.mkdtemp(prefix=".niri-plus-stage-", dir="/usr/local"))
     state_tmp = None
     try:
@@ -138,28 +169,38 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
         collector = snapshot_root / "scripts/collect-performance-baseline"
         _copy(collector, data_stage / "scripts/collect-performance-baseline")
         (data_stage / "scripts/collect-performance-baseline").chmod(0o755)
-        _copy(snapshot_root / "external/quickshell", data_stage / "quickshell")
-        (data_stage / "quickshell.snapshot.json").write_text(json.dumps({
-            "schema_version": 1,
-            "repository": quickshell["repository"],
-            "commit": quickshell["commit"],
-            "files": quickshell["files"],
-        }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        release_collector = snapshot_root / "scripts/collect-m1-release-gate.sh"
+        _copy(release_collector, data_stage / "scripts/collect-m1-release-gate.sh")
+        (data_stage / "scripts/collect-m1-release-gate.sh").chmod(0o755)
+        if include_quickshell:
+            _copy(snapshot_root / "external/quickshell", data_stage / "quickshell")
+            (data_stage / "quickshell.snapshot.json").write_text(json.dumps({
+                "schema_version": 1,
+                "repository": quickshell["repository"],
+                "commit": quickshell["commit"],
+                "files": quickshell["files"],
+            }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        else:
+            preserve_optional_quickshell(DATA, data_stage)
         bin_stage = stage / "niri+"
         bin_stage.write_text(launcher(), encoding="utf-8")
         bin_stage.chmod(0o755)
+        recovery_stage = stage / "libexec/niri-plus-recover"
+        recovery_stage.parent.mkdir(parents=True)
+        _copy(snapshot_root / "niri_plus/recovery_core.py", recovery_stage)
+        recovery_stage.chmod(0o755)
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ") + f"-{os.getpid()}"
         backup = None
         if has_state:
             differences = any(_signature(current) != _signature(staged) for current, staged in (
-                (LIB, lib_stage), (DATA, data_stage), (BIN, bin_stage),
+                (LIB, lib_stage), (DATA, data_stage), (BIN, bin_stage), (RECOVERY, recovery_stage),
             ))
             changed = differences
             if differences:
                 backup_root = BACKUPS / stamp
                 backup_root.mkdir(parents=True, exist_ok=False)
-                for current, label in ((LIB, "lib"), (DATA, "share"), (BIN, "bin")):
+                for current, label in ((LIB, "lib"), (DATA, "share"), (BIN, "bin"), (RECOVERY, "libexec")):
                     if current.exists() or current.is_symlink():
                         _copy(current, backup_root / label)
                 backup = str(backup_root)
@@ -179,11 +220,18 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
             "source_root": source_root,
             "source_repository": system["repository"],
             "source_branch": system["branch"],
+            "source_channel": channel,
             "source_commit": system["commit"],
             "snapshot_sha256": manifest["snapshot_sha256"],
             "quickshell_repository": quickshell["repository"],
-            "quickshell_expected_commit": quickshell["commit"],
-            "quickshell_source": str(DATA / "quickshell"),
+            "quickshell_expected_commit": (
+                quickshell["commit"] if include_quickshell
+                else state.get("quickshell_expected_commit")
+            ),
+            "quickshell_source": (
+                str(DATA / "quickshell") if include_quickshell
+                else state.get("quickshell_source")
+            ),
         }
         STATE.parent.mkdir(parents=True, exist_ok=True)
         fd, state_tmp = tempfile.mkstemp(prefix=".bootstrap-state-", dir=STATE.parent)
@@ -195,13 +243,19 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
             os.fchmod(output.fileno(), 0o644)
 
         if changed:
-            for current, staged in ((LIB, lib_stage), (DATA, data_stage), (BIN, bin_stage)):
+            for current, staged in ((LIB, lib_stage), (DATA, data_stage), (BIN, bin_stage), (RECOVERY, recovery_stage)):
                 current.parent.mkdir(parents=True, exist_ok=True)
                 _remove(current)
                 os.replace(staged, current)
         os.replace(state_tmp, STATE)
         state_tmp = None
-        print(f"Installed Niri+ CLI {version}; asahi-system {system['commit'][:12]}; Quickshell {quickshell['commit'][:12]}.")
+        if include_quickshell:
+            visual_result = f"Quickshell {quickshell['commit'][:12]} installed"
+        elif state.get("quickshell_expected_commit"):
+            visual_result = f"Quickshell {state['quickshell_expected_commit'][:12]} preserved unchanged"
+        else:
+            visual_result = "Quickshell omitted"
+        print(f"Installed Niri+ CLI {version}; asahi-system {system['commit'][:12]}; {visual_result}.")
     finally:
         shutil.rmtree(stage, ignore_errors=True)
         if state_tmp and os.path.exists(state_tmp):

@@ -136,11 +136,15 @@ def configuration_status(root: pathlib.Path, environment: dict[str, str] | None 
         source = config.read_text(encoding="utf-8")
     except OSError:
         return NOT_CONFIGURED
-    includes = re.findall(r'^\s*include\s+"([^"\n]+)"', source, flags=re.MULTILINE)
+    includes = re.findall(r'^\s*include(?:\s+optional=true)?\s+"([^"\n]+)"', source, flags=re.MULTILINE)
     required = {"keybinds.kdl", "outputs.kdl", "rules.kdl", "autostart.kdl"}
-    if len(includes) != len(required) or set(includes) != required:
+    settings_include = "~/.config/niri-plus/settings.kdl"
+    if len(includes) != len(required) + 1 or includes.count(settings_include) != 1:
         return WARNING
-    for included in includes:
+    regular_includes = [item for item in includes if item != settings_include]
+    if len(regular_includes) != len(required) or set(regular_includes) != required:
+        return WARNING
+    for included in regular_includes:
         path = pathlib.PurePosixPath(included)
         if path.is_absolute() or ".." in path.parts or not (config.parent / included).is_file():
             return WARNING
@@ -272,14 +276,14 @@ def kde_isolation_status(root: pathlib.Path, runner: Runner,
     return (WARNING if active else OK), active
 
 
-def wayland_readiness_status(root: pathlib.Path) -> str:
+def wayland_readiness_status(root: pathlib.Path, include_quickshell: bool = True) -> str:
     helper = root / "usr/lib/systemd/user/asahi-niri-wayland-ready.service"
     quickshell = root / "usr/lib/systemd/user/asahi-quickshell.service"
     polkit = root / "usr/lib/systemd/user/asahi-niri-polkit-agent.service"
     try:
         helper_text = helper.read_text(encoding="utf-8")
-        quickshell_text = quickshell.read_text(encoding="utf-8")
         polkit_text = polkit.read_text(encoding="utf-8")
+        quickshell_text = quickshell.read_text(encoding="utf-8") if include_quickshell else None
     except OSError:
         return NOT_INSTALLED
     requirements = [
@@ -289,7 +293,8 @@ def wayland_readiness_status(root: pathlib.Path) -> str:
         "WantedBy=graphical-session.target" in helper_text,
         "wayland_ready.py" in helper_text,
     ]
-    for client in (quickshell_text, polkit_text):
+    clients = ([quickshell_text] if quickshell_text is not None else []) + [polkit_text]
+    for client in clients:
         requirements.extend((
             "ConditionEnvironment=XDG_CURRENT_DESKTOP=niri" in client,
             "Requires=asahi-niri-wayland-ready.service" in client,
@@ -299,7 +304,7 @@ def wayland_readiness_status(root: pathlib.Path) -> str:
     return OK if all(requirements) else WARNING
 
 
-def wayland_clients_runtime_status(runner: Runner) -> tuple[str, list[str]]:
+def wayland_clients_runtime_status(runner: Runner, include_quickshell: bool = True) -> tuple[str, list[str]]:
     """Check the live display and first-start outcome without changing state."""
     if not niri_session_active():
         return "NOT_APPLICABLE", []
@@ -324,8 +329,10 @@ def wayland_clients_runtime_status(runner: Runner) -> tuple[str, list[str]]:
     if target_values.get("ActiveState") != "active":
         issues.append("graphical-session.target is not active")
 
-    for unit in ("asahi-niri-wayland-ready.service", "asahi-quickshell.service",
-                 "asahi-niri-polkit-agent.service"):
+    units = ["asahi-niri-wayland-ready.service", "asahi-niri-polkit-agent.service"]
+    if include_quickshell:
+        units.insert(1, "asahi-quickshell.service")
+    for unit in units:
         result = run(["systemctl", "--user", "show", unit, "--no-pager",
                       "--property=ActiveState", "--property=SubState", "--property=Result",
                       "--property=NRestarts"], runner)
@@ -370,6 +377,7 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
                 runner: Runner = subprocess.run) -> dict:
     from . import quickshell
     from . import install
+    from . import plugins
 
     machine = machine or platform.machine()
     release = read_os_release(root)
@@ -384,7 +392,12 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
     managed_files = {}
     entries = state.get("entries", {})
     installed_version = state.get("applied_version")
-    for absolute in install.MANAGED_FILES if installed_version else entries:
+    quickshell_enabled = bool(state.get("quickshell", {}).get("expected_commit"))
+    managed_file_paths = install.MANAGED_FILES if installed_version else entries
+    if installed_version and not quickshell_enabled:
+        managed_file_paths = {path: source for path, source in install.MANAGED_FILES.items()
+                              if path not in install.QUICKSHELL_MANAGED_FILES}
+    for absolute in managed_file_paths:
         entry = entries.get(absolute, {})
         expected = entry.get("installed_sha256")
         if not expected:
@@ -402,6 +415,8 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
             managed_files[absolute] = NOT_INSTALLED
     managed_links = {}
     for absolute, link_target in install.MANAGED_LINKS.items():
+        if installed_version and not quickshell_enabled and absolute in install.QUICKSHELL_MANAGED_LINKS:
+            continue
         if not installed_version:
             continue
         target = root / absolute.lstrip("/")
@@ -421,7 +436,30 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
     quickshell_state = state.get("quickshell", {})
     quickshell_info["known_good_commit"] = quickshell_state.get("known_good_commit") or NOT_CONFIGURED
     quickshell_info["state_expected_commit"] = quickshell_state.get("expected_commit") or NOT_CONFIGURED
-    if installed_version:
+    try:
+        managed_plugin_state, managed_plugin_record = plugins.quickshell_state(root)
+    except plugins.PluginError as error:
+        managed_plugin_state, managed_plugin_record = "invalid", None
+        quickshell_info["status"] = WARNING
+        quickshell_info["warnings"].append(f"Managed Quickshell plugin state is invalid: {error}")
+    quickshell_info["managed_plugin_state"] = managed_plugin_state
+    quickshell_info["managed_plugin_commit"] = (
+        managed_plugin_record.get("commit") if managed_plugin_record else NOT_CONFIGURED
+    )
+    if managed_plugin_state == "legacy":
+        quickshell_info["status"] = WARNING
+        quickshell_info["warnings"].append("Validated 0.1.9 Quickshell state is ready for explicit candidate migration.")
+    elif managed_plugin_state.startswith("installed-"):
+        quickshell_info["status"] = WARNING
+        quickshell_info["warnings"].append("Managed Quickshell plugin manifest, lock, runtime or lifecycle is inconsistent.")
+    if installed_version and not quickshell_enabled:
+        quickshell_info["state_pin_status"] = NOT_CONFIGURED
+        quickshell_info["status"] = NOT_CONFIGURED
+        quickshell_info["warnings"] = [
+            warning for warning in quickshell_info["warnings"]
+            if "pin" not in warning.lower() and "checkout" not in warning.lower()
+        ]
+    elif installed_version:
         state_pin = quickshell_state.get("expected_commit")
         if state_pin != quickshell_info["expected_commit"]:
             quickshell_info["state_pin_status"] = WARNING
@@ -453,8 +491,8 @@ def host_report(root: pathlib.Path = pathlib.Path("/"), machine: str | None = No
         "managed_file_checksums": managed_files,
         "managed_links": managed_links,
         "polkit_unit": OK if installed_file(root, "/usr/lib/systemd/user/asahi-niri-polkit-agent.service") else NOT_INSTALLED,
-        "wayland_readiness": wayland_readiness_status(root),
-        "wayland_clients_runtime": wayland_clients_runtime_status(runner),
+        "wayland_readiness": wayland_readiness_status(root, quickshell_enabled),
+        "wayland_clients_runtime": wayland_clients_runtime_status(runner, quickshell_enabled),
         "portal_backend": OK if installed_file(root, "/usr/libexec/xdg-desktop-portal-gtk") else NOT_INSTALLED,
         "install_state": state_status,
         "known_good": state.get("verified_good_version", NOT_CONFIGURED),

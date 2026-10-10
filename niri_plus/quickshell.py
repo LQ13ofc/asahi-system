@@ -322,8 +322,24 @@ def process_diagnostics(proc_root: pathlib.Path = pathlib.Path("/proc")) -> dict
 
 
 def doctor_report(root: pathlib.Path = pathlib.Path("/"), runner: Runner = subprocess.run,
-                  base: pathlib.Path | None = None) -> dict:
+                  base: pathlib.Path | None = None, *, enabled: bool = True) -> dict:
     info = report(root, runner, base)
+    if not enabled:
+        info["status"] = NOT_CONFIGURED
+        info["lifecycle"] = NOT_CONFIGURED
+        info["lifecycle_detail"] = "optional visual integration is not configured"
+        duplicate = {"status": NOT_CONFIGURED, "count": 0, "managed_count": 0, "processes": []}
+        return {
+            **info,
+            "binary": info["version_status"],
+            "checkout_config": NOT_CONFIGURED,
+            "unit": NOT_CONFIGURED,
+            "duplicate_processes": duplicate,
+            "restart_count": NOT_CONFIGURED,
+            "logs": NOT_CONFIGURED,
+            "niri_integration": NOT_CONFIGURED,
+            "systemd_session_environment": NOT_CONFIGURED,
+        }
     unit_file = root / "usr/lib/systemd/user/asahi-quickshell.service"
     duplicate = process_diagnostics() if root == pathlib.Path("/") else {
         "status": UNAVAILABLE, "count": None, "managed_count": None, "processes": []
