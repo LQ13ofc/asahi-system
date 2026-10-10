@@ -33,7 +33,8 @@ def _copy_or_replace(source: pathlib.Path, destination: pathlib.Path) -> None:
         shutil.copy2(source, destination)
 
 
-def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str) -> None:
+def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str,
+                       quickshell_commit: str = "b" * 40) -> None:
     """Materialize the real managed maps and installed Niri+ data under a fixture root."""
     for absolute, source in install.MANAGED_FILES.items():
         target = _host_path(root, absolute)
@@ -59,6 +60,9 @@ def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str) 
     scripts.mkdir(parents=True, exist_ok=True)
     for name in ("collect-performance-baseline", "collect-m1-release-gate.sh"):
         _copy_or_replace(ROOT / "scripts" / name, scripts / name)
+    quickshell = data / "quickshell"
+    quickshell.mkdir(parents=True, exist_ok=True)
+    (quickshell / "shell.qml").write_text("// fixture visual runtime\n", encoding="utf-8")
     bin_path = root / "usr/local/bin/niri+"
     bin_path.parent.mkdir(parents=True, exist_ok=True)
     bin_path.write_text("#!/bin/sh\n# fixture launcher\n", encoding="utf-8")
@@ -72,7 +76,7 @@ def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str) 
         "version": version,
         "source_commit": system_commit,
         "source_channel": "production",
-        "quickshell_expected_commit": None,
+        "quickshell_expected_commit": quickshell_commit,
     }) + "\n", encoding="utf-8")
 
     entries = {}
@@ -91,7 +95,7 @@ def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str) 
     install.write_state(root, {
         "schema_version": 1,
         "applied_version": version,
-        "quickshell": {"expected_commit": None, "known_good_commit": None},
+        "quickshell": {"expected_commit": quickshell_commit, "known_good_commit": None},
         "packages_installed_by_us": [],
         "entries": entries,
     })
@@ -101,7 +105,7 @@ def _candidate_manifest(version_commit: str) -> dict:
     return {
         "channel": "production",
         "system": {"commit": version_commit},
-        "quickshell": {"included": False, "commit": "b" * 40},
+        "quickshell": {"included": True, "commit": "b" * 40},
     }
 
 
@@ -192,10 +196,12 @@ class SnapshotInstallVerificationTests(unittest.TestCase):
                 _seed_managed_host(host, version=new_version, system_commit=new_commit)
 
             def apply_managed_session():
-                install.install_files(host, include_quickshell=False)
+                install.install_files(host, include_quickshell=True)
                 state = install.load_state(host)
                 state["applied_version"] = new_version
-                install.update_quickshell_state(state, None, included=False)
+                install.update_quickshell_state(
+                    state, manifest["quickshell"]["commit"], included=True,
+                )
                 install.write_state(host, state)
 
             def verify_committed_state():

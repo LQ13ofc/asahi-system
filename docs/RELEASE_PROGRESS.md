@@ -4,23 +4,22 @@ Updated: 2026-10-10
 
 ## Current release gate status
 
-`PRE_M1_GATE_READY / CLOUD_VALIDATED / M1_REQUIRED`. The M1 0.1.9 host failed
-while creating the offline recovery bundle
-because a legacy backup contained an absolute symlink to the user's Quickshell
-checkout. The backup is append-only historical data; recovery now excludes that
-tree instead of walking or restoring it. Active managed symlinks remain subject
-to strict validation. No M1 files were accessed or modified by this work.
+`M1_APPLY_NO_GO / IMPLEMENTATION_IN_PROGRESS`. The 0.1.13 apply reached
+post-install verification and exposed string/Path mismatches in the real-root
+path branch. A new 0.1.14 candidate on PR #26 fixes normalization, narrows the
+preflight catch to known state mismatches, and delays success output until the
+transaction commits. No M1 files were accessed or modified by this work.
 
 ## Candidate references and preserved state
 
 | Component | Ref | Current policy |
 |---|---|---|
-| `asahi-system` | PR #25 draft, branch `fix/recovery-legacy-quickshell-symlink`; based on PR #24 | candidate version `0.1.13`; RC helper verifies the exact open PR head |
+| `asahi-system` | PR #26 draft, branch `fix/snapshot-postinstall-paths-0.1.14`; cumulative on PR #25 | candidate version `0.1.14`; RC helper verifies the exact open PR head |
 | `quickshell-` | PR #15 exact commit `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` | candidate visual pin, unchanged |
 | production | `origin/main` commit `5339e34811763c6169f64d15aaae738982fa1738` | Niri+ `0.1.9`, Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17` |
 
-Production `main`, PR #24, PR #22/#15, Graphify PR #23/#16, and the known-good
-Quickshell pin were not modified. Quickshell source remains a separate
+Production `main`, PR #25, PR #24, PR #22/#15, Graphify PR #23/#16, and the
+known-good Quickshell pin were not modified. Quickshell source remains a separate
 repository and optional runtime; the system CLI does not copy QML into
 asahi-system.
 
@@ -28,9 +27,10 @@ asahi-system.
 
 - `39d9507` — recovery excludes append-only backup history without following
   its legacy absolute symlinks; adds regression and offline restore coverage.
-- `1bbefa5` — candidate version 0.1.13, PR #25 RC bootstrap reference, and
-  updated M1 procedure.
-- PR #25 is a draft against `main`; no merge was performed.
+- `1bbefa5` — prior candidate version 0.1.13 and recovery-history correction.
+- `8f27c75` — fixes post-install path normalization and success-message timing;
+  tests actual managed maps and transaction rollback.
+- This follow-up is based on PR #25 and will create PR #26; no merge is planned.
 
 ## Completed in this continuation
 
@@ -55,7 +55,7 @@ with `NOKEY` is rejected). Newly owned RPMs are removed only when the previous
 inventory proves they were absent, using offline DNF and `--noautoremove`; if
 cached DNF cannot prove optional cleanup, managed-file restoration still
 completes and the remaining RPMs are reported.
-- RC bootstrap is now pinned to PR #25 and exact Quickshell commit
+- RC bootstrap is now pinned to PR #26 and exact Quickshell commit
 `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`; production resolver remains
 main-only. RC Quickshell install requires `--with-quickshell` when no managed
 plugin exists and updates an existing plugin as a pair. Dry-run now rejects an
@@ -73,6 +73,21 @@ first host mutation.
   bundle therefore excludes the whole history tree; it does not follow,
   package, rewrite, or restore historical links. Active managed symlinks still
   reject absolute targets and escaping relative paths.
+- The 0.1.13 M1 failure was reproduced before correction: real-root selection
+  returned a string from `MANAGED_FILES`, then called `.is_file()` on it. The
+  earlier 292-test suite missed this because its snapshot orchestration test
+  replaced `_verify_committed_install` with a mock and no test invoked that
+  verifier against the actual string-keyed `MANAGED_FILES`, `MANAGED_LINKS`,
+  and state entries. New tests exercise the complete verifier against the real
+  maps in an isolated filesystem and cover `/` path normalization without
+  touching the Cloud host.
+- The broad `except Exception` around the “already installed” probe now catches
+  only `InstallVerificationError` for known mismatches. `AttributeError`, I/O,
+  invalid ownership state, and other unexpected errors stop the install before
+  mutation instead of being treated as a reason to update.
+- The bootstrap no longer emits “Installed Niri+ CLI …” while files are only
+  staged. The CLI's committed-success message remains after post-install
+  verification, package finalization, and the filesystem transaction commit.
 - Added full first-test procedure, collector installer, plugin/update and offline
 recovery documentation. The RC bootstrap checksum and exact system commit must
 be derived from the final PR head; no stale checksum is published here.
@@ -91,26 +106,36 @@ Quickshell fetch, and incompatible-host rejection before network access.
 running-process probe.
 - `python3 -m unittest discover -s tests -p 'test_release_candidate_docs.py' -v`:
 1 passed.
-- Full `python3 -m unittest discover -s tests -v`: 292 passed.
+- Previous full `python3 -m unittest discover -s tests -v`: 292 passed, but did
+  not cover the concrete real-root post-install verifier bug described above.
+- New targeted verifier suite: 5 passed, including complete real `MANAGED_FILES`,
+  `MANAGED_LINKS`, state entries, `/` and temporary-root normalization,
+  programming-error propagation, post-apply verification/finalization failure,
+  transaction rollback, and offline bundle verification/restoration.
+- Final full `python3 -m unittest discover -s tests -v`: 297 passed.
+- `python3 -m compileall -q niri_plus scripts tests`,
+  `python3 scripts/validate_baseline.py`, and `git diff --check`: passed.
+- Snapshot security/integration suite: 36 passed with the actual post-install
+  verifier enabled in the resolved-snapshot transaction path; bootstrap/apply/
+  verify fault injection restores staged paths, and no interim success message
+  appears on failure.
 - `scripts/validate_baseline.py`, `compileall`, both bootstrap `py_compile`
 checks, collector `bash -n`, and `git diff --check`: passed.
 - Quickshell PR #15 exact head: compileall and 45 tests passed; 59 QML files
 loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
 unresolved-type, 2 unused-imports). No Quickshell files were changed here.
-- Draft PR #25 targets `main` cumulatively. GitHub Actions `static-validation`
-  passed on candidate code head `1bbefa5c669c3c1b0f84d7bf90a24b88cd153e03`
-  (run `38094249542`); local compileall, baseline validation, 292 tests, and
-  `git diff --check` passed. A documentation-only progress update follows.
+- PR #25's prior candidate CI passed, run `38094322427`. PR #26 CI is pending
+  until its new head is pushed.
 PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15
 head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` are unchanged; their latest
 Actions runs are successful.
 
 ## Remaining release gate work
 
-No remaining independent implementation or validation task is available in
-Cloud. The next gate is `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM
-availability,
+The immediate gate is a full Cloud run and CI for PR #26. Do not repeat the M1
+apply until that CI passes. Afterward, remaining hardware-only checks are
+`M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
 SDDM/Niri/Quickshell lifecycle, audio/network/input, Plasma recovery, offline
 TTY restore, and hardware performance. No M1 command was run or requested in
 this Cloud session.
