@@ -1,24 +1,73 @@
 # Niri+ Release Progress
 
-Updated: 2026-10-09
+Updated: 2026-10-10
 
 ## Release state
 
-`IMPLEMENTATION_IN_PROGRESS / CLOUD_VALIDATED_PARTIAL`. This is a development
-checkpoint, not a release candidate and not a claim of M1 validation. Production
-branches and the production Quickshell pin are unchanged.
+`CODE_COMPLETE / CLOUD_VALIDATED / M1_RELEASE_GATE_PENDING` for the cumulative
+Cloud candidate on asahi-system PR #22 and quickshell- PR #15. This means the
+Cloud-implementable settings, administration, and Gamescope-only launch
+contract are implemented and covered by repository tests. It does not claim
+that Gamescope, Honeykrisp, input devices, or runtime performance work on the
+M1. No PR is merged, no hardware test was run, and production pins are intact.
 
 ## Repository state
 
-| Repository | Work branch | Base | Preserved checkpoint | Current work |
-|---|---|---|---|---|
-| `LQ13ofc/asahi-system` | `integration/niri-plus-rc` | `main` at `5339e348` | `da85d0e` | HEAD `7028f85`; Niri core is independently installable, optional QuickShell candidate install/rollback is transaction-tested |
-| `LQ13ofc/quickshell-` | `integration/settings-center-rc` | `master` at `4191e9f` | `435ca33` | HEAD `79b093e`; optional Niri+ bridge, independent brightness failure state, and deferred Control Center action-row layout |
+| Repository | Work branch / PR | Current candidate | Preserved pin/checkpoint |
+|---|---|---|---|
+| `LQ13ofc/asahi-system` | `feature/quickshell-pr15-candidate` / #22 draft | code head `984b8c97c38853b5fcf0a8a621b32912138e2e55`; Gamescope-only Niri Gaming Mode | production pin `55e92880`; PR #19 gate `002131b1`; PR #21 candidate `b440538d` |
+| `LQ13ofc/quickshell-` | `feature/accessible-control-center-sliders` / #15 draft | HEAD `0dc55d26f4dd2d281044ce6d4a043f5c751298df` | PR #8 physical-gate checkpoint `79b093e60f72a2e31f29f819ca2e13d3a1f296e5` |
 
-Production `main` still uses the known-good Quickshell pin
-`55e92880d0aff75d235f283c839ec0990eaa9e17`. The integration branch now pins
-its RC candidate separately to `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`; this
-does not change the production pin.
+The asahi-system PR #22 gitlink and lock both pin QuickShell PR #15 at
+`0dc55d26f4dd2d281044ce6d4a043f5c751298df`. PR #19 / QuickShell PR #8 and
+PR #21 / QuickShell PR #14 remain distinct historical gate references. The
+production `main` pin is still `55e92880d0aff75d235f283c839ec0990eaa9e17`.
+
+## Current candidate and evidence
+
+- Settings and Control Center behavior stays in Quickshell; system setup,
+  lifecycle, Niri KDL, diagnostics, benchmark, and Gamescope orchestration stay
+  in asahi-system. Either repository remains usable without the other.
+- PR #15 adds accessible Control Center sliders and makes Efficiency/reduced
+  motion pause continuous activity indicators. Its Cloud checks passed: 43
+  Python tests, 59 QML files load, full offscreen render, and qmllint exit 0
+  with 192 classified warnings (run `38055105197`).
+- PR #22 now exposes `niri+ gaming status|steam|run`. Gaming Mode launches only
+  through Gamescope inside the current user's active Niri session; it uses no
+  experimental flags and never falls back to direct Niri. Gamescope/Honeykrisp
+  compatibility remains `M1_REQUIRED`. Status/doctor include read-only
+  readiness; stale and symlinked IPC sockets are rejected, and explicit local
+  executable paths work.
+- Current asahi-system Cloud checks: compileall, baseline validator, and 232
+  unittest cases pass. The 11 Gaming Mode cases cover live/stale IPC sockets,
+  symlink rejection, read-only status, exact argv, executable paths, root/non-
+  Niri rejection, Gamescope absence or start failure, and CLI dispatch. This
+  Cloud host reported Niri inactive and Gamescope/Steam unavailable; no game
+  was launched.
+- PR #22's prior code head `556603abd14bfd758c5957257457bbc859d7d3fc` passed
+  Asahi Actions run `38055455933`; the earlier Gaming CLI head
+  `1e841e99b626ff27afd0e8b324a60d2f6b9c43f2` passed run `38056017599`. Actions
+  run `38056128364` passed on code head
+  `984b8c97c38853b5fcf0a8a621b32912138e2e55`.
+
+### Remaining release gate
+
+Cloud-implementable settings, UI behavior, profiles, lifecycle, persistence,
+diagnostics, benchmark tooling, independent-repository behavior, candidate
+install/rollback, and the no-fallback Gamescope contract are implemented and
+covered by the cumulative test suites. Hardware output/backlight discovery,
+Niri runtime application of generated KDL, Wayland services/devices, suspend,
+Honeykrisp/Gamescope behavior, and measured CPU/RAM/frametime remain
+`M1_REQUIRED`. Cloud validation does not establish those claims.
+
+Next executable action: publish the updated progress and validation details on
+PR #22, then continue any additional Cloud-fixable issues found in cumulative
+candidate review without changing production pins.
+
+Historical PR #19 first-gate checkpoint: production `main` used the known-good
+Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17`, while that separate
+candidate pinned `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`. The current
+cumulative pin is recorded at the top of this document.
 
 ### Repository independence contract
 
@@ -31,9 +80,9 @@ optional backend and report its absence. The integration branch's gitlink and
 lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa9e17`
 is unchanged.
 
-Current Cloud validation: asahi-system compileall, baseline validation, and all
-205 unit tests pass at HEAD `7028f85`; Actions run `38002886855` passed for
-the new transaction tests and progress documentation.
+Historical checkpoint below: the former integration branch recorded an
+earlier 205-test result at HEAD `7028f85`; current cumulative evidence appears
+in the 2026-10-10 validation section below.
 QuickShell
 has 39 passing Python tests, 59 loadable QML files, all reference scenes
 rendering locally, and qmllint exit 0 with 192 classified warnings. Hosted run
@@ -46,7 +95,7 @@ The hosted ControlCenter SIGSEGV was resolved by deferring responsive Row anchor
 changes until component construction finishes and cancelling a pending relayout
 with the component's one-shot timer. The GDB stack had identified Qt Quick
 positioner/binding re-entry; no rendering scene is skipped or downgraded.
-## Completed in this continuation
+## Historical continuation record (prior checkpoint)
 
 - Preserved both pre-existing worktrees with checkpoint branches and WIP commits
   before synchronization.
@@ -81,7 +130,7 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
   labels, and Control Center uses a shared themed slider rather than Qt's
   platform-default control. Removed its now-unused Controls import.
 
-## Requirement matrix
+## Requirement matrix (prior checkpoint; current candidate evidence above)
 
 | Requirement | Implementation | State | Evidence / blocker |
 |---|---|---|---|
@@ -94,7 +143,7 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
 | Trackpad/input configuration | `niri_settings.py`, Settings Center Input page | Implemented with explicit opt-in and collision checks | KDL/parser and preservation tests pass; real M1 device behavior remains `M1_REQUIRED` |
 | Monitor mode/scale/brightness device discovery | No hardware-specific setting is claimed | Incomplete / `M1_REQUIRED` for output names and device validation | Cloud lacks Apple display/backlight hardware |
 | Settings search, keyboard access, import/export/reset, doctor/status | QuickShell Settings Center and existing Niri+ CLI | Implemented in candidate | Unit/harness coverage and offscreen rendering |
-| UI efficiency profiles | Shared stats service and lazy panel content | Implemented as interface-only profiles | Regression tests and Cloud parser experiment; no M1 performance claim |
+| UI efficiency profiles | Quickshell profile state and lazy visual components | Implemented as interface behavior, not system power tuning | Cloud profile/lifecycle tests; no M1 performance claim |
 | Independent repositories with optional integration | `niri+ install [--with-quickshell]`, QuickShell CLI fallback | Implemented in candidate | Default system install and shell operation do not require the other repository; 201 system tests and 39 visual tests; M1 session behavior remains required |
 | Full product RC, installer/update/rollback integration | Candidate branches and existing asahi-system installer | Cloud integration scenarios pass; RC remains in progress | Reversible snapshot install is tested for bootstrap/apply/verification failures; real candidate 79 was staged in a temporary root and all 188 manifest files and pin metadata matched |
 | Cause of observed ~4 GiB RAM | Memory collector/diagnostic tooling | Unknown | Requires longitudinal M1 captures; no cause inferred |
@@ -122,7 +171,7 @@ positioner/binding re-entry; no rendering scene is skipped or downgraded.
   2 unused-imports). These are not silently treated as proof of a runtime bug;
   the classification is in `docs/validacao-qml.md`.
 
-## Open work / next executable action
+## Historical open work / next executable action (prior checkpoint)
 
 1. Continue the requirement matrix for remaining Cloud-implementable product
    behavior while keeping visual state in Quickshell and system lifecycle,
