@@ -2,103 +2,104 @@
 
 Updated: 2026-10-10
 
-## Release state
+## Current release gate status
 
-`CODE_COMPLETE / CLOUD_VALIDATED / M1_RELEASE_GATE_PENDING` for the cumulative
-Cloud candidate on asahi-system PR #22 and quickshell- PR #15. This means the
-Cloud-implementable settings, administration, and Gamescope-only launch
-contract are implemented and covered by repository tests. It does not claim
-that Gamescope, Honeykrisp, input devices, or runtime performance work on the
-M1. No PR is merged, no hardware test was run, and production pins are intact.
+`IMPLEMENTATION_IN_PROGRESS / CLOUD_VALIDATED_PARTIAL / M1_REQUIRED`. This
+branch adds the closed Quickshell plugin lifecycle, joint updates, standalone
+offline recovery, read-only preflight, and a corrected experimental RC flow.
+The audited PR #22 candidate remains the parent reference; PR #22 and Quickshell
+PR #15 are unchanged and unmerged. No physical M1 test ran.
 
-## Repository state
+## Candidate references and preserved state
 
-| Repository | Work branch / PR | Current candidate | Preserved pin/checkpoint |
-|---|---|---|---|
-| `LQ13ofc/asahi-system` | `feature/quickshell-pr15-candidate` / #22 draft | code head `984b8c97c38853b5fcf0a8a621b32912138e2e55`; Gamescope-only Niri Gaming Mode | production pin `55e92880`; PR #19 gate `002131b1`; PR #21 candidate `b440538d` |
-| `LQ13ofc/quickshell-` | `feature/accessible-control-center-sliders` / #15 draft | HEAD `0dc55d26f4dd2d281044ce6d4a043f5c751298df` | PR #8 physical-gate checkpoint `79b093e60f72a2e31f29f819ca2e13d3a1f296e5` |
+| Component | Ref | Current policy |
+|---|---|---|
+| `asahi-system` | branch `feature/plugin-management-offline-recovery`, based on PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` | candidate version `0.1.12`; new RC channel explicitly targets PR #24 after it is opened |
+| `quickshell-` | PR #15 exact commit `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` | candidate visual pin, unchanged |
+| production | `origin/main` commit `5339e34811763c6169f64d15aaae738982fa1738` | Niri+ `0.1.9`, Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17` |
 
-The asahi-system PR #22 gitlink and lock both pin QuickShell PR #15 at
-`0dc55d26f4dd2d281044ce6d4a043f5c751298df`. PR #19 / QuickShell PR #8 and
-PR #21 / QuickShell PR #14 remain distinct historical gate references. The
-production `main` pin is still `55e92880d0aff75d235f283c839ec0990eaa9e17`.
+No production branch, PR #22/#15, Graphify PR #23/#16, or known-good pin was
+modified. Quickshell source remains a separate repository and optional runtime;
+the system CLI does not copy QML into asahi-system.
 
-## Current candidate and evidence
+## Completed in this continuation
 
-- Settings and Control Center behavior stays in Quickshell; system setup,
-  lifecycle, Niri KDL, diagnostics, benchmark, and Gamescope orchestration stay
-  in asahi-system. Either repository remains usable without the other.
-- PR #15 adds accessible Control Center sliders and makes Efficiency/reduced
-  motion pause continuous activity indicators. Its Cloud checks passed: 43
-  Python tests, 59 QML files load, full offscreen render, and qmllint exit 0
-  with 192 classified warnings (run `38055105197`).
-- PR #22 now exposes `niri+ gaming status|steam|run`. Gaming Mode launches only
-  through Gamescope inside the current user's active Niri session; it uses no
-  experimental flags and never falls back to direct Niri. Gamescope/Honeykrisp
-  compatibility remains `M1_REQUIRED`. Status/doctor include read-only
-  readiness; stale and symlinked IPC sockets are rejected, and explicit local
-  executable paths work.
-- Current asahi-system Cloud checks: compileall, baseline validator, and 232
-  unittest cases pass. The 11 Gaming Mode cases cover live/stale IPC sockets,
-  symlink rejection, read-only status, exact argv, executable paths, root/non-
-  Niri rejection, Gamescope absence or start failure, and CLI dispatch. This
-  Cloud host reported Niri inactive and Gamescope/Steam unavailable; no game
-  was launched.
-- PR #22's prior code head `556603abd14bfd758c5957257457bbc859d7d3fc` passed
-  Asahi Actions run `38055455933`; the earlier Gaming CLI head
-  `1e841e99b626ff27afd0e8b324a60d2f6b9c43f2` passed run `38056017599`. Actions
-  run `38056128364` passed on code head
-  `984b8c97c38853b5fcf0a8a621b32912138e2e55`; run `38056189794` passed on
-  progress-document head `e267722e7dafc9dcf82d7e9f3c8d082c784798cc`.
+- Added `niri+ plugin list|status|install|remove quickshell`; install/remove use
+a closed registry. First visual install is explicit, while `sudo niri+ install`
+updates the visual pin only when a validated managed plugin already exists.
+- Core-only install does not fetch the private Quickshell repo. An independent
+`qs` binary does not imply managed plugin ownership. A validated 0.1.9 runtime
+is migrated; invalid legacy state stops rather than being adopted.
+- Joint update resolves both exact Git commits before apply, requires matching
+lock/gitlink, noninteractive owner Git, a protected recovery bundle, one host
+transaction, final pin/unit/hash checks, and restoration after package/finalize
+failure. Normal production remains `main`; candidate install is explicit and
+rejects downgrade. Quickshell update refuses if `qs` is active or process state
+cannot be inspected.
+- Offline helper `/usr/local/libexec/niri-plus-recover` is stdlib-only and
+works without the main CLI, Git, network, Niri, Quickshell, or credentials.
+Plugin removal also snapshots before changing files. Recovery verifies root
+ownership/modes, checksum, whitelisted paths, archive contents, pins, and cached
+Quickshell RPM signatures and requires positive `rpmkeys` evidence (a zero exit
+with `NOKEY` is rejected). Newly owned RPMs are removed only when the previous
+inventory proves they were absent, using offline DNF and `--noautoremove`; if
+cached DNF cannot prove optional cleanup, managed-file restoration still
+completes and the remaining RPMs are reported.
+- RC bootstrap is now pinned to PR #24 and exact Quickshell commit
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`; production resolver remains
+main-only. RC Quickshell install requires `--with-quickshell` when no managed
+plugin exists and updates an existing plugin as a pair. Dry-run now rejects an
+incompatible host before Git/network access. The current M1 guide uses this
+explicit RC flow; prior PR #19/#21/#22 procedures are visibly archived.
+- The M1 instructions no longer tell the installed 0.1.9 CLI to run commands
+it does not have. That version can provide `status`/`doctor`; the explicit RC
+dry-run is read-only, and candidate apply builds/verifies recovery before its
+first host mutation.
+- Added full first-test procedure, collector installer, plugin/update and offline
+recovery documentation. The RC bootstrap checksum and exact system commit must
+be derived from the final PR head; no stale checksum is published here.
 
-### Remaining release gate
+## Cloud evidence so far
 
-Cloud-implementable settings, UI behavior, profiles, lifecycle, persistence,
-diagnostics, benchmark tooling, independent-repository behavior, candidate
-install/rollback, and the no-fallback Gamescope contract are implemented and
-covered by the cumulative test suites. Hardware output/backlight discovery,
-Niri runtime application of generated KDL, Wayland services/devices, suspend,
-Honeykrisp/Gamescope behavior, and measured CPU/RAM/frametime remain
-`M1_REQUIRED`. Cloud validation does not establish those claims.
+- `python3 -m unittest discover -s tests -p 'test_plugins_and_recovery.py' -v`:
+41 passed, including recovery-before-remove, process gate, package-compensation,
+positive RPM signature verification, and file restore when cached DNF cleanup
+is unavailable.
+- `python3 -m unittest discover -s tests -p 'test_release_gate_security.py' -v`:
+36 passed, including exact candidate ref handling, core-only RC without a
+Quickshell fetch, and incompatible-host rejection before network access.
+- `python3 -m unittest discover -s tests -p 'test_rc_bootstrap_plugins.py' -v`:
+6 passed for manifest/legacy detection, explicit opt-in, independent `qs`, and
+running-process probe.
+- `python3 -m unittest discover -s tests -p 'test_release_candidate_docs.py' -v`:
+1 passed.
+- Full `python3 -m unittest discover -s tests -v`: 287 passed.
+- `scripts/validate_baseline.py`, `compileall`, both bootstrap `py_compile`
+checks, collector `bash -n`, and `git diff --check`: passed.
+- Quickshell PR #15 exact head: compileall and 45 tests passed; 59 QML files
+loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
+193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
+unresolved-type, 2 unused-imports). No Quickshell files were changed here.
+- Hosted CI for the new installer branch is pending PR creation. Existing PR #22
+head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15 head
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` remain open/unchanged; their latest
+GitHub Actions runs were successful.
 
-Next release action: the Cloud candidate is ready for review; the remaining
-gate is the documented Fedora Asahi M1 validation after the candidate is
-accepted for that gate. Until those measurements exist, Gamescope/Honeykrisp
-compatibility and hardware performance remain unverified. Any new CI or review
-finding that can be reproduced in Cloud returns to implementation before the
-hardware gate.
+## Remaining release gate work
 
-Historical PR #19 first-gate checkpoint: production `main` used the known-good
-Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17`, while that separate
-candidate pinned `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`. The current
-cumulative pin is recorded at the top of this document.
+1. Review the final staged diff and verify install/recovery scenario coverage.
+2. Commit the implementation and procedure updates separately; push the branch
+and open draft PR #24 against the PR #22 candidate branch.
+3. Confirm the exact Quickshell gitlink/lock, calculate the committed bootstrap
+blob SHA-256, and wait for PR #24 CI. Do not merge.
+5. `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
+SDDM/Niri/Quickshell lifecycle, audio/network/input, Plasma recovery, offline
+TTY restore, and hardware performance. No M1 interaction is requested now.
 
-### Repository independence contract
+Next executable action: run the complete current asahi-system suite and
+baseline/static validation after correcting any failure; then validate the
+Quickshell PR #15 Cloud suite before creating PR #24.
 
-The repositories are peers, not runtime dependencies. The default
-`sudo niri+ install` installs Niri/system management without fetching or
-installing Quickshell. Users opt into the pinned visual integration with
-`sudo niri+ install --with-quickshell`. Quickshell owns its QML and can launch
-through `qs` without the Niri+ CLI; Niri-specific actions use the CLI as an
-optional backend and report its absence. The integration branch's gitlink and
-lock remain candidate-only; production pin `55e92880d0aff75d235f283c839ec0990eaa9e17`
-is unchanged.
-
-Historical checkpoint below: the former integration branch recorded an
-earlier 205-test result at HEAD `7028f85`; current cumulative evidence appears
-in the 2026-10-10 validation section below.
-QuickShell
-has 39 passing Python tests, 59 loadable QML files, all reference scenes
-rendering locally, and qmllint exit 0 with 192 classified warnings. Hosted run
-38000517181 passed for QuickShell code HEAD b444860: Python suite, QML load,
-full reference render, and lint. It includes a regression proving the UI reports
-an unavailable optional Niri+ brightness backend without remaining busy. HEAD
-79b093e updates only the documented warning counts; Actions runs 38000692795
-and 38000697379 passed at that exact head.
-The hosted ControlCenter SIGSEGV was resolved by deferring responsive Row anchor
-changes until component construction finishes and cancelling a pending relayout
-with the component's one-shot timer. The GDB stack had identified Qt Quick
-positioner/binding re-entry; no rendering scene is skipped or downgraded.
 ## Historical continuation record (prior checkpoint)
 
 - Preserved both pre-existing worktrees with checkpoint branches and WIP commits

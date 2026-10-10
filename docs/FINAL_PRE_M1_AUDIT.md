@@ -3,7 +3,45 @@
 Date: 2026-10-10. Scope: Cloud candidate worktrees only. No M1 access or test was
 performed, and neither `main` nor `master` was changed.
 
-## Decision
+## Installer and offline-recovery addendum
+
+The original PR #22 GO decision below is historical and applies only to that
+earlier explicit experiment. This addendum evaluates the new install/plugin/
+recovery candidate based on PR #22 head
+`0f2774d750dad31ac7ad9e841754a0b96c1376dc`, with Quickshell PR #15 commit
+`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`. The gitlink and lockfile agree.
+The production Quickshell pin remains
+`55e92880d0aff75d235f283c839ec0990eaa9e17`.
+
+**Current decision: NO-GO until the new stacked PR #24 is pushed and its hosted
+CI passes.** After that gate, the intended decision is GO only for the
+explicit, reversible experimental M1 procedure in
+[`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md); this remains NO-GO for
+production. No hardware result is inferred from Cloud.
+
+Cloud regressions found and corrected in this continuation:
+
+- An RPM signature check could have accepted a digest-only or `NOKEY` message
+  when a tool returned zero. Recovery now requires explicit trusted signature
+  evidence; both summary and verbose rpmkeys output are covered.
+- If offline DNF could not preflight removal of newly installed optional RPMs,
+  recovery stopped before restoring managed files. It now restores the exact
+  managed snapshot and reports packages whose optional cleanup was deferred.
+- The RC dry-run previously did not run the Fedora Asahi 44/aarch64 target
+  check. It now refuses before Git/network resolution on an incompatible host.
+- The current M1 procedure previously invoked `preflight`/`recovery` commands
+  before they existed on 0.1.9. It now uses only old-version diagnostics first;
+  RC apply itself prepares and verifies the offline bundle before mutations.
+
+Validation for these changes: 287 asahi-system unittests passed, baseline and
+static checks passed; Quickshell PR #15 at its unchanged exact head passed 45
+tests, 59-file QML load, full offscreen scene render, and qmllint (exit 0, 193
+classified warnings). The latest PR #22 and PR #15 hosted Actions runs are
+successful. PR #24 CI has not yet run. See `RELEASE_PROGRESS.md` for the
+complete result and remaining gate. Hardware items below remain
+`M1_REQUIRED`.
+
+## Previous candidate decision (PR #22; superseded by the addendum above)
 
 **GO for the opt-in, reversible experimental M1 validation described in
 [`release-candidate-m1-pr22.md`](release-candidate-m1-pr22.md).** The updated

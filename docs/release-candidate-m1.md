@@ -1,5 +1,10 @@
 # First Niri+ Release Candidate test on Fedora Asahi Remix 44
 
+> **Archived procedure.** This describes PR #19 and the earlier 0.1.9-era RC
+> helper. Do not execute these commands with the current M1 installation; its
+> `niri+ install` does not accept `--dry-run --with-quickshell`. Follow
+> [`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md) for the current candidate.
+
 This procedure is for a MacBook Air M1 running the production Niri+ installer.
 The production command remains pinned to `main`; the RC installer is a separate,
 explicit helper. It does not merge either PR or update the production Quickshell

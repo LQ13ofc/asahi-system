@@ -1,5 +1,9 @@
 # Integrated Niri+ Release Candidate test on Fedora Asahi Remix 44
 
+> **Archived procedure.** This describes PR #22 and is retained as a historical
+> record. Its commands and hashes do not identify the current candidate; use
+> [`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md) instead.
+
 This separate procedure tests the integrated Cloud candidate from PR #22. The original first-gate procedure remains at `release-candidate-m1.md` and its PR #19 / Quickshell 79b093e pin are unchanged. Use this candidate only after reviewing the current PR #22 head and only when the known-good record describes the production installation (restore the first gate first if it was ever applied).
 The production command remains pinned to `main`; the RC installer is a separate,
 explicit helper. It does not merge either PR or update the production Quickshell
