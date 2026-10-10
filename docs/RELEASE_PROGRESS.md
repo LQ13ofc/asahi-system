@@ -191,12 +191,13 @@ tests passed, including full candidate-channel bootstrap/apply/verification
 failure rollback and exact known-good resolution. Full `unittest discover`:
 215 tests passed. `compileall`, `scripts/validate_baseline.py`, RC bootstrap
 `--help`, and `git diff --check` passed. Expected refusal/failure messages in
-the suite are test fixtures, not failing tests. PR CI must be rerun after push.
-The immutable PR #19 system SHA and helper hash for the M1 commands must be
-read from the final pushed head and reported separately; they are intentionally
-not copied into this self-referential document.
+the suite are test fixtures, not failing tests. PR #19 CI run `38009784374`
+passed on head `232e18ee2bec810b793c40ca806bc456d2676e7e`.
 
-Next executable action: commit the M1 procedure/progress documentation, push
-the two commits to PR #19, verify the new head and CI result, calculate the
-bootstrap SHA-256 from that immutable head, and provide the exact M1 commands.
-Keep PRs #19/#8 unmerged and retain `main`'s stable Quickshell pin.
+The procedure is now ready for its first controlled M1 validation; this Cloud
+work did not execute it. PR #19 remains open/draft and the known-good pin on
+`main` remains unchanged. The next Cloud action is to retain the RC and M1
+results in the release matrix, then continue any Cloud-implementable product
+work without promoting or merging the candidate. The final PR head and helper
+SHA-256 must be reported with the commands, not copied here in a self-referential
+form. Keep PRs #19/#8 unmerged and retain `main`'s stable Quickshell pin.
