@@ -4,8 +4,8 @@ Updated: 2026-10-10
 
 ## Current release gate status
 
-`PRE_M1_GATE_READY / CLOUD_VALIDATED / M1_REQUIRED`, pending CI for correction
-PR #25. The M1 0.1.9 host failed while creating the offline recovery bundle
+`PRE_M1_GATE_READY / CLOUD_VALIDATED / M1_REQUIRED`. The M1 0.1.9 host failed
+while creating the offline recovery bundle
 because a legacy backup contained an absolute symlink to the user's Quickshell
 checkout. The backup is append-only historical data; recovery now excludes that
 tree instead of walking or restoring it. Active managed symlinks remain subject
@@ -28,6 +28,8 @@ asahi-system.
 
 - `39d9507` — recovery excludes append-only backup history without following
   its legacy absolute symlinks; adds regression and offline restore coverage.
+- `1bbefa5` — candidate version 0.1.13, PR #25 RC bootstrap reference, and
+  updated M1 procedure.
 - PR #25 is a draft against `main`; no merge was performed.
 
 ## Completed in this continuation
@@ -96,9 +98,10 @@ checks, collector `bash -n`, and `git diff --check`: passed.
 loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
 unresolved-type, 2 unused-imports). No Quickshell files were changed here.
-- Draft PR #25 targets `main` cumulatively. GitHub Actions validation is pending
-  for its latest head; local compileall, baseline validation, 292 tests, and
-  `git diff --check` passed.
+- Draft PR #25 targets `main` cumulatively. GitHub Actions `static-validation`
+  passed on candidate code head `1bbefa5c669c3c1b0f84d7bf90a24b88cd153e03`
+  (run `38094249542`); local compileall, baseline validation, 292 tests, and
+  `git diff --check` passed. A documentation-only progress update follows.
 PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15
 head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` are unchanged; their latest
 Actions runs are successful.
