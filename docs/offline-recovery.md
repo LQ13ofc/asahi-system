@@ -21,10 +21,20 @@ mantidos. A publicação incompleta não substitui o ponto anterior.
 
 O bundle cobre os arquivos Niri+ explicitamente listados no manifesto: CLI e
 módulos, assets/config Niri gerenciados, units e drop-ins/symlinks do Niri+,
-estado/bootstrap, manifesto Quickshell e backups internos. Configurações
-pessoais externas não são removidas; arquivos `/etc/niri/*.kdl` existentes
-imediatamente antes da restauração são preservados numa pasta
-`preserved-edits-*` para revisão.
+estado/bootstrap e manifesto Quickshell. Configurações pessoais externas não
+são removidas; arquivos `/etc/niri/*.kdl` existentes imediatamente antes da
+restauração são preservados numa pasta `preserved-edits-*` para revisão.
+
+`/var/lib/niri-plus/bootstrap-backups` fica deliberadamente fora do bundle.
+Esse diretório é um histórico append-only: o bootstrap cria uma nova pasta com
+timestamp usando criação exclusiva e copia os destinos atuais para ela; não
+altera entradas históricas. A recuperação offline restaura os arquivos ativos
+a partir do bundle protegido e não usa essas cópias antigas como fonte. Ela
+preserva o diretório histórico já existente sem percorrê-lo nem substituí-lo;
+uma pasta nova deixada por uma tentativa interrompida também permanece. Isso
+mantém symlinks históricos, inclusive links absolutos para o checkout do
+usuário, como dados inertes e evita empacotar ou seguir seus destinos. O
+rollback transacional no mesmo processo continua cobrindo o path de backups.
 
 O RPM atualmente incluído como payload offline é apenas a engine Quickshell
 anterior, caso um arquivo compatível já esteja no cache DNF e seu NEVRA possa
@@ -46,7 +56,7 @@ ou se a atualização da engine existente não tiver payload anterior verificáv
 
 `sudo niri+ install` e remoção explícita de plugin criam um novo bundle sob o
 mesmo operation lock antes de mudar arquivos. `niri+ recovery status` valida o modo/owner da store, hash, nome vinculado no
-sidecar, manifesto, paths whitelisted, tipos, symlinks, checksums e metadados
+sidecar, manifesto, paths whitelisted, tipos, symlinks ativos, checksums e metadados
 antes de indicar `READY`. O executável independente
 `/usr/local/libexec/niri-plus-recover` contém o núcleo stdlib-only de recovery;
 não importa `niri_plus.cli` nem outros módulos do produto.

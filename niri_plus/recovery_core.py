@@ -36,7 +36,11 @@ MANAGED_ROOTS = tuple(pathlib.Path(value) for value in (
     "/etc/niri/autostart.kdl", "/etc/niri/config.kdl", "/etc/niri/keybinds.kdl",
     "/etc/niri/outputs.kdl", "/etc/niri/rules.kdl", "/usr/local/bin/niri+",
     "/usr/local/lib/niri-plus", "/usr/local/libexec/niri-plus-recover",
-    "/usr/local/share/niri-plus", "/var/lib/niri-plus/bootstrap-backups",
+    "/usr/local/share/niri-plus",
+    # bootstrap-backups is append-only historical data. The snapshot installer
+    # adds a new timestamped directory but never edits prior entries, and
+    # emergency recovery does not use those archives as restore inputs. Keep
+    # them in place instead of recursively importing links to user checkouts.
     "/var/lib/niri-plus/bootstrap.json", "/var/lib/niri-plus/plugins.json",
     "/usr/lib/systemd/user/asahi-niri-polkit-agent.service",
     "/usr/lib/systemd/user/asahi-niri-wayland-ready.service",
@@ -294,6 +298,15 @@ def _canonical_member_name(name: str) -> str:
     return normalized
 
 
+def _validate_symlink_target(name: str, linkname: str, roots: list[str]) -> None:
+    """Validate active managed links lexically without inspecting targets."""
+    if not isinstance(linkname, str) or not linkname or linkname.startswith("/") or "\x00" in linkname:
+        raise RecoveryError(f"unsafe symlink in recovery bundle: {name}")
+    resolved_link = posixpath.normpath(posixpath.join(posixpath.dirname(name), linkname))
+    if not _is_under_allowed(resolved_link, roots):
+        raise RecoveryError(f"symlink escapes Niri+ managed paths: {name}")
+
+
 def _verify_bundle(bundle: pathlib.Path, root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     store = _recovery_store(root)
     try:
@@ -370,11 +383,7 @@ def _verify_bundle(bundle: pathlib.Path, root: pathlib.Path) -> tuple[dict[str, 
                 if record["type"] == "symlink":
                     if package_payload:
                         raise RecoveryError("RPM rollback payload must be a regular file")
-                    if member.linkname.startswith("/") or "\x00" in member.linkname:
-                        raise RecoveryError(f"unsafe symlink in recovery bundle: {name}")
-                    resolved_link = posixpath.normpath(posixpath.join(posixpath.dirname(name), member.linkname))
-                    if not _is_under_allowed(resolved_link, roots):
-                        raise RecoveryError(f"symlink escapes Niri+ managed paths: {name}")
+                    _validate_symlink_target(name, member.linkname, roots)
                 records.append(record)
             absent_roots = manifest.get("absent_roots")
             if (not isinstance(absent_roots, list) or len(absent_roots) != len(set(absent_roots))
@@ -539,7 +548,7 @@ def prepare_bundle(root: pathlib.Path = pathlib.Path("/"), *, runner=subprocess.
             "roots": [path.as_posix().lstrip("/") for path in roots],
             "absent_roots": absent_roots,
             "members": members,
-            "scope": "Niri+ managed files/state and cached Quickshell RPM when available; other RPM transactions are inventoried, not reverted.",
+            "scope": "Niri+ managed files/state and cached Quickshell RPM when available; append-only bootstrap-backups remain in place and are not copied/restored; other RPM transactions are inventoried, not reverted.",
         }
         payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
         with tarfile.open(temporary, "w:gz", format=tarfile.PAX_FORMAT) as archive:
@@ -670,7 +679,7 @@ class _RecoveryFilesystemTransaction:
             self.existed[absolute.as_posix()] = exists
             if exists:
                 if target.is_symlink():
-                    saved.symlink_to(os.readlink(target), target_is_directory=target.is_dir())
+                    saved.symlink_to(os.readlink(target))
                 elif target.is_dir():
                     shutil.copytree(target, saved, symlinks=True, copy_function=shutil.copy2)
                 else:
@@ -697,7 +706,7 @@ class _RecoveryFilesystemTransaction:
                 if self.existed[absolute.as_posix()]:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     if saved.is_symlink():
-                        target.symlink_to(os.readlink(saved), target_is_directory=saved.is_dir())
+                        target.symlink_to(os.readlink(saved))
                     elif saved.is_dir():
                         shutil.copytree(saved, target, symlinks=True, copy_function=shutil.copy2)
                     else:

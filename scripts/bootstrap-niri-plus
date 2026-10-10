@@ -63,11 +63,11 @@ def _signature(path: pathlib.Path):
 
 
 def _copy(source: pathlib.Path, destination: pathlib.Path) -> None:
-    if source.is_dir() and not source.is_symlink():
-        shutil.copytree(source, destination, symlinks=True, copy_function=shutil.copy2)
-    elif source.is_symlink():
+    if source.is_symlink():
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.symlink_to(os.readlink(source), target_is_directory=source.is_dir())
+        destination.symlink_to(os.readlink(source))
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=True, copy_function=shutil.copy2)
     else:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination, follow_symlinks=False)

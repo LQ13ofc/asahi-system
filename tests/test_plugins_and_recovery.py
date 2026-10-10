@@ -6,9 +6,11 @@ import io
 import json
 import os
 import pathlib
+import runpy
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 import textwrap
 from unittest import mock
@@ -382,6 +384,39 @@ class PluginRegistryTests(unittest.TestCase):
 
 
 class OfflineRecoveryTests(unittest.TestCase):
+    @staticmethod
+    def _legacy_backup_host(root: pathlib.Path, link_target: str | None = None,
+                            *, source_repository: str = "https://github.com/LQ13ofc/asahi-system.git"):
+        source_root = pathlib.PurePosixPath("/home/lucasqueyroux/Projects/asahi-system")
+        checkout = root.joinpath(*source_root.parts[1:], "external/quickshell")
+        checkout.mkdir(parents=True)
+        sentinel = checkout / "private-user-file.txt"
+        sentinel.write_text("must never be collected through the symlink\n", encoding="utf-8")
+
+        backup = root / "var/lib/niri-plus/bootstrap-backups/20261007T140810Z"
+        share_backup = backup / "share"
+        share_backup.mkdir(parents=True)
+        quickshell_link = share_backup / "quickshell"
+        quickshell_link.symlink_to(link_target or f"{source_root}/external/quickshell")
+        retained = share_backup / "legacy-metadata.json"
+        retained.write_text('{"legacy":true}\n', encoding="utf-8")
+        retained.chmod(0o640)
+
+        data = root / "usr/local/share/niri-plus"
+        data.mkdir(parents=True)
+        (data / "VERSION").write_text("0.1.9\n", encoding="utf-8")
+        write_json(root / "var/lib/niri-plus/bootstrap.json", {
+            "schema_version": 2,
+            "version": "0.1.9",
+            "source_root": source_root.as_posix(),
+            "source_repository": source_repository,
+            "source_branch": "main",
+            "source_commit": "a" * 40,
+            "quickshell_repository": QS_REPOSITORY,
+            "quickshell_expected_commit": "b" * 40,
+        })
+        return source_root, checkout, sentinel, backup, quickshell_link, retained
+
     def test_failed_install_compensation_includes_only_absent_quickshell_engine(self):
         with_quickshell = snapshot_install._failed_transaction_new_packages(
             install, include_quickshell=True, preexisting_packages={"niri", "foot", "quickshell"},
@@ -412,6 +447,7 @@ class OfflineRecoveryTests(unittest.TestCase):
 
     def test_standalone_core_coverage_matches_installer_owned_path_set(self):
         expected = set(install_transaction.transaction_paths(install.MANAGED_FILES, install.MANAGED_LINKS))
+        expected.discard(pathlib.Path("/var/lib/niri-plus/bootstrap-backups"))
         expected.add(pathlib.Path("/usr/local/libexec/niri-plus-recover"))
         self.assertEqual(set(recovery.managed_roots()), expected)
 
@@ -434,6 +470,127 @@ class OfflineRecoveryTests(unittest.TestCase):
             self.assertEqual(config.read_text(encoding="utf-8"), "known-good config\n")
             self.assertEqual(config.stat().st_mode & 0o777, 0o640)
             self.assertTrue(list((root / "var/lib/niri-plus/recovery").glob("preserved-edits-*/*")))
+
+    def test_legacy_user_checkout_link_is_preserved_as_inert_backup_data_offline(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source_root, checkout, sentinel, backup, link, retained = self._legacy_backup_host(root)
+            expected_target = f"{source_root}/external/quickshell"
+            original_metadata = retained.read_bytes()
+            original_mode = retained.stat().st_mode & 0o777
+            config = root / "etc/niri/config.kdl"
+            config.parent.mkdir(parents=True)
+            config.write_text("known-good\n", encoding="utf-8")
+            no_rpm = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 127, "", "rpm unavailable")
+
+            bundle = recovery.prepare_bundle(root, runner=no_rpm)
+            self.assertEqual(os.readlink(link), expected_target)
+            self.assertEqual(retained.read_bytes(), original_metadata)
+            self.assertEqual(retained.stat().st_mode & 0o777, original_mode)
+            self.assertIn("READY", recovery.status(root))
+            with tarfile.open(bundle, "r:gz") as archive:
+                names = {member.name for member in archive.getmembers()}
+                self.assertFalse(any(name.startswith("var/lib/niri-plus/bootstrap-backups/") for name in names))
+                self.assertFalse(any(name.startswith("home/lucasqueyroux/Projects/asahi-system/")
+                                     for name in names))
+                self.assertTrue(any(member.name == "NIRI_PLUS_RECOVERY.json" for member in archive.getmembers()))
+
+            # The installer appends a new historical entry. Recovery restores
+            # active state while leaving all append-only history untouched.
+            config.write_text("partially applied\n", encoding="utf-8")
+            failed_backup = backup.parent / "20261010T120000Z"
+            failed_backup.mkdir()
+            (failed_backup / "partial-marker").write_text("candidate\n", encoding="utf-8")
+            (root / "usr/local/share/niri-plus/VERSION").write_text("candidate\n", encoding="utf-8")
+            result = recovery.restore(bundle, root)
+
+            self.assertIn("Restored Niri+ 0.1.9", result)
+            self.assertEqual(config.read_text(encoding="utf-8"), "known-good\n")
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(os.readlink(link), expected_target)
+            self.assertEqual(retained.read_bytes(), original_metadata)
+            self.assertEqual(retained.stat().st_mode & 0o777, original_mode)
+            self.assertTrue((failed_backup / "partial-marker").is_file())
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "must never be collected through the symlink\n")
+            self.assertTrue(checkout.is_dir())
+
+    def test_bootstrap_copy_preserves_a_link_without_probing_its_external_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            target = root / "home/user/Projects/asahi-system/external/quickshell"
+            target.mkdir(parents=True)
+            sentinel = target / "sentinel"
+            sentinel.write_text("external payload\n", encoding="utf-8")
+            source = root / "legacy-quickshell"
+            source.symlink_to(target)
+            destination = root / "backup/share/quickshell"
+            old_path = sys.path.copy()
+            try:
+                bootstrap = runpy.run_path(str(ROOT / "scripts/bootstrap-niri-plus"),
+                                           run_name="bootstrap_niri_plus_test")
+            finally:
+                sys.path[:] = old_path
+
+            real_is_dir = pathlib.Path.is_dir
+
+            def reject_symlink_stat(path):
+                if path.is_symlink():
+                    raise AssertionError("copy probed a symlink target")
+                return real_is_dir(path)
+
+            with mock.patch.object(pathlib.Path, "is_dir", new=reject_symlink_stat):
+                bootstrap["_copy"](source, destination)
+            self.assertTrue(destination.is_symlink())
+            self.assertEqual(os.readlink(destination), str(target))
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "external payload\n")
+
+    def test_historical_symlink_targets_are_not_collected_or_reactivated(self):
+        targets = ("/etc/shadow", "../../../../../../etc/shadow")
+        no_rpm = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 127, "", "rpm unavailable")
+        for target in targets:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                _source_root, checkout, sentinel, _backup, link, _retained = self._legacy_backup_host(
+                    root, target
+                )
+                bundle = recovery.prepare_bundle(root, runner=no_rpm)
+                with tarfile.open(bundle, "r:gz") as archive:
+                    names = {member.name for member in archive.getmembers()}
+                self.assertFalse(any(name.startswith("var/lib/niri-plus/bootstrap-backups/") for name in names))
+                self.assertFalse(any(name.startswith("home/lucasqueyroux/") for name in names))
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), target)
+                self.assertEqual(sentinel.read_text(encoding="utf-8"),
+                                 "must never be collected through the symlink\n")
+                self.assertTrue(checkout.is_dir())
+
+    def test_active_symlink_rejects_absolute_targets_and_traversal(self):
+        bad_targets = ("/etc/shadow", "../../../../../../etc/shadow")
+        no_rpm = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 127, "", "rpm unavailable")
+        for target in bad_targets:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temp:
+                root = pathlib.Path(temp)
+                data = root / "usr/local/share/niri-plus"
+                (data / "quickshell").mkdir(parents=True)
+                link = data / "quickshell/unsafe-link"
+                link.symlink_to(target)
+                with self.assertRaisesRegex(recovery.RecoveryError, "symlink"):
+                    recovery.prepare_bundle(root, runner=no_rpm)
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), target)
+                self.assertIsNone(recovery.latest_bundle(root))
+
+    def test_absolute_link_in_active_quickshell_path_is_not_treated_as_legacy_data(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source_root, _checkout, _sentinel, _backup, _link, _retained = self._legacy_backup_host(root)
+            active_runtime = root / "usr/local/share/niri-plus/quickshell"
+            active_runtime.symlink_to(f"{source_root}/external/quickshell")
+            no_rpm = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 127, "", "rpm unavailable")
+
+            with self.assertRaisesRegex(recovery.RecoveryError, "unsafe symlink"):
+                recovery.prepare_bundle(root, runner=no_rpm)
+            self.assertTrue(active_runtime.is_symlink())
 
     def test_corrupt_bundle_is_rejected_without_host_mutation(self):
         with tempfile.TemporaryDirectory() as temp:
