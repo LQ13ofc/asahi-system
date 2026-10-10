@@ -262,8 +262,7 @@ rejeição de tipos inválidos e lifecycle. Não requer nem invoca Niri+.
 Validação combinada no Cloud: compileall, 40 testes `unittest`, load de 59 QML
 sem erros/avisos tardios, render completo de todas as cenas e qmllint exit 0
 com 192 avisos classificados. A captura de Settings > Painéis foi inspecionada
-e não há colisão de layout. Os checks GitHub dos PRs #10/#11 estão em execução
-nos heads acima. PR #20 teve validação manual em `7fb1c1c` aprovada
+e não há colisão de layout. CI dos PRs #10/#11 passou nos heads acima. PR #20 teve validação manual em `7fb1c1c` aprovada
 (`38052764189`). O estado ainda não é CODE_COMPLETE; consumo real e lifecycle
 de Cava continuam `M1_REQUIRED`.
 
@@ -305,14 +304,23 @@ um dos dois consumidores fecha e parar/reiniciar pelo último consumidor.
 Cloud no head do PR #13: compileall, 41 testes `unittest`, 59 QML sem erros ou
 avisos tardios, render completo, lint com os mesmos 192 avisos classificados,
 settings-check, multiscreen, interação por teclado, bridge Niri, brilho com e
-sem CLI e Control Center power passaram. CI dos PRs #10/#11/#12 passou; PR #13
-está em execução. O watcher permanece event-driven; isso valida ciclo de vida
-no harness, não PSS/CPU, atualização por teclas físicas nem estado do sysfs no
-M1 (`M1_REQUIRED`).
+sem CLI e Control Center power passaram. CI dos PRs #10–#13 passou. O watcher
+permanece event-driven; isso valida ciclo de vida no harness, não PSS/CPU,
+atualização por teclas físicas nem estado do sysfs no M1 (`M1_REQUIRED`).
 
-Próxima ação executável: assim que o CI do PR #13 terminar, criar um branch de
-integração Cloud que reúna PRs Quickshell #10–#13 sobre o branch RC, sem tocar
-em `master`, no pin de produção ou nos commits imutáveis do primeiro gate.
-Resolver conflitos e rodar novamente a suíte combinada, instalação simulada e
-renderização; depois registrar o commit candidato exato para a próxima etapa
-cross-repo. PRs RC #19/#8 e o pin de produção continuam inalterados.
+Quickshell PR #14 draft: branch `integration/cloud-settings-rc-20261010`, head
+`b440538d342822eac6cb046f0c0dd5e96212d6f2`, base `integration/settings-center-rc`.
+É um candidato integrado sobre o PR #8 imutável (`79b093e6…`), reunindo os
+heads/commits dos PRs #10–#13. Conflitos de harness e matriz de Settings foram
+resolvidos preservando tanto perfis/visualizador quanto clima/brightness. A
+suíte combinada passou: 43 testes `unittest`, compileall, 59 QML sem erros,
+render de todas as cenas, todos os comandos harness e qmllint exit 0 (192 avisos
+classificados em 126 arquivos). CI do PR #14 está pendente. Nenhum branch
+principal, pin de produção ou primeiro gate foi alterado.
+
+Próxima ação executável: após CI do PR #14, criar branch separado de
+`asahi-system` a partir do candidato PR #19 e atualizar somente o candidato
+experimental para o commit exato do PR #14, conciliando gitlink/lockfile e
+hashes do procedimento sem editar PR #19 ou o pin de produção. Reexecutar os
+testes de snapshot/instalação/rollback nesse branch; PRs #19/#8 e o primeiro
+procedimento físico continuam sendo a referência imutável original.
