@@ -119,6 +119,7 @@ class GitSnapshotTests(unittest.TestCase):
         bootstrap_source = pathlib.Path(__file__).resolve().parents[1] / "scripts/bootstrap-niri-plus"
         shutil.copy2(bootstrap_source, self.asahi_seed / "scripts/bootstrap-niri-plus")
         (self.asahi_seed / "scripts/collect-performance-baseline").chmod(0o755)
+        (self.asahi_seed / "scripts/collect-m1-release-gate.sh").chmod(0o755)
         self._write_system_tree("0.1.2", self.qs_commit)
         candidate_commit = commit_all(self.asahi_seed, "complete candidate installation tree")
         git(["-C", str(self.asahi_seed), "push", "origin", "main"],
@@ -133,6 +134,12 @@ class GitSnapshotTests(unittest.TestCase):
 
         def exercise(host_root: pathlib.Path, snapshot, failure: str | None = None) -> None:
             version = (snapshot.root / "VERSION").read_text(encoding="utf-8").strip()
+            snapshot_manifest = source_update.validate_snapshot(
+                snapshot.root, snapshot.manifest,
+                expected_repository=snapshot.expected_repository,
+                expected_quickshell_repository=snapshot.expected_quickshell_repository,
+                allow_test_file_sources=snapshot.allow_test_file_sources,
+            )
             qs_commit = snapshot.quickshell_commit
             staged_roots = {
                 "lib": host_root / "usr/local/lib/niri-plus",
@@ -173,16 +180,14 @@ class GitSnapshotTests(unittest.TestCase):
                 if failure == "apply":
                     raise RuntimeError("injected apply failure")
 
+            verify_calls = 0
+
             def verify_candidate(*_args) -> None:
-                if failure == "verify":
+                nonlocal verify_calls
+                verify_calls += 1
+                original_verify(snapshot.root, snapshot_manifest, install_command.install, host_root)
+                if failure == "verify" and verify_calls > 1:
                     raise RuntimeError("injected verify failure")
-                installed = json.loads(staged_roots["state"].read_text(encoding="utf-8"))
-                state = install_command.install.load_state(host_root)
-                if (installed["version"] != version
-                        or installed["quickshell_expected_commit"] != qs_commit
-                        or state["applied_version"] != version
-                        or state["quickshell"]["expected_commit"] != qs_commit):
-                    raise RuntimeError("simulated post-install verification failed")
 
             def transaction(paths, bootstrap, apply, verify, finalize=lambda: None, *, root=pathlib.Path("/")):
                 if failure == "bootstrap":
@@ -209,7 +214,8 @@ class GitSnapshotTests(unittest.TestCase):
                  mock.patch.object(install_command.install, "reload_invoking_user_manager"):
                 old_path = list(sys.path)
                 try:
-                    snapshot_install.apply_snapshot(snapshot.root, snapshot.manifest, root=host_root)
+                    with contextlib.redirect_stdout(io.StringIO()) as transaction_output:
+                        snapshot_install.apply_snapshot(snapshot.root, snapshot.manifest, root=host_root)
                 finally:
                     sys.path[:] = old_path
                 if failure is None:
@@ -223,6 +229,7 @@ class GitSnapshotTests(unittest.TestCase):
                     self.assertEqual(os.readlink(host_root / "usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service"),
                                      "../asahi-quickshell.service")
                 else:
+                    self.assertNotIn("Installed Niri+ CLI", transaction_output.getvalue())
                     package_install.assert_not_called()
                     self.assertFalse(staged_roots["lib"].exists())
                     self.assertFalse(staged_roots["data"].exists())

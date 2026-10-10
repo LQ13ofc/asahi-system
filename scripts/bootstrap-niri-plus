@@ -249,13 +249,6 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
                 os.replace(staged, current)
         os.replace(state_tmp, STATE)
         state_tmp = None
-        if include_quickshell:
-            visual_result = f"Quickshell {quickshell['commit'][:12]} installed"
-        elif state.get("quickshell_expected_commit"):
-            visual_result = f"Quickshell {state['quickshell_expected_commit'][:12]} preserved unchanged"
-        else:
-            visual_result = "Quickshell omitted"
-        print(f"Installed Niri+ CLI {version}; asahi-system {system['commit'][:12]}; {visual_result}.")
     finally:
         shutil.rmtree(stage, ignore_errors=True)
         if state_tmp and os.path.exists(state_tmp):
