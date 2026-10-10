@@ -267,9 +267,29 @@ nos heads acima. PR #20 teve validação manual em `7fb1c1c` aprovada
 (`38052764189`). O estado ainda não é CODE_COMPLETE; consumo real e lifecycle
 de Cava continuam `M1_REQUIRED`.
 
-Próxima ação executável: mapear os timers e processos auxiliares de integrações
-opcionais (clima/calendário), identificar um trabalho periódico que possa ser
-pausado quando nenhum módulo/painel o consome e comprovar o lifecycle no
-harness; manter os serviços visuais sob propriedade do Quickshell e qualquer
-política de sistema no asahi-system. PRs RC #19/#8 e o pin de produção continuam
-inalterados.
+## Lifecycle de clima opcional — Cloud
+
+Quickshell PR #12, branch `feature/weather-module-lifecycle`, commit
+`d8663f5`, base `integration/settings-center-rc`: o serviço de clima só busca
+ou agenda refresh se o módulo estiver visível em pelo menos um monitor. Ao
+ocultar em todos os monitores, cancela o processo em curso e timer; ao reabrir,
+reusa cache fresco e só faz uma nova busca se o cache venceu. O estado inicial
+oculto agora também reporta `off`. O harness verifica visibilidade por monitor,
+cache fresco/vencido, quantidade de requisições e cancelamento. Isso reduz
+trabalho da integração visual; não altera política de sistema nem prova ganho de
+CPU/RAM no M1.
+
+Cloud após a mudança: compileall e 40 testes `unittest` passaram; load de 59
+QML passou sem erros ou avisos tardios; render de todas as cenas passou;
+settings-check, multiscreen, interação por teclado e checks dos backends
+auxiliares passaram. `pyside6-qmllint` retorna 0 com 192 warnings já
+classificados em `docs/validacao-qml.md`. CI GitHub de PRs #10 e #11 passou nos
+heads atuais; PR #12 está pendente de CI. Os PRs e pin de produção permanecem
+sem merge/alteração.
+
+Próxima ação executável: mapear o refresh do calendário e determinar se há
+trabalho periódico quando nenhum módulo/painel o consome; implementar suspensão
+apenas se a semântica de atualização e exibição continuar correta, com teste de
+lifecycle no harness. O código visual fica em `quickshell-`; nenhuma política
+de sistema deve ser movida para esse repo. PRs RC #19/#8 e o pin de produção
+continuam inalterados.
