@@ -260,9 +260,11 @@ class NiriPlusCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             before = list(root.rglob("*"))
-            report = doctor.render_doctor(root=root, machine="x86_64", runner=missing_runner)
+            with mock.patch.object(doctor.gaming, "render_status", return_value="Niri+ Gaming Mode\nGaming Mode   UNAVAILABLE\nFallback      disabled"):
+                report = doctor.render_doctor(root=root, machine="x86_64", runner=missing_runner)
             self.assertIn("read-only", report)
             self.assertIn("M1_REQUIRED", report)
+            self.assertIn("Fallback      disabled", report)
             self.assertEqual(before, list(root.rglob("*")))
 
     def test_status_includes_quickshell_pin_and_lifecycle_without_mutations(self):
@@ -271,10 +273,13 @@ class NiriPlusCliTests(unittest.TestCase):
             (root / "etc").mkdir()
             (root / "etc/os-release").write_text('ID=fedora\nVERSION_ID="44"\nPRETTY_NAME="Fedora Cloud"\n')
             before = sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
-            output = status.render_status("0.1.0", root=root, machine="x86_64", runner=missing_runner)
+            with mock.patch.object(status.gaming, "render_status", return_value="Niri+ Gaming Mode\nGaming Mode   UNAVAILABLE\nFallback      disabled"):
+                output = status.render_status("0.1.0", root=root, machine="x86_64", runner=missing_runner)
             after = sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
             self.assertIn("Quickshell", output)
             self.assertIn("Expected commit", output)
+            self.assertIn("Gaming Mode", output)
+            self.assertIn("Fallback      disabled", output)
             self.assertIn("M1_REQUIRED", output)
             self.assertNotIn("Overall: HEALTHY", output)
             self.assertEqual(before, after)

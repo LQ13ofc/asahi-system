@@ -164,7 +164,22 @@ The memory series records at +0/+5/+15/+30 minutes. The JSON may include
 process arguments, user paths, device metadata, and service names; inspect and
 redact it before sharing. Cloud results in this repository are not M1 results.
 
-## 6. Restore the exact known-good installation
+## 6. Inspect Gaming Mode readiness separately
+
+This does not launch a game and is safe to run after the normal Niri session is
+stable:
+
+```sh
+niri+ gaming status
+```
+
+`AVAILABLE_UNVERIFIED` means only that the Niri session marker and Gamescope
+executable were found. It does not establish Honeykrisp compatibility. Gaming
+Mode always requires Gamescope; if it cannot start, Niri+ does not run the game
+directly. Actual launch/frametime validation remains a separate `M1_REQUIRED`
+test after the normal-session gate is accepted.
+
+## 7. Restore the exact known-good installation
 
 Use this if the install transaction reports failure, or if the graphical Niri
 session is unusable. If SDDM still works, select Plasma, open a terminal, and
@@ -215,8 +230,9 @@ reviewed. After successful restoration the one-time recovery record is removed.
 Cloud tests exercise main-only production resolution, exact PR-head comparison,
 dirty-worktree exclusion, source/Quickshell origin validation, gitlink/lock
 matching, snapshot manifest/blob/mode verification, known-good commit recording,
-installer transaction failures, and helper hash/blob verification. CI validates
-the repository code and the Release Candidate stays on PR #22.
+installer transaction failures, helper hash/blob verification, and the
+Gamescope-only launcher/no-fallback contract. CI validates the repository code
+and the Release Candidate stays on PR #22.
 
 Only the M1 can validate boot/session selection, Honeykrisp rendering, the live
 Wayland race, audio, Wi-Fi, suspend/resume, and RAM/PSI/frametime behavior. No

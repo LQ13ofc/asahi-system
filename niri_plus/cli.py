@@ -6,7 +6,7 @@ import argparse
 import json
 import pathlib
 
-from . import benchmark, brightness, doctor, install_command, niri_settings, rollback, status, uninstall, update
+from . import benchmark, brightness, doctor, gaming, install_command, niri_settings, rollback, status, uninstall, update
 
 
 def version() -> str:
@@ -41,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_parser = commands.add_parser("rollback", help="restore Niri+ managed files")
     rollback_parser.add_argument("--remove-packages", action="store_true", help="also remove only explicitly tracked packages")
     commands.add_parser("doctor", help="run read-only diagnostics")
+    gaming_parser = commands.add_parser("gaming", help="launch commands through Gamescope inside Niri")
+    gaming_actions = gaming_parser.add_subparsers(dest="gaming_action", required=True)
+    gaming_actions.add_parser("status", help="show read-only Gamescope and Niri readiness")
+    gaming_run = gaming_actions.add_parser("run", help="start an explicit command under Gamescope")
+    gaming_run.add_argument("command_args", nargs=argparse.REMAINDER,
+                            help="command and arguments; use `--` before the command")
+    gaming_actions.add_parser("steam", help="start Steam under Gamescope on demand")
     benchmark_parser = commands.add_parser("benchmark", help="run the validated A/B/C performance collector")
     benchmark_mode = benchmark_parser.add_mutually_exclusive_group()
     benchmark_mode.add_argument("--profile", choices=("plasma", "niri-core", "niri-quickshell"),
@@ -113,6 +120,15 @@ def main(argv: list[str] | None = None) -> int:
         return rollback.run_rollback(args.remove_packages)
     elif args.command == "doctor":
         print(doctor.render_doctor())
+    elif args.command == "gaming":
+        try:
+            if args.gaming_action == "status":
+                print(gaming.render_status())
+                return 0
+            command = ["steam"] if args.gaming_action == "steam" else args.command_args
+            return gaming.launch(command)
+        except gaming.GamingError as error:
+            parser.error(str(error))
     elif args.command == "benchmark":
         if args.benchmark_action == "compare":
             return benchmark.compare_benchmarks(

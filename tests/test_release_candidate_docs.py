@@ -22,6 +22,8 @@ class ReleaseCandidateDocsTests(unittest.TestCase):
         self.assertIn(NEXT_PIN, following)
         self.assertIn("refs/pull/22/head", current)
         self.assertIn(CURRENT_PIN, current)
+        self.assertIn("niri+ gaming status", current)
+        self.assertIn("Gamescope-only launcher/no-fallback contract", current)
         self.assertEqual(source_update.RELEASE_CANDIDATE_PULL_REQUEST, 22)
         self.assertEqual(source_update.RELEASE_CANDIDATE_QUICKSHELL_COMMIT, CURRENT_PIN)
         self.assertEqual(source_update.RELEASE_CANDIDATE_REF, "refs/pull/22/head")

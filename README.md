@@ -16,6 +16,15 @@ O protocolo A/B/C está em [`docs/benchmark-protocol.md`](docs/benchmark-protoco
 
 Para investigar memória na sessão atual, `niri+ memory` mostra memória global, PSS por processo, Niri/Quickshell, swap/zswap, PSI e cgroups como vistas separadas; `niri+ memory --series` coleta snapshots finitos até +30 minutos. O formato e as limitações, inclusive privacidade de JSON, estão em [`docs/memory-diagnostics.md`](docs/memory-diagnostics.md).
 
+## Gaming Mode
+
+`niri+ gaming status` verifica a sessão Niri e os executáveis disponíveis;
+`niri+ gaming steam` abre Steam sob Gamescope, e `niri+ gaming run -- <programa>
+[argumentos]` inicia um jogo explícito. Sem Gamescope o comando falha sem
+fallback para Niri direto. A ferramenta não instala Gamescope/Steam nem aplica
+flags de resolução, FPS ou recursos. Compatibilidade e frametime no Asahi são
+`M1_REQUIRED`; veja [`docs/gaming-mode.md`](docs/gaming-mode.md).
+
 ## Validação no Cloud
 
 As verificações abaixo usam Python e o parser KDL isolado listado em `requirements-test.txt`; não mudam o sistema:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
-from . import host
+from . import gaming, host
 from .host import host_report
 
 
@@ -28,6 +28,7 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
     lines.extend(f"  {name:22} {value}" for name, value in report["system"].items())
     lines.append("\nOptional")
     lines.extend(f"  {name:22} {value}" for name, value in report["optional"].items())
+    lines.extend(["\nGaming Mode", *[f"  {line}" for line in gaming.render_status().splitlines()[1:]]])
     qs = report["quickshell"]
     lines.extend(["\nQuickshell", f"  {'Status':22} {qs['status']}",
                   f"  {'Binary/version':22} {qs['version_status']} {qs['version']}",

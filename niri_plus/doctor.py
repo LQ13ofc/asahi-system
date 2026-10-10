@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
-from . import host, quickshell
+from . import gaming, host, quickshell
 from .host import host_report
 
 
@@ -60,6 +60,7 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
         lines.append("Managed symlinks:")
         lines.extend(f"  {path}: {state}" for path, state in report["managed_links"].items())
     lines.append("Gamescope, Steam, muvm and FEX runtime compatibility: M1_REQUIRED")
+    lines.extend(["\nGaming Mode (read-only)", *[f"  {line}" for line in gaming.render_status().splitlines()[1:]]])
     if report["warnings"]:
         lines.extend(["Warnings:", *[f"  - {item}" for item in report["warnings"]]])
     lines.append("No repair or system changes were attempted.")
