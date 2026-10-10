@@ -1,0 +1,15 @@
+# Local graphs and process/memory captures are derived data, not source context.
+graphify-out/
+hardware/mba-m1-8gb/baseline/
+experiments/**/before/
+experiments/**/after/
+experiments/**/result.json
+
+# Never include credentials or machine-local configuration in a code graph.
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/credentials.json

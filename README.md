@@ -38,4 +38,6 @@ Instale a dependência de validação em um ambiente virtual antes de rodar os t
 
 O GitHub Actions executa as mesmas verificações em PRs e em atualizações de `main`. Elas conferem estrutura e consistência do snapshot; não substituem testes no Fedora Asahi real.
 
+Para navegação local das relações entre fontes Python, há uma integração opcional e pinada do Graphify em [`docs/graphify.md`](docs/graphify.md). Ela não é dependência do sistema instalado.
+
 A integração externa do Quickshell, seu pin, pacote ARM64, lifecycle de sessão, dependências e diagnóstico do autostart KDE estão em [`docs/quickshell-integration.md`](docs/quickshell-integration.md).
