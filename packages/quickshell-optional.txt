@@ -1,0 +1,2 @@
+# Visual shell runtime; installed only when the pinned QuickShell integration is selected.
+quickshell

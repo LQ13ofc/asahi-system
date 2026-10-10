@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
+from . import host, quickshell
 from .host import host_report
-from . import quickshell
 
 
 def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = None,
@@ -38,7 +38,8 @@ def render_doctor(root: pathlib.Path = pathlib.Path("/"), machine: str | None = 
                   f"  Active KDE units/processes: {', '.join(kde_units) if kde_units else 'none detected'}"])
     runtime_state, runtime_issues = report["wayland_clients_runtime"]
     lines.append("  Wayland/client startup: " + (", ".join(runtime_issues) if runtime_issues else runtime_state))
-    qs = {**report["quickshell"], **quickshell.doctor_report(root, runner)}
+    qs_enabled = report["quickshell"].get("state_pin_status") != host.NOT_CONFIGURED
+    qs = {**report["quickshell"], **quickshell.doctor_report(root, runner, enabled=qs_enabled)}
     lines.extend(["\nQuickshell integration", f"  Binary/version: {qs['version_status']} ({qs['version']})",
                   f"  RPM engine: {qs['package_status']} ({qs['package_version']}, expected {qs['package_expected']})",
                   f"  Checkout/config: {qs['checkout_status']} ({qs['installed_commit']} expected {qs['expected_commit']})",

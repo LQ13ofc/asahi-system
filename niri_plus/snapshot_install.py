@@ -21,26 +21,34 @@ def _managed_paths(install_module) -> list[pathlib.Path]:
 
 def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, install_module) -> None:
     version = (snapshot_root / "VERSION").read_text(encoding="utf-8").strip()
-    qs_commit = manifest["quickshell"]["commit"]
+    include_quickshell = manifest["quickshell"].get("included", True)
     bootstrap_path = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
     bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+    qs_commit = bootstrap.get("quickshell_expected_commit")
+    channel = manifest.get("channel", "production")
     if (bootstrap.get("version") != version or bootstrap.get("source_commit") != manifest["system"]["commit"]
-            or bootstrap.get("quickshell_expected_commit") != qs_commit):
+            or bootstrap.get("source_channel", "production") != channel
+            or (include_quickshell and qs_commit != manifest["quickshell"]["commit"])):
         raise RuntimeError("CLI/assets/pin state do not describe the resolved snapshot")
     state = install_module.load_state(pathlib.Path("/"))
     if state.get("applied_version") != version or state.get("quickshell", {}).get("expected_commit") != qs_commit:
         raise RuntimeError("session state and CLI/Quickshell snapshot do not describe the same install")
     for absolute, source in install_module.MANAGED_FILES.items():
+        if not include_quickshell and absolute in install_module.QUICKSHELL_MANAGED_FILES:
+            continue
         target = pathlib.Path(absolute)
         if not target.is_file() or target.read_bytes() != source.read_bytes():
             raise RuntimeError(f"managed file failed post-install verification: {absolute}")
     for absolute, link_target in install_module.MANAGED_LINKS.items():
+        if not include_quickshell and absolute in install_module.QUICKSHELL_MANAGED_LINKS:
+            continue
         target = pathlib.Path(absolute)
         if not target.is_symlink() or os.readlink(target) != link_target:
             raise RuntimeError(f"managed symlink failed post-install verification: {absolute}")
-    qml_root = pathlib.Path("/usr/local/share/niri-plus/quickshell")
-    if not qml_root.is_dir() or not (qml_root / "shell.qml").is_file():
-        raise RuntimeError("pinned Quickshell runtime files were not committed")
+    if include_quickshell:
+        qml_root = pathlib.Path("/usr/local/share/niri-plus/quickshell")
+        if not qml_root.is_dir() or not (qml_root / "shell.qml").is_file():
+            raise RuntimeError("pinned Quickshell runtime files were not committed")
     for absolute, entry in state.get("entries", {}).items():
         if entry.get("kind") == "file":
             target = pathlib.Path(absolute)
@@ -60,10 +68,13 @@ def run_install_transaction(paths: list[pathlib.Path], bootstrap, apply, verify,
         transaction.commit()
 
 
-def apply_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -> None:
+def apply_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path, *,
+                   include_quickshell: bool = True) -> None:
     snapshot_root = snapshot_root.resolve(strict=True)
     manifest_path = manifest_path.resolve(strict=True)
     manifest = source_update.validate_snapshot(snapshot_root, manifest_path)
+    if manifest["quickshell"].get("included", True) != include_quickshell:
+        raise RuntimeError("install mode does not match the resolved snapshot")
     os.environ["NIRI_PLUS_DATA_DIR"] = str(snapshot_root)
     # The bootstrap module is part of this exact read-only snapshot. It is never
     # opened from the user's source checkout while privileged.
@@ -76,10 +87,11 @@ def apply_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -> 
         run_install_transaction(
             _managed_paths(install_module),
             lambda: bootstrap_namespace["install_snapshot"](snapshot_root, manifest_path),
-            lambda: install_module.apply_install(defer_packages=True),
+            lambda: install_module.apply_install(defer_packages=True, include_quickshell=include_quickshell),
             lambda: _verify_committed_install(snapshot_root, manifest, install_module),
             lambda: install_module.install_locked_packages(
                 json.loads((snapshot_root / "integration/quickshell.lock.json").read_text(encoding="utf-8"))["engine"]
+                if include_quickshell else None
             ),
         )
     except Exception:
@@ -97,11 +109,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--snapshot-root", type=pathlib.Path, required=True)
     parser.add_argument("--manifest", type=pathlib.Path, required=True)
+    parser.add_argument("--without-quickshell", action="store_true")
     args = parser.parse_args(argv)
     try:
         if os.geteuid() != 0:
             raise RuntimeError("snapshot install helper requires root")
-        apply_snapshot(args.snapshot_root, args.manifest)
+        apply_snapshot(args.snapshot_root, args.manifest, include_quickshell=not args.without_quickshell)
     except Exception as exc:
         print(f"Niri+ snapshot install failed: {exc}", file=sys.stderr)
         return 2

@@ -155,6 +155,17 @@ class BenchmarkProfileTests(unittest.TestCase):
         self.assertTrue(benchmark_metrics.COMPONENT_MATCHERS["xwayland_satellite"](xwayland))
         self.assertTrue(benchmark_metrics.COMPONENT_MATCHERS["polkit_agent"](polkit))
 
+    def test_component_matching_uses_executable_or_truncated_comm_when_argv_is_unavailable(self):
+        matcher = benchmark_metrics.COMPONENT_MATCHERS["xwayland_satellite"]
+        executable_fallback = {
+            "name": "xwayland-satell", "argv": [],
+            "executable": benchmark_metrics.metric(benchmark_metrics.AVAILABLE, "/usr/bin/xwayland-satellite"),
+        }
+        comm_only = {"name": "xwayland-satell", "argv": [],
+                     "executable": benchmark_metrics.metric(benchmark_metrics.PERMISSION_REQUIRED)}
+        self.assertTrue(matcher(executable_fallback))
+        self.assertTrue(matcher(comm_only))
+
     def test_process_counter_deltas_share_one_window(self):
         def base(pid, ticks, minor, major, read, write):
             return {
