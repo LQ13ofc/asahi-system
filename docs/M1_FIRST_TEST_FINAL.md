@@ -100,6 +100,11 @@ O canal normal continua em `main` e o pin de produção em
 `0.1.14`; somente o helper opt-in abaixo instala o head RC exato e o Quickshell
 `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`.
 
+Para o head `a9e19bb1a66e3251b01e741b93095e862286fceb`, o SHA-256 do helper é
+`eee5ce4bca55ee2d709539f6c9e330923794be0e63ef96a55cc97f0576e762fe`. O bloco
+acima calcula e verifica novamente o hash do head remoto; se o PR avançar,
+use somente o valor derivado do novo head.
+
 ## E. Dry-run experimental
 
 O verificador lê o helper uma vez, confere seu SHA-256 e executa somente esses

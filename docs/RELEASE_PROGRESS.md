@@ -4,7 +4,7 @@ Updated: 2026-10-10
 
 ## Current release gate status
 
-`M1_APPLY_NO_GO / IMPLEMENTATION_IN_PROGRESS`. The 0.1.13 apply reached
+`M1_RETEST_GO / CLOUD_VALIDATED / M1_REQUIRED`. The 0.1.13 apply reached
 post-install verification and exposed string/Path mismatches in the real-root
 path branch. A new 0.1.14 candidate on PR #26 fixes normalization, narrows the
 preflight catch to known state mismatches, and delays success output until the
@@ -125,17 +125,18 @@ checks, collector `bash -n`, and `git diff --check`: passed.
 loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
 unresolved-type, 2 unused-imports). No Quickshell files were changed here.
-- PR #25's prior candidate CI passed, run `38094322427`. PR #26 CI is pending
-  until its new head is pushed.
+- PR #25's prior candidate CI passed, run `38094322427`.
+- PR #26's `static-validation` CI passed on code head
+  `a9e19bb1a66e3251b01e741b93095e862286fceb`, run `38095244077`.
 PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15
 head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` are unchanged; their latest
 Actions runs are successful.
 
 ## Remaining release gate work
 
-The immediate gate is a full Cloud run and CI for PR #26. Do not repeat the M1
-apply until that CI passes. Afterward, remaining hardware-only checks are
-`M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
+The blocker is clear for a controlled M1 retest: all Cloud tests and PR #26 CI
+passed. Do not treat this as physical validation. Remaining hardware-only
+checks are `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
 SDDM/Niri/Quickshell lifecycle, audio/network/input, Plasma recovery, offline
 TTY restore, and hardware performance. No M1 command was run or requested in
 this Cloud session.
