@@ -242,22 +242,34 @@ encadeado ao RC não recebe check automático. PR #9 do quickshell-:
 Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
 e PR #8 `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
 
-Quickshell agora também tem o PR #10 draft, branch
-`feature/interface-profile-visualizer`, commit
-`bdb74fe76b6895d2ed06611deb8f0bd57fe2d058`, encadeado em
-`integration/settings-center-rc`. Efficiency espera a restauração das
-preferências, não instancia o visualizador nem mantém Cava; Balanced aplica
-16 barras/15 fps e Visual 32/30. Mudanças de perfil recriam o componente sob
-demanda e atualizam as informações em Settings/Control Center. Isso controla
-somente recursos da interface e não declara economia medida de RAM/CPU.
-Validação posterior ao commit: compileall, 40 testes `unittest`, load de 59 QML
-sem erros/avisos tardios, render completo de todas as cenas (incluindo os três
-perfis) e qmllint exit 0 com 192 avisos ainda classificados.
+Quickshell PR #10 draft: branch `feature/interface-profile-visualizer`, head
+`87ee934f44dca926afe59339868f2b92b04987ca`, base
+`integration/settings-center-rc`. Além dos perfis Efficiency/Balanced/Visual,
+o branch corrige uma corrida já presente no teste netctl: leitura de
+`/proc/PID/stat` após `exists()` podia perder o processo entre chamadas; agora
+lê um snapshot e compara starttime para não confundir PID reutilizado. O check
+push passa no Cloud local; o CI GitHub foi relançado nesse head após a correção.
 
-Próxima ação executável: revisar as ações de aparência/performance persistidas
-para encontrar preferências que ainda só alteram rótulos ou animações sem
-efeito operacional; implementar o próximo controle real com teste de runtime
-offscreen e migração se o schema mudar. Manter o diff visual restrito ao repo
-Quickshell. Descoberta de output/backlight e custo real de Cava continuam
-`M1_REQUIRED`. PRs #19/#8 seguem nos commits RC, sem merge ou mudança no pin;
-PR #10 tem CI Cloud em execução no head informado acima.
+Quickshell PR #11 draft: branch `feature/music-visualizer-preference`, head
+`dc32bc4dfcf6b0729a4609e4a80ddb4bcd345fab`, base PR #10. Adiciona o toggle
+persistente de Cava em Settings > Painéis e schema v4; arquivos v1/v2/v3
+continuam válidos com o visualizador habilitado por default, gravando v4 na
+próxima edição. Desligar a opção ou usar Efficiency descarrega o visualizador;
+ligá-la em Balanced/Visual cria uma instância com os valores do perfil. Testes
+validam persistência após reinício, reset, import/export, migração v3,
+rejeição de tipos inválidos e lifecycle. Não requer nem invoca Niri+.
+
+Validação combinada no Cloud: compileall, 40 testes `unittest`, load de 59 QML
+sem erros/avisos tardios, render completo de todas as cenas e qmllint exit 0
+com 192 avisos classificados. A captura de Settings > Painéis foi inspecionada
+e não há colisão de layout. Os checks GitHub dos PRs #10/#11 estão em execução
+nos heads acima. PR #20 teve validação manual em `7fb1c1c` aprovada
+(`38052764189`). O estado ainda não é CODE_COMPLETE; consumo real e lifecycle
+de Cava continuam `M1_REQUIRED`.
+
+Próxima ação executável: mapear os timers e processos auxiliares de integrações
+opcionais (clima/calendário), identificar um trabalho periódico que possa ser
+pausado quando nenhum módulo/painel o consome e comprovar o lifecycle no
+harness; manter os serviços visuais sob propriedade do Quickshell e qualquer
+política de sistema no asahi-system. PRs RC #19/#8 e o pin de produção continuam
+inalterados.
