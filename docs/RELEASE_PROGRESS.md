@@ -4,17 +4,16 @@ Updated: 2026-10-10
 
 ## Current release gate status
 
-`IMPLEMENTATION_IN_PROGRESS / CLOUD_VALIDATED_PARTIAL / M1_REQUIRED`. This
-branch adds the closed Quickshell plugin lifecycle, joint updates, standalone
-offline recovery, read-only preflight, and a corrected experimental RC flow.
-The audited PR #22 candidate remains the parent reference; PR #22 and Quickshell
-PR #15 are unchanged and unmerged. No physical M1 test ran.
+`PRE_M1_GATE_READY / CLOUD_VALIDATED / M1_REQUIRED`. This candidate adds the
+closed Quickshell plugin lifecycle, joint updates, standalone offline recovery,
+read-only preflight, and a corrected experimental RC flow. PR #22 and
+Quickshell PR #15 remain unchanged and unmerged. No physical M1 test ran.
 
 ## Candidate references and preserved state
 
 | Component | Ref | Current policy |
 |---|---|---|
-| `asahi-system` | branch `feature/plugin-management-offline-recovery`, based on PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` | candidate version `0.1.12`; new RC channel explicitly targets PR #24 after it is opened |
+| `asahi-system` | PR #24 draft, head recorded by GitHub; based on PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` | candidate version `0.1.12`; RC helper verifies the exact open PR head |
 | `quickshell-` | PR #15 exact commit `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` | candidate visual pin, unchanged |
 | production | `origin/main` commit `5339e34811763c6169f64d15aaae738982fa1738` | Niri+ `0.1.9`, Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17` |
 
@@ -80,27 +79,25 @@ checks, collector `bash -n`, and `git diff --check`: passed.
 loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
 unresolved-type, 2 unused-imports). No Quickshell files were changed here.
-- Hosted CI for the new installer branch is pending PR creation. Existing PR #22
-head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15 head
-`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` remain open/unchanged; their latest
-GitHub Actions runs were successful. Draft PR #24 is now open against `main`
-as a cumulative candidate so the configured workflow applies; retargeting alone
-did not enqueue a run, so the next pushed commit will trigger `synchronize`.
+- Draft PR #24 targets `main` cumulatively so the configured workflow applies;
+GitHub Actions run `38081223316` passed compileall, baseline validation, and the
+complete unittest suite on head `b9758073469ed8d1437cc26781e9e40a116b60ea`.
+PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15
+head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` are unchanged; their latest
+Actions runs are successful.
 
 ## Remaining release gate work
 
-1. Review the final staged diff and verify install/recovery scenario coverage.
-2. Push this progress/audit update to trigger PR #24 `synchronize` CI; PR #22
-remains unchanged.
-3. Confirm CI against the exact latest head, verify the Quickshell gitlink/lock
-and bootstrap blob SHA-256, then update the audit decision. Do not merge.
-5. `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
+No remaining independent implementation or validation task is available in
+Cloud. The next gate is `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM
+availability,
 SDDM/Niri/Quickshell lifecycle, audio/network/input, Plasma recovery, offline
-TTY restore, and hardware performance. No M1 interaction is requested now.
+TTY restore, and hardware performance. No M1 command was run or requested in
+this Cloud session.
 
-Next executable action: run the complete current asahi-system suite and
-baseline/static validation after correcting any failure; then validate the
-Quickshell PR #15 Cloud suite before creating PR #24.
+The exact operator procedure is [`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md).
+It verifies the live PR head and derives the bootstrap SHA-256 from that
+committed Git object before execution.
 
 ## Historical continuation record (prior checkpoint)
 

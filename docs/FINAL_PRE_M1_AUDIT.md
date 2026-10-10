@@ -13,12 +13,13 @@ recovery candidate based on PR #22 head
 The production Quickshell pin remains
 `55e92880d0aff75d235f283c839ec0990eaa9e17`.
 
-**Current decision: NO-GO while cumulative PR #24 waits for a hosted CI run.**
-It now targets `main`; retargeting did not enqueue a run, so a candidate update
-will trigger `synchronize`. After that gate, the intended decision is GO only for the
-explicit, reversible experimental M1 procedure in
-[`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md); this remains NO-GO for
-production. No hardware result is inferred from Cloud.
+**GO for the explicit, reversible experimental M1 procedure in
+[`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md). NO-GO for production.**
+Draft PR #24 targets `main`, is open/mergeable, and GitHub Actions run
+`38081223316` passed on head `b9758073469ed8d1437cc26781e9e40a116b60ea`.
+The final progress/audit edit is documentation-only; its synchronize run must
+remain green before treating PR #24's current head as ready. No hardware result
+is inferred from Cloud.
 
 Cloud regressions found and corrected in this continuation:
 
@@ -35,12 +36,12 @@ Cloud regressions found and corrected in this continuation:
   RC apply itself prepares and verifies the offline bundle before mutations.
 
 Validation for these changes: 287 asahi-system unittests passed, baseline and
-static checks passed; Quickshell PR #15 at its unchanged exact head passed 45
+static checks passed; GitHub Actions run `38081223316` passed; Quickshell PR #15
+at its unchanged exact head passed 45
 tests, 59-file QML load, full offscreen scene render, and qmllint (exit 0, 193
 classified warnings). The latest PR #22 and PR #15 hosted Actions runs are
-successful. PR #24 CI has not yet run. See `RELEASE_PROGRESS.md` for the
-complete result and remaining gate. Hardware items below remain
-`M1_REQUIRED`.
+successful. See `RELEASE_PROGRESS.md` for the complete result and remaining
+gate. Hardware items below remain `M1_REQUIRED`.
 
 ## Previous candidate decision (PR #22; superseded by the addendum above)
 
