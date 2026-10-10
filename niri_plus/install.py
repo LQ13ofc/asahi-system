@@ -30,6 +30,10 @@ REPO = pathlib.Path(os.environ.get(
 PACKAGES = ("niri", "foot", "fuzzel", "xdg-desktop-portal-gtk", "lxqt-policykit",
             "python3-dbus", "python3-gobject")
 QUICKSHELL_PACKAGE = "quickshell"
+QUICKSHELL_MANAGED_FILES = {"/usr/lib/systemd/user/asahi-quickshell.service"}
+QUICKSHELL_MANAGED_LINKS = {
+    "/usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service",
+}
 BASE_SERVICES = ("pipewire", "pipewire-pulseaudio", "wireplumber", "NetworkManager")
 LEGACY_MANAGED_PATHS = {
     "/usr/share/wayland-sessions/niri-performance.desktop",
@@ -241,18 +245,21 @@ def load_state(root: pathlib.Path) -> dict[str, Any]:
         raise InstallError(f"cannot read install state {path}: {exc}") from exc
 
 
-def render_plan() -> None:
+def render_plan(*, include_quickshell: bool = True, data_dir: pathlib.Path | None = None) -> None:
     print("Niri+ install plan (dry-run; no host changes)")
     print("Explicit packages:")
     for package in PACKAGES:
         print(f"  - {package}")
-    lock_path = REPO / "integration/quickshell.lock.json"
-    try:
-        lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        print(f"  - {lock['engine']['nevra']} (assinatura verificada, COPR temporário; aarch64)")
-        print(f"Quickshell visual pin: {lock['repository']} @ {lock['commit']}")
-    except (OSError, KeyError, ValueError, json.JSONDecodeError):
-        print("  - Quickshell runtime (pin ausente; install apply recusará este checkout)")
+    if include_quickshell:
+        lock_path = (data_dir or REPO) / "integration/quickshell.lock.json"
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            print(f"  - {lock['engine']['nevra']} (assinatura verificada, COPR temporário; aarch64)")
+            print(f"Quickshell visual pin: {lock['repository']} @ {lock['commit']}")
+        except (OSError, KeyError, ValueError, json.JSONDecodeError):
+            print("  - Quickshell runtime (pin ausente; install apply recusará este checkout)")
+    else:
+        print("Quickshell visual runtime: omitted; Niri session remains standalone")
     print("Niri hard dependency resolved by DNF: xwayland-satellite >= 0.7 (on-demand Xwayland integration)")
     print("Display-manager session: reuse Fedora's packaged Niri entry (no duplicate custom entry)")
     print("System Niri defaults: /etc/niri/config.kdl")
@@ -261,17 +268,21 @@ def render_plan() -> None:
     for package in BASE_SERVICES:
         print(f"  - {package}")
     print("Managed destinations:")
-    for path in (*MANAGED_FILES, *MANAGED_LINKS):
+    planned_files = [path for path in MANAGED_FILES if include_quickshell or path not in QUICKSHELL_MANAGED_FILES]
+    planned_links = [path for path in MANAGED_LINKS if include_quickshell or path not in QUICKSHELL_MANAGED_LINKS]
+    for path in (*planned_files, *planned_links):
         print(f"  - {path}")
     print("Plasma, SDDM configuration, global services, kernel, boot, and drivers are not changed.")
     print("KDE XDG autostart filters apply only when XDG_CURRENT_DESKTOP=KDE; no process is killed and no component is globally disabled.")
 
 
-def install_files(root: pathlib.Path) -> tuple[dict[str, Any], bool]:
+def install_files(root: pathlib.Path, *, include_quickshell: bool = True) -> tuple[dict[str, Any], bool]:
     state = load_state(root)
     changed = False
     try:
         for relative, source in MANAGED_FILES.items():
+            if not include_quickshell and relative in QUICKSHELL_MANAGED_FILES:
+                continue
             target = prefixed(root, relative)
             ensure_no_symlink_parents(root, target)
             desired = content_for(source)
@@ -293,6 +304,8 @@ def install_files(root: pathlib.Path) -> tuple[dict[str, Any], bool]:
             write_state(root, state)
             changed = True
         for relative, link_target in MANAGED_LINKS.items():
+            if not include_quickshell and relative in QUICKSHELL_MANAGED_LINKS:
+                continue
             target = prefixed(root, relative)
             ensure_no_symlink_parents(root, target)
             if target.is_symlink() and os.readlink(target) == link_target:
@@ -317,9 +330,15 @@ def install_files(root: pathlib.Path) -> tuple[dict[str, Any], bool]:
     return state, changed
 
 
-def rollback_files(root: pathlib.Path) -> list[str]:
+def rollback_files(root: pathlib.Path, selected_paths: set[str] | None = None) -> list[str]:
     state = load_state(root)
-    entries = state.get("entries", {})
+    all_entries = state.get("entries", {})
+    entries = all_entries if selected_paths is None else {
+        relative: entry for relative, entry in all_entries.items() if relative in selected_paths
+    }
+    if selected_paths is not None and set(entries) != selected_paths:
+        missing = sorted(selected_paths - set(entries))
+        raise InstallError("refusing partial plugin removal; managed entries are missing: " + ", ".join(missing))
     messages = []
 
     # Validate backups, edited-file destinations and every managed parent before
@@ -384,8 +403,18 @@ def rollback_files(root: pathlib.Path) -> list[str]:
             messages.append(f"restored symlink {relative}")
         else:
             messages.append(f"removed {relative}")
-    if state_path.exists():
-        state_path.unlink()
+    if selected_paths is None:
+        if state_path.exists():
+            state_path.unlink()
+    else:
+        state["entries"] = {relative: entry for relative, entry in all_entries.items() if relative not in selected_paths}
+        state.setdefault("quickshell", {})["expected_commit"] = None
+        # The RPM remains installed and may be shared by a standalone qs
+        # checkout. Relinquish Niri+ package ownership instead of uninstalling it.
+        state["packages_installed_by_us"] = [
+            package for package in state.get("packages_installed_by_us", []) if package != QUICKSHELL_PACKAGE
+        ]
+        write_state(root, state)
     return messages
 
 
@@ -393,24 +422,85 @@ def installed_rpm_packages() -> set[str]:
     return installed_rpm_packages_for((*PACKAGES, QUICKSHELL_PACKAGE))
 
 
-def install_locked_packages(engine: dict[str, str]) -> None:
+def _package_command(engine: dict[str, str] | None = None, *, allow_quickshell_update: bool = False,
+                     recovery_bundle: pathlib.Path | None = None) -> list[str]:
     if shutil.which("dnf") is None:
         raise InstallError("dnf was not found")
-    if not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key"):
+    if engine is not None and (not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key")):
         raise InstallError("Quickshell engine package lock is incomplete")
-    try:
-        subprocess.run([
-            "dnf", "install", "-y", "--setopt=install_weak_deps=False",
+    installed = installed_rpm_packages_for((*PACKAGES, QUICKSHELL_PACKAGE))
+    missing_core = [package for package in PACKAGES if package not in installed]
+    visual_package: str | None = None
+    if engine is not None:
+        from . import quickshell
+        expected = engine["nevra"].removeprefix("quickshell-") + "." + engine.get("architecture", "aarch64")
+        rpm_state, rpm_version = quickshell._rpm_version(pathlib.Path("/"), subprocess.run)
+        if QUICKSHELL_PACKAGE not in installed or rpm_state == "NOT_INSTALLED":
+            visual_package = engine["nevra"]
+        elif rpm_state != "OK":
+            raise InstallError("installed Quickshell RPM version cannot be verified; refusing an update")
+        elif rpm_version != expected:
+            if not allow_quickshell_update:
+                raise InstallError(
+                    "Quickshell RPM is independently installed at a different version; refusing to replace it"
+                )
+            from . import recovery
+            if (recovery_bundle is None
+                    or not recovery.has_rpm_payload(recovery_bundle, QUICKSHELL_PACKAGE, rpm_version)):
+                raise InstallError(
+                    "Quickshell engine update requires a verified cached RPM for offline rollback; "
+                    "no system files were changed"
+                )
+            visual_package = engine["nevra"]
+    if not missing_core and visual_package is None:
+        return []
+    command = ["dnf", "install", "-y", "--setopt=install_weak_deps=False"]
+    if visual_package:
+        command.extend([
             f"--repofrompath=niri-plus-quickshell,{engine['repository']}", "--enablerepo=niri-plus-quickshell",
             "--setopt=niri-plus-quickshell.gpgcheck=1", f"--setopt=niri-plus-quickshell.gpgkey={engine['gpg_key']}",
-            *PACKAGES, engine["nevra"],
-        ], check=True)
+        ])
+    command.extend(missing_core)
+    if visual_package:
+        command.append(visual_package)
+    return command
+
+
+def validate_package_plan(engine: dict[str, str] | None = None, *,
+                          allow_quickshell_update: bool = False,
+                          recovery_bundle: pathlib.Path | None = None) -> list[str]:
+    """Resolve local package ownership/version policy without modifying RPM state."""
+    return _package_command(engine, allow_quickshell_update=allow_quickshell_update,
+                            recovery_bundle=recovery_bundle)
+
+
+def install_locked_packages(engine: dict[str, str] | None = None, *,
+                            allow_quickshell_update: bool = False,
+                            recovery_bundle: pathlib.Path | None = None) -> None:
+    command = _package_command(engine, allow_quickshell_update=allow_quickshell_update,
+                               recovery_bundle=recovery_bundle)
+    if not command:
+        return
+    try:
+        subprocess.run(command, check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise InstallError(f"DNF package transaction failed: {exc}") from exc
 
 
+def update_quickshell_state(state: dict[str, Any], pinned_commit: str | None, *, included: bool) -> None:
+    visual = state.setdefault("quickshell", {})
+    if included:
+        visual["expected_commit"] = pinned_commit
+    else:
+        # A core-only install leaves an already-managed visual runtime intact.
+        visual.setdefault("expected_commit", None)
+    visual.setdefault("known_good_commit", None)
+
+
 def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, str] | None = None,
-                  machine: str | None = None, *, defer_packages: bool = False) -> None:
+                  machine: str | None = None, *, defer_packages: bool = False,
+                  include_quickshell: bool = True,
+                  recovery_bundle: pathlib.Path | None = None) -> None:
     release = os_release if os_release is not None else parse_os_release()
     arch = machine if machine is not None else platform.machine()
     errors = target_mismatches(release, arch)
@@ -422,15 +512,22 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
         raise InstallError("test roots are not accepted by the installer CLI")
     if shutil.which("dnf") is None:
         raise InstallError("dnf was not found")
-    from . import quickshell
-    qs = quickshell.report()
-    if qs["checkout_status"] != "OK":
-        raise InstallError(f"Quickshell checkout does not match the pinned commit ({qs['checkout_status']}; expected {qs['expected_commit']}, got {qs['installed_commit']}); initialize the pinned submodule and rerun bootstrap")
-    lock = quickshell.load_lock()
-    engine = lock.get("engine", {})
-    if not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key"):
-        raise InstallError("Quickshell engine package lock is incomplete")
     state = load_state(root)
+    lock = None
+    if include_quickshell:
+        from . import quickshell
+        qs = quickshell.report()
+        if qs["checkout_status"] != "OK":
+            raise InstallError(f"Quickshell checkout does not match the pinned commit ({qs['checkout_status']}; expected {qs['expected_commit']}, got {qs['installed_commit']}); initialize the pinned submodule and rerun bootstrap")
+        lock = quickshell.load_lock()
+        engine = lock.get("engine", {})
+        if not engine.get("nevra") or not engine.get("repository") or not engine.get("gpg_key"):
+            raise InstallError("Quickshell engine package lock is incomplete")
+    else:
+        engine = None
+    allow_quickshell_update = QUICKSHELL_PACKAGE in state.get("packages_installed_by_us", [])
+    validate_package_plan(engine, allow_quickshell_update=allow_quickshell_update,
+                          recovery_bundle=recovery_bundle)
     legacy_entries = set(state.get("entries", {})) & LEGACY_MANAGED_PATHS
     if legacy_entries:
         tracked_packages = state.get("packages_installed_by_us", [])
@@ -440,15 +537,17 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
         if tracked_packages:
             state["packages_installed_by_us"] = tracked_packages
             write_state(root, state)
-    installed_before = installed_rpm_packages()
+    package_names = (*PACKAGES, QUICKSHELL_PACKAGE) if include_quickshell else PACKAGES
+    installed_before = installed_rpm_packages_for(package_names)
     state["packages_installed_by_us"] = sorted(
-        set(state.get("packages_installed_by_us", [])) | (set((*PACKAGES, QUICKSHELL_PACKAGE)) - installed_before)
+        set(state.get("packages_installed_by_us", [])) | (set(package_names) - installed_before)
     )
     write_state(root, state)
-    _, changed = install_files(root)
+    _, changed = install_files(root, include_quickshell=include_quickshell)
     if not defer_packages:
         try:
-            install_locked_packages(engine)
+            install_locked_packages(engine, allow_quickshell_update=allow_quickshell_update,
+                                    recovery_bundle=recovery_bundle)
         except InstallError as exc:
             rollback_files(root)
             retained = load_state(root)
@@ -461,8 +560,7 @@ def apply_install(root: pathlib.Path = pathlib.Path("/"), os_release: dict[str, 
         state["applied_version"] = state.pop("known_good_version")
     state.pop("known_good_version", None)
     state["applied_version"] = (REPO / "VERSION").read_text(encoding="utf-8").strip()
-    state.setdefault("quickshell", {})["expected_commit"] = lock["commit"]
-    state["quickshell"].setdefault("known_good_commit", None)
+    update_quickshell_state(state, lock["commit"] if lock else None, included=include_quickshell)
     write_state(root, state)
     if not defer_packages:
         reload_invoking_user_manager()

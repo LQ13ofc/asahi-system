@@ -20,6 +20,8 @@ jobs:
           python-version: "3.12"
       - name: Install static validation dependency
         run: python -m pip install -r requirements-test.txt
+      - name: Compile Python sources
+        run: python -m compileall -q niri_plus scripts tests
       - name: Validate baseline snapshot
         run: python scripts/validate_baseline.py
       - name: Run tests

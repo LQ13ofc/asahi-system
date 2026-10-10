@@ -9,6 +9,17 @@ global da memória que não está prontamente disponível para novas alocações
 captura do M1, não é possível concluir se a diferença vem de processos, cache,
 kernel, buffers gráficos ou da forma como a métrica foi lida.
 
+O baseline histórico checked-in foi capturado em 2026-10-06 numa sessão
+Fedora Asahi Remix 44 com Plasma, não em Niri clean idle. Nele,
+`MemTotal=7,681,376 kB`, `MemAvailable=2,159,024 kB` e a subtração resulta em
+`5,522,352 kB` (aprox. 5.27 GiB). O mesmo instantâneo registra `Cached` em
+3.13 GiB, `Shmem` em 1.02 GiB, `AnonPages` em 2.72 GiB, swap usada em zero e
+vários processos Brave e Plasma. Essas categorias se sobrepõem e não podem ser
+somadas; são evidência de que o baseline antigo tinha muita memória de processo,
+cache e compartilhada, mas não explicam a observação atual de 4 GiB em Niri.
+Esse arquivo não é uma medição B ou C e não permite atribuir bytes ao Niri,
+Quickshell ou GPU.
+
 ## Comandos
 
 O relatório pontual é read-only em relação ao sistema e não exige root:
@@ -57,7 +68,16 @@ não tenta adivinhar quais argumentos ou caminhos são secretos.
   conhecido; o ranking deixa métricas indisponíveis explícitas. O PSS de um grupo
   pode continuar disponível quando todos os seus PIDs são legíveis, mesmo que o
   Cloud bloqueie `smaps_rollup` de processos alheios; o total global de PSS exige
-  cobertura completa.
+  cobertura completa. Um componente ausente só recebe `NOT_APPLICABLE` quando a
+  enumeração de PIDs foi completa; se algum PID não pôde ser identificado, sua
+  ausência permanece `UNAVAILABLE`. Classificadores consultam `comm`, `argv[0]`
+  e executável quando legíveis; `xwayland-satellite` também reconhece seu
+  prefixo exato de 15 caracteres usado por `comm` quando o kernel o trunca.
+- **Custo do diagnóstico:** `all_process_pss_bytes` inclui o comando
+  `niri+ memory` e sua cadeia ancestral. `collector_and_ancestors` mostra esse
+  PSS separadamente; o proxy de processos do usuário os exclui. Durante uma
+  série longitudinal, o próprio coletor fica ativo e não deve ser confundido
+  com a residência normal da sessão.
 - **Grupos de processo:** `GRAPHICS_COMPONENTS` é uma vista de Niri, Quickshell,
   auxiliares e Xwayland. Serviços em `system.slice` são outra vista. O proxy
   `SAME_UID_USER_PROCESSES` inclui serviços de usuário e aplicativos. A coleta
@@ -86,21 +106,35 @@ sistema e no PSS. O coletor desduplica `drm-client-id` e publica esses bytes
 separadamente. Sem contadores, informa `NOT_ACCOUNTED` ou `NOT_APPLICABLE`;
 não presume que o valor ausente seja zero.
 
-Na revisão Cloud de 2026-10-08, a árvore pública Asahi consultada não tinha um
-`show_fdinfo` para o driver DRM Asahi. Isso não prova qual interface existe no
-kernel Fedora Asahi instalado no Mac: essa diferença só pode ser resolvida por
-uma captura real. Referências: [formato DRM fdinfo do kernel](https://docs.kernel.org/gpu/drm-usage-stats.html)
-e [driver Asahi público](https://github.com/AsahiLinux/linux/tree/asahi/drivers/gpu/drm/asahi).
+Antes e depois de percorrer os `fdinfo`, o coletor compara `start_time_ticks`
+com o processo observado para não atribuir descritores de um PID reutilizado a
+outro processo. Se a identidade não puder ser comprovada, a vista DRM fica
+`UNAVAILABLE` sem agregado numérico.
+
+Na revisão Cloud, foram inspecionados os 22 arquivos Rust do driver DRM Asahi
+no commit público `77cb8f24c2381a8abb7272d7bbdec548d6426a8a`; não foi encontrado
+hook ou contador `fdinfo` específico do driver. A API genérica só publica
+contadores residentes quando o driver os fornece. O kernel Fedora Asahi pode
+ter patches ou revisão diferente; somente uma captura no Mac determina quais
+campos aparecem. Referências: [formato DRM fdinfo do kernel](https://docs.kernel.org/gpu/drm-usage-stats.html)
+e [fonte Asahi no commit inspecionado](https://github.com/AsahiLinux/linux/tree/77cb8f24c2381a8abb7272d7bbdec548d6426a8a/drivers/gpu/drm/asahi).
 
 ## Crescimento no tempo
 
 Cada amostra inclui inventário/PSS, Niri, Quickshell, filhos, contagem de
 processos e threads, CPU, memória disponível, swap, PSI e cgroups. A análise
-offline reporta deltas e monotonicidade. Só marca um processo como
+offline reporta deltas e monotonicidade; o estado global
+`OBSERVED_MONOTONIC_PSS_GROWTH` exige ao menos quatro amostras e PSS global
+válido em todas elas. Métricas ausentes mantêm a conclusão como
+`NOT_ESTABLISHED`. Só marca um processo como
 `POSSIBLE_LEAK_CANDIDATE` quando o mesmo par observado PID + `start_time_ticks`
 e os metadados de processo (nome, UID, executável e cgroup) permanecem
-consistentes, e PSS/private-dirty não decrescem em todas as quatro amostras.
-PID reutilizado com outro `start_time_ticks`, mudança de metadados, processos
+consistentes, PSS/private-dirty não decrescem em todas as quatro amostras e ao
+menos um deles cresce 1 MiB ou mais. Crescimentos monotônicos menores continuam
+visíveis em `subthreshold_process_growth`, sem serem chamados de vazamento. O
+limite de 1 MiB é um filtro heurístico acima do arredondamento de smaps, não foi
+calibrado no M1 e não prova que crescimentos maiores sejam vazamentos. PID
+reutilizado com outro `start_time_ticks`, mudança de metadados, processos
 que desaparecem e métricas PSS incompletas não geram candidato. O campo é uma
 pista, nunca diagnóstico: `start_time_ticks` tem resolução de ticks do kernel e
 não é uma prova criptográfica de identidade; carga funcional, objetos retidos
@@ -113,6 +147,26 @@ separadas e não devem ser somados a PSS ou à estimativa global.
 Uma execução sem Niri registra `NOT_APPLICABLE` para a meta idle Niri. A marca
 `HIGH_BASELINE_CANDIDATE` significa apenas que a estimativa global ultrapassa a
 meta de projeto de 2 GiB; não identifica causa nem justifica reduzir cache.
+
+### Roteiro para interpretar uma captura de 4 GiB
+
+Use primeiro a cobertura das métricas. PSS global incompleto não pode ser
+tratado como PSS baixo, e um residual positivo não identifica qual componente o
+consome.
+
+| Evidência observada | Classificação de trabalho | Próxima comparação |
+|---|---|---|
+| `MemTotal-MemAvailable` alto, PSS global completo bem menor, `Cached`/Slab presentes, PSI e swap sem aumento relevante | `UNATTRIBUTED_MEMORY`; cache é uma hipótese observável, não um diagnóstico de memória recuperável | Conferir `MemAvailable`, `SReclaimable`/`SUnreclaim`, cgroup e DRM separadamente; não somar nem limpar cache |
+| PSS de `qs` e/ou filhos do Quickshell domina o inventário completo | `QUICKSHELL_DOMINANT_CANDIDATE` | Comparar perfil C com B em cinco runs equivalentes; só então testar uma alteração QML isolada |
+| PSS de Niri, serviços do sistema ou processos inesperados domina | `NIRI_BASE_OR_PROCESS_CANDIDATE` | Comparar A com B e revisar inventário/cgroups; investigar processo inesperado sem desativar serviços globalmente |
+| PSS/private dirty do mesmo PID + `start_time_ticks` cresce monotonicamente em todas as amostras | `POSSIBLE_LEAK_CANDIDATE` apenas acima do filtro heurístico de 1 MiB | Repetir com workload constante e verificar identidade, objetos retidos, buffers e cache; crescimento não confirma vazamento |
+| Só o uso global cresce, enquanto PSS por processo permanece estável ou incompleto | `GROWTH_OVER_TIME_UNATTRIBUTED` | Examinar cache, kernel, cgroups e pressão sem imputar a diferença à GPU |
+
+Esses nomes descrevem hipóteses de triagem e não são todos estados emitidos
+automaticamente pela CLI. `EXPECTED_RESIDENCY` não é inferida de uma captura:
+precisa de uma comparação entre sessões com as mesmas condições. A meta
+`HIGH_BASELINE_CANDIDATE` continua sendo a comparação global com 2 GiB, nunca
+uma afirmação de que Niri, Quickshell ou GPU expliquem o resultado.
 
 ## Protocolo A/B/C
 

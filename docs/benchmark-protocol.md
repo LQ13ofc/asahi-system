@@ -117,6 +117,64 @@ e contadores de faults/context switches. A estimativa nunca é subtraída dos
 resultados reais. A medição do overhead deve usar o mesmo host e ferramentas
 que as capturas; Cloud é apenas `CLOUD_MEASURED`.
 
+## C0/C1 — Quickshell KNOWN-GOOD contra candidato
+
+Depois de validar um candidato em branch e preparar uma instalação experimental
+revisável, capture cinco runs de cada revisão com o mesmo perfil Niri normal:
+
+```bash
+niri+ benchmark --profile niri-quickshell --runs 5 --window 10 --output ~/quickshell-c0.json
+# Troque para o candidato com o procedimento experimental aprovado; nunca rode duas instâncias.
+niri+ benchmark --profile niri-quickshell --runs 5 --window 10 --output ~/quickshell-c1.json
+niri+ benchmark compare-quickshell \
+  --known-good ~/quickshell-c0.json \
+  --candidate ~/quickshell-c1.json \
+  --output ~/quickshell-c0-c1.md \
+  --json-output ~/quickshell-c0-c1.json
+```
+
+O comparador exige que cada captura use `niri-quickshell`, passe sua validação
+de lifecycle e tenha commits esperado/instalado iguais dentro daquela captura.
+O hash Quickshell pode diferir entre C0 e C1, e fica registrado como a variável
+do experimento. Versão Quickshell, Niri+, compositor, kernel, host, janela e
+cadência ainda precisam coincidir. Se a revisão do `asahi-system` também mudou,
+o resultado fica inconclusivo por padrão. Só use
+`--allow-asahi-system-commit-change` depois de revisar que o diff seleciona o
+pin candidato e não altera outra variável de sessão; o relatório registra essa
+exceção.
+
+Este comando só compara arquivos offline. Ele não instala nem troca revisões,
+não altera o pin KNOWN-GOOD e não valida equivalência visual no Cloud.
+
+## C0/C1 — Quickshell KNOWN-GOOD contra candidato
+
+Depois de validar um candidato em branch e preparar uma instalação experimental
+revisável, capture cinco runs de cada revisão com o mesmo perfil Niri normal:
+
+```bash
+niri+ benchmark --profile niri-quickshell --runs 5 --window 10 --output ~/quickshell-c0.json
+# Troque para o candidato com o procedimento experimental aprovado; nunca rode duas instâncias.
+niri+ benchmark --profile niri-quickshell --runs 5 --window 10 --output ~/quickshell-c1.json
+niri+ benchmark compare-quickshell \
+  --known-good ~/quickshell-c0.json \
+  --candidate ~/quickshell-c1.json \
+  --output ~/quickshell-c0-c1.md \
+  --json-output ~/quickshell-c0-c1.json
+```
+
+O comparador exige que cada captura use `niri-quickshell`, passe sua validação
+de lifecycle e tenha commits esperado/instalado iguais dentro daquela captura.
+O hash Quickshell pode diferir entre C0 e C1, e fica registrado como a variável
+do experimento. Versão Quickshell, Niri+, compositor, kernel, host, janela e
+cadência ainda precisam coincidir. Se a revisão do `asahi-system` também mudou,
+o resultado fica inconclusivo por padrão. Só use
+`--allow-asahi-system-commit-change` depois de revisar que o diff seleciona o
+pin candidato e não altera outra variável de sessão; o relatório registra essa
+exceção.
+
+Este comando só compara arquivos offline. Ele não instala nem troca revisões,
+não altera o pin KNOWN-GOOD e não valida equivalência visual no Cloud.
+
 ## Perfis experimentais obrigatórios
 
 A comparação prioritária é **B vs C**.
