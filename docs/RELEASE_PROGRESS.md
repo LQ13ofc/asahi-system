@@ -283,13 +283,36 @@ Cloud após a mudança: compileall e 40 testes `unittest` passaram; load de 59
 QML passou sem erros ou avisos tardios; render de todas as cenas passou;
 settings-check, multiscreen, interação por teclado e checks dos backends
 auxiliares passaram. `pyside6-qmllint` retorna 0 com 192 warnings já
-classificados em `docs/validacao-qml.md`. CI GitHub de PRs #10 e #11 passou nos
-heads atuais; PR #12 está pendente de CI. Os PRs e pin de produção permanecem
-sem merge/alteração.
+classificados em `docs/validacao-qml.md`. CI GitHub de PRs #10, #11 e #12
+passou nos heads atuais. Os PRs e pin de produção permanecem sem
+merge/alteração.
 
-Próxima ação executável: mapear o refresh do calendário e determinar se há
-trabalho periódico quando nenhum módulo/painel o consome; implementar suspensão
-apenas se a semântica de atualização e exibição continuar correta, com teste de
-lifecycle no harness. O código visual fica em `quickshell-`; nenhuma política
-de sistema deve ser movida para esse repo. PRs RC #19/#8 e o pin de produção
-continuam inalterados.
+A agenda foi auditada no mesmo ciclo: `Agenda.qml` não tem timer/processo; a
+busca começa ao carregar `CalendarPanel`, cujo conteúdo vive sob o `LazyLoader`
+do painel, e o timer local é apenas watchdog da busca. Não havia polling
+ocioso a remover. Um teste de contrato agora protege esse lifecycle.
+
+Quickshell PR #13 draft: branch `feature/brightness-monitor-demand`, head
+`2282a375a871fc718c94c5993e8c81729e2bfb9f`, base
+`integration/settings-center-rc`. `udevadm monitor` e a busca inicial do
+backlight agora só existem enquanto o indicador de brilho está visível em pelo
+menos um monitor ou o Control Center está vivo. Os consumidores sobrepostos
+compartilham um único watcher; fechar/ocultar o último para processos e retries.
+O painel pede refresh do sysfs ao assumir consumo. Testes cobrem nenhum
+consumidor, início em cada rota, ausência de duplicata, manter o watcher quando
+um dos dois consumidores fecha e parar/reiniciar pelo último consumidor.
+
+Cloud no head do PR #13: compileall, 41 testes `unittest`, 59 QML sem erros ou
+avisos tardios, render completo, lint com os mesmos 192 avisos classificados,
+settings-check, multiscreen, interação por teclado, bridge Niri, brilho com e
+sem CLI e Control Center power passaram. CI dos PRs #10/#11/#12 passou; PR #13
+está em execução. O watcher permanece event-driven; isso valida ciclo de vida
+no harness, não PSS/CPU, atualização por teclas físicas nem estado do sysfs no
+M1 (`M1_REQUIRED`).
+
+Próxima ação executável: assim que o CI do PR #13 terminar, criar um branch de
+integração Cloud que reúna PRs Quickshell #10–#13 sobre o branch RC, sem tocar
+em `master`, no pin de produção ou nos commits imutáveis do primeiro gate.
+Resolver conflitos e rodar novamente a suíte combinada, instalação simulada e
+renderização; depois registrar o commit candidato exato para a próxima etapa
+cross-repo. PRs RC #19/#8 e o pin de produção continuam inalterados.
