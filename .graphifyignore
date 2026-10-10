@@ -1,5 +1,6 @@
 # Local graphs and process/memory captures are derived data, not source context.
 graphify-out/
+external/quickshell/
 hardware/mba-m1-8gb/baseline/
 experiments/**/before/
 experiments/**/after/

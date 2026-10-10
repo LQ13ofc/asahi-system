@@ -36,6 +36,11 @@ class GraphifyToolTests(unittest.TestCase):
         self.assertEqual(command[command.index("--out") + 1], str(target))
         self.assertNotIn("--backend", command)
 
+    def test_asahi_graph_does_not_duplicate_quickshell_submodule(self) -> None:
+        ignore_file = LOCK_PATH.parent.parent / ".graphifyignore"
+        patterns = ignore_file.read_text(encoding="utf-8").splitlines()
+        self.assertIn("external/quickshell/", patterns)
+
     def test_github_ssh_and_https_remotes_normalize_to_same_repo(self) -> None:
         self.assertEqual(
             canonical_github_remote("git@github.com:LQ13ofc/quickshell-.git"),
