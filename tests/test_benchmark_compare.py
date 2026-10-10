@@ -134,6 +134,21 @@ def capture(profile, available, session_pss, **kwargs):
     }
 
 
+def quickshell_candidate_capture(base, commit, process_pss, system_commit=None):
+    candidate = copy.deepcopy(base)
+    for index, run_data in enumerate(candidate["runs"]):
+        run_data["system"]["quickshell_expected_commit"] = metric(commit)
+        run_data["system"]["quickshell_installed_commit"] = metric(commit)
+        if system_commit is not None:
+            run_data["system"]["asahi_system_commit"] = command(system_commit)
+        value = process_pss[index]
+        run_data["components"]["quickshell"]["pss_bytes"] = metric(value)
+        for row in run_data["session"]["processes"]["value"]:
+            if row["name"] == "qs":
+                row["pss_bytes"] = metric(value)
+    return candidate
+
+
 class BenchmarkCompareTests(unittest.TestCase):
     def setUp(self):
         self.plasma = capture("plasma", [100, 101, 99, 100, 100], 80)
@@ -299,6 +314,74 @@ class BenchmarkCompareTests(unittest.TestCase):
             ), 0)
             self.assertIn("A/B/C benchmark comparison", markdown.read_text())
             self.assertEqual(json.loads(json_output.read_text())["comparability"]["status"], "COMPATIBLE")
+
+    def test_quickshell_candidate_comparison_allows_per_capture_locked_commits(self):
+        candidate = quickshell_candidate_capture(
+            self.quickshell,
+            "c" * 40,
+            [40, 41, 39, 40, 40],
+        )
+        result = compare.compare_quickshell_candidate_captures(self.quickshell, candidate)
+        self.assertEqual(result["comparability"]["status"], "COMPATIBLE")
+        self.assertEqual(result["revisions"]["known_good"]["quickshell_installed_commit"],
+                         "55e92880d0aff75d235f283c839ec0990eaa9e17")
+        self.assertEqual(result["revisions"]["candidate"]["quickshell_installed_commit"], "c" * 40)
+        item = result["comparisons"]["process.quickshell.pss_bytes"]
+        self.assertEqual(item["delta"], -10.0)
+        self.assertEqual(item["classification"], "MEASURED_DECREASE")
+        self.assertEqual(
+            result["process_inventory"]["process_presence_changes"]["present_only_in_candidate"],
+            [],
+        )
+        report = compare.render_quickshell_candidate_markdown(result)
+        self.assertIn("C0/C1 comparison", report)
+        self.assertIn("intentional independent variable", report)
+
+    def test_candidate_system_commit_change_is_inconclusive_until_explicitly_reviewed(self):
+        candidate = quickshell_candidate_capture(
+            self.quickshell,
+            "c" * 40,
+            [40, 41, 39, 40, 40],
+            system_commit="candidate-system-revision",
+        )
+        strict = compare.compare_quickshell_candidate_captures(self.quickshell, candidate)
+        self.assertEqual(strict["comparability"]["status"], "INCOMPATIBLE")
+        self.assertEqual(strict["comparisons"]["process.quickshell.pss_bytes"]["classification"], "INCONCLUSIVE")
+        reviewed = compare.compare_quickshell_candidate_captures(
+            self.quickshell, candidate, allow_asahi_system_commit_change=True,
+        )
+        self.assertEqual(reviewed["comparability"]["status"], "COMPATIBLE")
+        self.assertTrue(any("review that the candidate revision" in warning
+                            for warning in reviewed["comparability"]["warnings"]))
+
+    def test_candidate_capture_with_lock_divergence_is_incompatible(self):
+        candidate = quickshell_candidate_capture(self.quickshell, "c" * 40, [40, 41, 39, 40, 40])
+        candidate["runs"][0]["system"]["quickshell_installed_commit"] = metric("d" * 40)
+        result = compare.compare_quickshell_candidate_captures(self.quickshell, candidate)
+        self.assertEqual(result["comparability"]["status"], "INCOMPATIBLE")
+        self.assertEqual(result["comparisons"]["process.quickshell.pss_bytes"]["classification"], "INCONCLUSIVE")
+
+    def test_candidate_compare_files_validate_profile_and_write_both_reports(self):
+        candidate = quickshell_candidate_capture(self.quickshell, "c" * 40, [40, 41, 39, 40, 40])
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            good_path = root / "c0.json"
+            candidate_path = root / "c1.json"
+            good_path.write_text(json.dumps(self.quickshell))
+            candidate_path.write_text(json.dumps(candidate))
+            result = compare.compare_quickshell_candidate_files(good_path, candidate_path)
+            self.assertEqual(result["comparability"]["status"], "COMPATIBLE")
+            report_path = root / "report.md"
+            json_path = root / "report.json"
+            self.assertEqual(benchmark.compare_quickshell_candidate_benchmarks(
+                str(good_path), str(candidate_path), str(report_path), str(json_path),
+            ), 0)
+            self.assertIn("C1 median", report_path.read_text())
+            self.assertEqual(json.loads(json_path.read_text())["mode"], "quickshell-candidate-comparison")
+            candidate["profile"] = "plasma"
+            candidate_path.write_text(json.dumps(candidate))
+            with self.assertRaisesRegex(compare.ComparisonError, "expected profile 'niri-quickshell'"):
+                compare.compare_quickshell_candidate_files(good_path, candidate_path)
 
 
 if __name__ == "__main__":

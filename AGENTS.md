@@ -3,7 +3,7 @@
 ## Escopo e repositórios
 
 - Este repositório, `LQ13ofc/asahi-system`, é a fonte principal da configuração do Fedora Asahi instalado no MacBook Air M1.
-- `LQ13ofc/quickshell-` é a interface Quickshell/Niri e permanece um repositório separado. Não duplique seu código em `asahi-system`. A integração atual usa submodule mais `integration/quickshell.lock.json` para fixar um commit; instalação/execução usa checkout externo e symlink, sem cópia de QML. Mudanças nos dois repositórios devem ser feitas e revisadas no histórico, branch e PR de cada repositório.
+- `LQ13ofc/quickshell-` é a interface Quickshell/Niri e permanece um repositório separado. Não duplique seu código em `asahi-system`. QuickShell é integração opcional, não dependência do núcleo: `niri+ install` deve instalar e administrar Niri sem clonar, instalar ou executar QuickShell; somente `niri+ install --with-quickshell` ativa a integração visual pinada. A integração usa submodule mais `integration/quickshell.lock.json` para fixar um commit; instalação/execução usa checkout externo e symlink, sem cópia de QML. Mudanças nos dois repositórios devem ser feitas e revisadas no histórico, branch e PR de cada repositório.
 - O alvo é MacBook Air M1 2020, Apple M1, 8 GB de memória, `aarch64` e Fedora Asahi Remix 44.
 - A sessão gráfica principal futura é Niri Performance. Gaming é um mode/profile dentro da mesma sessão Niri, não uma sessão gráfica independente. Não trate componentes ainda não implementados como configuração existente.
 
@@ -25,6 +25,11 @@
 - Prefira Python da biblioteca padrão para verificações do repositório. Declare dependências adicionais e mantenha ferramentas de teste isoladas do sistema operacional.
 - Scripts de preparação devem explicar o que verificam e não alterar o sistema por padrão. Separe coleta, validação e aplicação de configuração.
 - Documente limites de cada teste: validação estática não prova funcionamento no kernel Asahi, na GPU, em Wayland/Niri real ou desempenho de RAM.
+
+## Graphify (opcional, somente desenvolvimento)
+
+- O pin está em `tools/graphify.lock.json`; use `scripts/graphify_project.py` para gerar grafo local em modo code-only. Não instale Graphify no sistema do usuário nem adicione-o como dependência do desktop.
+- Se `graphify-out/graph.json` já existir e Graphify estiver disponível, consultas estruturais podem começar com `graphify query`; confirme conclusões no código-fonte. Não gere grafos com conteúdo semântico, hardware ou credenciais.
 
 ## Benchmark e experimentos
 

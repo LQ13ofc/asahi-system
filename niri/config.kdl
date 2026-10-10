@@ -3,6 +3,7 @@ include "keybinds.kdl"
 include "outputs.kdl"
 include "rules.kdl"
 include "autostart.kdl"
+include optional=true "~/.config/niri-plus/settings.kdl"
 
 hotkey-overlay {
     skip-at-startup

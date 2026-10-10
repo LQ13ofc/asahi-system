@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 
-from . import benchmark, doctor, install_command, rollback, status, uninstall, update
+from . import benchmark, brightness, doctor, gaming, install_command, niri_settings, plugin_command, preflight, recovery, rollback, status, uninstall, update
 
 
 def version() -> str:
@@ -17,6 +18,16 @@ def version() -> str:
     return "0.0.0"
 
 
+def _brightness_percent(value: str) -> int:
+    try:
+        percent = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer from 0 to 100") from error
+    if not 0 <= percent <= 100:
+        raise argparse.ArgumentTypeError("must be an integer from 0 to 100")
+    return percent
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="niri+", description="Manage the Niri+ Fedora Asahi session.")
     parser.add_argument("--version", action="version", version=f"Niri+ {version()}")
@@ -24,10 +35,34 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status", help="show read-only installation status")
     install_parser = commands.add_parser("install", help="install the Niri+ session")
     install_parser.add_argument("--dry-run", action="store_true", help="show the plan without changing the host")
+    install_parser.add_argument("--with-quickshell", action="store_true", help=argparse.SUPPRESS)
+    plugin_parser = commands.add_parser("plugin", help="manage trusted optional integrations")
+    plugin_actions = plugin_parser.add_subparsers(dest="plugin_action", required=True)
+    plugin_actions.add_parser("list", help="list known plugins and their managed state")
+    plugin_status = plugin_actions.add_parser("status", help="show status for one known plugin")
+    plugin_status.add_argument("name", choices=("quickshell",))
+    plugin_install = plugin_actions.add_parser("install", help="explicitly install one optional plugin")
+    plugin_install.add_argument("name", choices=("quickshell",))
+    plugin_remove = plugin_actions.add_parser("remove", help="remove one Niri+ managed plugin")
+    plugin_remove.add_argument("name", choices=("quickshell",))
+    commands.add_parser("preflight", help="run read-only checks before installing a candidate")
+    recovery_parser = commands.add_parser("recovery", help="prepare or restore protected offline recovery state")
+    recovery_actions = recovery_parser.add_subparsers(dest="recovery_action", required=True)
+    recovery_actions.add_parser("prepare", help="save current Niri+ managed files to a protected offline bundle")
+    recovery_actions.add_parser("status", help="verify the local offline recovery bundle")
+    recovery_restore = recovery_actions.add_parser("restore", help="restore a verified bundle offline (requires root)")
+    recovery_restore.add_argument("--bundle", type=pathlib.Path)
     commands.add_parser("update", help="check/apply a trusted Niri+ release (not yet available)")
     rollback_parser = commands.add_parser("rollback", help="restore Niri+ managed files")
     rollback_parser.add_argument("--remove-packages", action="store_true", help="also remove only explicitly tracked packages")
     commands.add_parser("doctor", help="run read-only diagnostics")
+    gaming_parser = commands.add_parser("gaming", help="launch commands through Gamescope inside Niri")
+    gaming_actions = gaming_parser.add_subparsers(dest="gaming_action", required=True)
+    gaming_actions.add_parser("status", help="show read-only Gamescope and Niri readiness")
+    gaming_run = gaming_actions.add_parser("run", help="start an explicit command under Gamescope")
+    gaming_run.add_argument("command_args", nargs=argparse.REMAINDER,
+                            help="command and arguments; use `--` before the command")
+    gaming_actions.add_parser("steam", help="start Steam under Gamescope on demand")
     benchmark_parser = commands.add_parser("benchmark", help="run the validated A/B/C performance collector")
     benchmark_mode = benchmark_parser.add_mutually_exclusive_group()
     benchmark_mode.add_argument("--profile", choices=("plasma", "niri-core", "niri-quickshell"),
@@ -49,6 +84,17 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--niri-quickshell", required=True, help="validated profile C JSON")
     compare_parser.add_argument("--output", required=True, help="Markdown report path")
     compare_parser.add_argument("--json-output", help="optional machine-readable comparison JSON path")
+    candidate_compare_parser = benchmark_actions.add_parser(
+        "compare-quickshell", help="compare KNOWN-GOOD C0 with an experimental Quickshell C1 capture"
+    )
+    candidate_compare_parser.add_argument("--known-good", required=True, help="validated C0 niri-quickshell JSON")
+    candidate_compare_parser.add_argument("--candidate", required=True, help="validated C1 niri-quickshell JSON")
+    candidate_compare_parser.add_argument("--output", required=True, help="Markdown report path")
+    candidate_compare_parser.add_argument("--json-output", help="optional machine-readable report path")
+    candidate_compare_parser.add_argument(
+        "--allow-asahi-system-commit-change", action="store_true",
+        help="permit a differing Niri+ source commit after manually confirming only Quickshell selection changed",
+    )
     memory_parser = commands.add_parser("memory", help="inspect global, process, cgroup and DRM memory read-only")
     memory_parser.add_argument("--window", type=float, default=2.0,
                                help="seconds for process CPU deltas (default: 2)")
@@ -59,6 +105,16 @@ def build_parser() -> argparse.ArgumentParser:
                                help="collect at 0, 5, 15, and 30 minutes, then exit")
     memory_parser.add_argument("--include-60-minutes", action="store_true",
                                help="include an optional final +60 minute sample (requires --series)")
+    brightness_parser = commands.add_parser("brightness", help="set screen brightness through systemd-logind")
+    brightness_actions = brightness_parser.add_subparsers(dest="brightness_action", required=True)
+    brightness_set = brightness_actions.add_parser("set", help="set the active session backlight from 0 to 100 percent")
+    brightness_set.add_argument("percent", type=_brightness_percent)
+    brightness_set.add_argument("--device", help="backlight name; required when more than one device exists")
+    settings_parser = commands.add_parser("niri-settings", help="manage safe user-level Niri preferences")
+    settings_actions = settings_parser.add_subparsers(dest="settings_action", required=True)
+    settings_actions.add_parser("status", help="show current user-level Niri preferences")
+    settings_actions.add_parser("apply", help="validate and apply one JSON request from stdin")
+    settings_actions.add_parser("rollback", help="restore the previous Niri+ preference set")
     commands.add_parser("uninstall", help="remove Niri+ managed files and tracked packages")
     return parser
 
@@ -72,17 +128,57 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status":
         print(status.render_status(version()))
     elif args.command == "install":
+        if args.with_quickshell:
+            parser.error("--with-quickshell was replaced by `sudo niri+ plugin install quickshell`")
         return install_command.run_install(args.dry_run)
+    elif args.command == "plugin":
+        if args.plugin_action == "list":
+            return plugin_command.run_list()
+        if args.plugin_action == "status":
+            return plugin_command.run_status(args.name)
+        if args.plugin_action == "install":
+            return plugin_command.run_install(args.name)
+        return plugin_command.run_remove(args.name)
+    elif args.command == "preflight":
+        print(preflight.render())
+    elif args.command == "recovery":
+        try:
+            if args.recovery_action == "prepare":
+                print(f"Prepared protected offline recovery bundle: {recovery.prepare_bundle()}")
+            elif args.recovery_action == "status":
+                print(recovery.status())
+            else:
+                print(recovery.restore(args.bundle))
+        except (recovery.RecoveryError, OSError) as error:
+            print(f"Offline recovery failed: {error}")
+            return 2
     elif args.command == "update":
         return update.run_update()
     elif args.command == "rollback":
         return rollback.run_rollback(args.remove_packages)
     elif args.command == "doctor":
         print(doctor.render_doctor())
+    elif args.command == "gaming":
+        try:
+            if args.gaming_action == "status":
+                print(gaming.render_status())
+                return 0
+            command = ["steam"] if args.gaming_action == "steam" else args.command_args
+            return gaming.launch(command)
+        except gaming.GamingError as error:
+            parser.error(str(error))
     elif args.command == "benchmark":
         if args.benchmark_action == "compare":
             return benchmark.compare_benchmarks(
                 args.plasma, args.niri_core, args.niri_quickshell, args.output, args.json_output
+            )
+        if args.benchmark_action == "compare-quickshell":
+            return benchmark.compare_quickshell_candidate_benchmarks(
+                args.known_good,
+                args.candidate,
+                args.output,
+                args.json_output,
+                allow_asahi_system_commit_change=args.allow_asahi_system_commit_change,
             )
         if not any((args.profile, args.prepare_niri_core, args.restore_niri_core, args.diagnose_overhead)):
             parser.error("benchmark requires --profile, --prepare-niri-core, --restore-niri-core, --diagnose-overhead, or compare")
@@ -108,6 +204,23 @@ def main(argv: list[str] | None = None) -> int:
             args.json_output, args.window, args.sample_period,
             args.series, args.include_60_minutes,
         )
+    elif args.command == "brightness":
+        try:
+            device, _level = brightness.set_percent(args.percent, args.device)
+        except brightness.BrightnessError as error:
+            parser.error(str(error))
+        print(f"Brilho alterado para {args.percent}% ({device}).")
+    elif args.command == "niri-settings":
+        manager = niri_settings.NiriSettingsManager()
+        if args.settings_action == "status":
+            print(json.dumps(manager.status(), ensure_ascii=False, sort_keys=True))
+        elif args.settings_action == "apply":
+            return niri_settings.apply_from_stdin(manager)
+        elif args.settings_action == "rollback":
+            try:
+                print(json.dumps(manager.rollback(), ensure_ascii=False, sort_keys=True))
+            except niri_settings.NiriSettingsError as error:
+                parser.error(str(error))
     elif args.command == "uninstall":
         return uninstall.run_uninstall()
     return 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import subprocess
+from . import install_transaction
 from .install import InstallError, rollback
 
 
@@ -11,8 +12,9 @@ def run_uninstall() -> int:
         print("Uninstall requires root; use: sudo niri+ uninstall")
         return 2
     try:
-        rollback(remove_packages=True)
-    except (InstallError, OSError, subprocess.CalledProcessError) as exc:
+        with install_transaction.operation_lock():
+            rollback(remove_packages=True)
+    except (InstallError, install_transaction.TransactionError, OSError, subprocess.CalledProcessError) as exc:
         print(f"Uninstall failed: {exc}")
         return 2
     print("Niri+ managed session files removed. Plasma, SDDM, kernel, Mesa, Asahi drivers, audio, network, and speaker safety were left untouched.")

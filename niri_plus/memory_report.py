@@ -30,6 +30,11 @@ JSON_PRIVACY_NOTICE = {
     "message": "Inspect and redact this diagnostic before sharing it outside your trusted environment.",
 }
 
+# smaps_rollup values are rounded to KiB and small resident changes are common
+# during ordinary allocator/cache activity. Keep those observations visible,
+# but require a material per-process delta before calling one a leak candidate.
+MIN_POSSIBLE_LEAK_GROWTH_BYTES = 1024 * 1024
+
 
 def number(item: Any) -> int | float | None:
     if isinstance(item, dict) and item.get("status") == bm.AVAILABLE:
@@ -86,7 +91,7 @@ def classify_process(row: dict[str, Any], current_uid: int) -> tuple[str, str | 
         "plasma": bm.COMPONENT_MATCHERS["plasma"],
     }
     component = next((key for key, matcher in graphics_matchers.items() if matcher(row)), None)
-    if name in GRAPHICS_NAMES or executable in GRAPHICS_NAMES or argv_name in GRAPHICS_NAMES:
+    if component or name in GRAPHICS_NAMES or executable in GRAPHICS_NAMES or argv_name in GRAPHICS_NAMES:
         return "GRAPHICS_COMPONENTS", component or name
     cgroup = str(row.get("cgroup") or "")
     if "/system.slice/" in f"/{cgroup.strip('/')}/" or cgroup.startswith("/system.slice/") or cgroup == "/init.scope":
@@ -150,14 +155,23 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
             "swap_pss_bytes": metric_sum(items, "swap_pss_bytes", coverage_ok=enumeration_complete),
         }
 
-    def component_aggregate(items: list[dict[str, Any]]) -> dict[str, Any]:
+    def component_aggregate(
+        items: list[dict[str, Any]], *, absence_confirmed: bool | None = None,
+    ) -> dict[str, Any]:
         summary = aggregate(items)
         if not items:
+            confirmed = enumeration_complete if absence_confirmed is None else absence_confirmed
+            status = bm.NOT_APPLICABLE if confirmed else bm.UNAVAILABLE
+            note = (
+                "no process for this component was observed in the complete PID scan"
+                if confirmed else
+                "process scan or classification metadata incomplete; component absence cannot be confirmed"
+            )
             for key in (
                 "pss_bytes", "rss_bytes", "private_clean_bytes", "private_dirty_bytes",
                 "uss_approx_bytes", "swap_pss_bytes",
             ):
-                summary[key] = bm.metric(bm.NOT_APPLICABLE, note="no process for this component was observed")
+                summary[key] = bm.metric(status, note=note)
         return summary
 
     decorated.sort(key=lambda row: number(row.get("pss_bytes")) if number(row.get("pss_bytes")) is not None else -1, reverse=True)
@@ -222,6 +236,9 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
     # Niri/Quickshell systemd user units may live outside session-*.scope.
     # This is explicitly a UID-owned user-process view, not an exact graphical
     # session boundary; component groups overlap it and are never added again.
+    system_slice_absence_confirmed = enumeration_complete and all(
+        row.get("cgroup") is not None for row in decorated
+    )
     return {
         "coverage": bm.metric(bm.AVAILABLE if coverage_ok else bm.UNAVAILABLE,
                               {"process_count": len(rows), "thread_count": total_threads,
@@ -231,6 +248,7 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
         "all_process_private_dirty_bytes": metric_sum(rows, "private_dirty_bytes", coverage_ok=coverage_ok),
         "all_process_private_clean_bytes": metric_sum(rows, "private_clean_bytes", coverage_ok=coverage_ok),
         "all_process_swap_pss_bytes": metric_sum(rows, "swap_pss_bytes", coverage_ok=coverage_ok),
+        "collector_and_ancestors": aggregate(groups["COLLECTOR_AND_ANCESTORS"]),
         "same_uid_user_processes": aggregate(same_uid_rows),
         "graphical_session_processes": bm.metric(
             bm.NOT_ACCOUNTED,
@@ -239,12 +257,14 @@ def process_view(rows: list[dict[str, Any]], current_uid: int, coverage_ok: bool
                 "same_uid_user_processes is a broader UID-owned proxy"
             ),
         ),
-        "system_service_processes": aggregate(groups["SYSTEM_SERVICES"]),
-        "other_uid_or_scope_processes": aggregate(groups["OTHER_UID_OR_SCOPE"]),
+        "system_service_processes": component_aggregate(
+            groups["SYSTEM_SERVICES"], absence_confirmed=system_slice_absence_confirmed,
+        ),
+        "other_uid_or_scope_processes": component_aggregate(groups["OTHER_UID_OR_SCOPE"]),
         "graphics_components": graphics,
         "component_views": component_views or {},
         "group_semantics": (
-            "Process groups are overlapping views, not additive partitions. Same-UID user processes include user services and desktop applications; this is not asserted to be the exact logind graphical-session cgroup. System services are selected by system.slice cgroup path. Every observed PID remains in process_inventory, including unclassified processes."
+            "Process groups are overlapping views, not additive partitions. all_process_pss_bytes includes this collector and its ancestor chain; collector_and_ancestors is the explicit view, and the same UID workload proxy excludes them. Same-UID user processes include user services and desktop applications; this is not asserted to be the exact logind graphical-session cgroup. System services are selected by system.slice cgroup path. Every observed PID remains in process_inventory, including unclassified processes."
         ),
         "process_inventory": inventory,
         "largest_by_pss": inventory[:20],
@@ -290,8 +310,12 @@ def build_memory_diagnostic(
     })
     niri_count = observation.get("components", {}).get("niri", {}).get("pid_count", 0)
     if not niri_count:
-        target_status = bm.NOT_APPLICABLE
-        target_note = "Niri process was not observed; Niri idle objective is not evaluated for this capture"
+        if enumeration_complete:
+            target_status = bm.NOT_APPLICABLE
+            target_note = "Niri process was not observed in a complete PID scan; Niri idle objective is not evaluated for this capture"
+        else:
+            target_status = bm.UNAVAILABLE
+            target_note = "process scan incomplete; cannot determine whether Niri was running or evaluate its idle objective"
     elif used is None:
         target_status = bm.UNAVAILABLE
         target_note = "global used estimate unavailable"
@@ -376,6 +400,7 @@ def render_memory_report(report: dict[str, Any], *, top: int = 10) -> str:
     if session_boundary.get("note"):
         lines.append(f"    session scope: {session_boundary['note']}")
     lines.append(f"  {'All-process PSS':<25} {format_metric(processes.get('all_process_pss_bytes'))}")
+    lines.append(f"  {'Collector + ancestors PSS':<25} {format_metric(processes.get('collector_and_ancestors', {}).get('pss_bytes'))}")
     lines.append(f"  {'Same-UID user PSS proxy':<25} {format_metric(processes.get('same_uid_user_processes', {}).get('pss_bytes'))}")
     lines.append(f"  {'System.slice PSS':<25} {format_metric(processes.get('system_service_processes', {}).get('pss_bytes'))}")
     lines.append(f"  {'All private dirty':<25} {format_metric(processes.get('all_process_private_dirty_bytes'))}")
@@ -580,6 +605,7 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     leak_candidates = []
+    subthreshold_growth = []
     if len(samples) >= 4:
         by_identity: dict[tuple[int, int], list[dict[str, Any] | None]] = {}
         for index, sample in enumerate(samples):
@@ -613,21 +639,57 @@ def analyze_memory_series(samples: list[dict[str, Any]]) -> dict[str, Any]:
             dirty = [number(row.get("private_dirty_bytes")) for row in rows]
             if any(value is None for value in pss + dirty):
                 continue
-            if all(b >= a for a, b in zip(pss, pss[1:])) and all(b >= a for a, b in zip(dirty, dirty[1:])) and (pss[-1] > pss[0] or dirty[-1] > dirty[0]):
+            monotonic_pss = all(b >= a for a, b in zip(pss, pss[1:]))
+            monotonic_dirty = all(b >= a for a, b in zip(dirty, dirty[1:]))
+            pss_delta = pss[-1] - pss[0]
+            dirty_delta = dirty[-1] - dirty[0]
+            if not (monotonic_pss and monotonic_dirty and (pss_delta > 0 or dirty_delta > 0)):
+                continue
+            growth = {
+                "pid": pid,
+                "start_time_ticks": start_ticks,
+                "name": rows[-1].get("name"),
+                "pss_delta_bytes": pss_delta,
+                "private_dirty_delta_bytes": dirty_delta,
+                "minimum_candidate_growth_bytes": MIN_POSSIBLE_LEAK_GROWTH_BYTES,
+            }
+            if max(pss_delta, dirty_delta) >= MIN_POSSIBLE_LEAK_GROWTH_BYTES:
                 leak_candidates.append({
                     "pid": pid,
                     "start_time_ticks": start_ticks,
                     "name": rows[-1].get("name"),
-                    "pss_delta_bytes": pss[-1] - pss[0],
-                    "private_dirty_delta_bytes": dirty[-1] - dirty[0],
+                    "pss_delta_bytes": pss_delta,
+                    "private_dirty_delta_bytes": dirty_delta,
+                    "minimum_candidate_growth_bytes": MIN_POSSIBLE_LEAK_GROWTH_BYTES,
                     "classification": "POSSIBLE_LEAK_CANDIDATE",
-                    "note": "PID/start-time and process metadata stayed consistent with monotonic PSS/private-dirty growth across all samples; procfs identity has tick granularity, and workload/functional retention still require investigation",
+                    "note": "PID/start-time and process metadata stayed consistent with monotonic PSS/private-dirty growth across all samples and at least one metric exceeded the 1 MiB screening floor; procfs identity has tick granularity, and workload/functional retention still require investigation",
                 })
+            else:
+                subthreshold_growth.append({
+                    **growth,
+                    "classification": "OBSERVED_GROWTH_BELOW_SCREENING_FLOOR",
+                    "note": "monotonic growth is retained as an observation but is too small for the leak-candidate screen; this does not rule out a leak",
+                })
+    pss_trend = trends.get("all_process_pss_bytes", {})
+    pss_trend_value = pss_trend.get("value", {}) if isinstance(pss_trend, dict) else {}
+    complete_pss_series = (
+        len(samples) >= 4
+        and pss_trend.get("status") == bm.AVAILABLE
+        and pss_trend_value.get("valid_samples") == len(samples)
+    )
+    growth_over_time = (
+        "OBSERVED_MONOTONIC_PSS_GROWTH"
+        if complete_pss_series
+        and pss_trend_value.get("monotonic_non_decreasing")
+        and pss_trend_value.get("delta", 0) > 0
+        else "NOT_ESTABLISHED"
+    )
     return {
         "sample_count": len(samples),
         "trends": trends,
-        "growth_over_time": "OBSERVED_MONOTONIC_PSS_GROWTH" if trends.get("all_process_pss_bytes", {}).get("value", {}).get("monotonic_non_decreasing") and trends["all_process_pss_bytes"]["value"]["delta"] > 0 else "NOT_ESTABLISHED",
+        "growth_over_time": growth_over_time,
         "possible_leak_candidates": leak_candidates,
+        "subthreshold_process_growth": subthreshold_growth,
         "cached_memory": "Reported as separate meminfo fields; recoverability is not inferred.",
         "expected_residency": "Not inferred from counters alone; workload and session-specific A/B comparison are required.",
         "note": "Longitudinal growth is observational, not a leak diagnosis. Cloud fixtures validate schema and trend logic only; hardware measurements are required for the target system.",
