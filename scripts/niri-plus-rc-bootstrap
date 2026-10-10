@@ -4,7 +4,7 @@
 This file must be SHA-256 checked against the value published with the RC
 instructions and executed through the documented in-memory verifier. It never
 imports Python from the source checkout. It extracts source_update.py only
-from the exact PR #21 Git commit, verifies its Git blob ID, and then uses that
+from the exact PR #22 Git commit, verifies its Git blob ID, and then uses that
 committed resolver to construct the closed root-owned install snapshot.
 """
 
@@ -27,7 +27,7 @@ import tempfile
 
 SYSTEM_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
 SYSTEM_REPOSITORY_SSH = "git@github.com:LQ13ofc/asahi-system.git"
-PR_REF = "refs/pull/21/head"
+PR_REF = "refs/pull/22/head"
 SOURCE_MODULE = "niri_plus/source_update.py"
 BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 VISUAL_DATA = pathlib.Path("/usr/local/share/niri-plus")
@@ -130,17 +130,17 @@ def _load_committed_resolver(source: pathlib.Path, owner, groups, expected_commi
         advertised = _owner_git(source, owner, groups, "ls-remote", "--exit-code", "--refs", "origin", PR_REF)
         rows = [line.split() for line in advertised.splitlines() if line.split()]
         if len(rows) != 1 or len(rows[0]) != 2 or rows[0][1] != PR_REF:
-            raise BootstrapError("GitHub did not advertise exactly one PR #21 head")
+            raise BootstrapError("GitHub did not advertise exactly one PR #22 head")
         if rows[0][0] != expected_commit:
-            raise BootstrapError(f"PR #21 head differs from requested commit: {rows[0][0]}")
+            raise BootstrapError(f"PR #22 head differs from requested commit: {rows[0][0]}")
         _owner_git(source, owner, groups, "fetch", "--no-tags", "origin", PR_REF)
     else:
-        # Recovery remains pinned to the reviewed bootstrap commit even if PR #21
+        # Recovery remains pinned to the reviewed bootstrap commit even if PR #22
         # advances or closes after the candidate has been installed.
         _owner_git(source, owner, groups, "fetch", "--no-tags", "origin", expected_commit)
     fetched = _owner_git(source, owner, groups, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
     if fetched != expected_commit:
-        raise BootstrapError("fetched PR #21 commit differs from the requested immutable SHA")
+        raise BootstrapError("fetched PR #22 commit differs from the requested immutable SHA")
     blob_oid = _owner_git(source, owner, groups, "rev-parse", f"{expected_commit}:{SOURCE_MODULE}")
     if not re.fullmatch(r"[0-9a-f]{40}", blob_oid):
         raise BootstrapError("committed source resolver has an invalid Git blob ID")
@@ -349,9 +349,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-root", type=pathlib.Path, required=True,
                         help="normal user's asahi-system checkout; its working-tree contents are never executed")
     parser.add_argument("--bootstrap-commit", required=True,
-                        help="exact PR #21 commit containing this hash-pinned bootstrap")
+                        help="exact PR #22 commit containing this hash-pinned bootstrap")
     actions = parser.add_mutually_exclusive_group(required=True)
-    actions.add_argument("--candidate-commit", help="exact full PR #21 head SHA")
+    actions.add_argument("--candidate-commit", help="exact full PR #22 head SHA")
     actions.add_argument("--restore-known-good", action="store_true",
                          help="restore the exact production system and Quickshell commits saved before RC install")
     modes = parser.add_mutually_exclusive_group()
@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.candidate_commit and (not re.fullmatch(r"[0-9a-f]{40}", args.candidate_commit)
                                   or args.candidate_commit != args.bootstrap_commit):
-        print("--candidate-commit must equal the full bootstrap/PR #21 commit SHA.", file=sys.stderr)
+        print("--candidate-commit must equal the full bootstrap/PR #22 commit SHA.", file=sys.stderr)
         return 2
     if not args.dry_run and not args.apply:
         parser.error("choose --dry-run or --apply")

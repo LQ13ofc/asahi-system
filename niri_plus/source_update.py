@@ -26,8 +26,8 @@ BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 EXPECTED_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
 EXPECTED_QUICKSHELL_REPOSITORY = "https://github.com/LQ13ofc/quickshell-.git"
 EXPECTED_BRANCH = "main"
-RELEASE_CANDIDATE_PULL_REQUEST = 21
-RELEASE_CANDIDATE_QUICKSHELL_COMMIT = "b440538d342822eac6cb046f0c0dd5e96212d6f2"
+RELEASE_CANDIDATE_PULL_REQUEST = 22
+RELEASE_CANDIDATE_QUICKSHELL_COMMIT = "0dc55d26f4dd2d281044ce6d4a043f5c751298df"
 RELEASE_CANDIDATE_REF = f"refs/pull/{RELEASE_CANDIDATE_PULL_REQUEST}/head"
 QUICKSHELL_PATH = "external/quickshell"
 MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024
@@ -507,10 +507,10 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
                       expected_system_commit: str | None = None,
                       known_good_restore: bool = False,
                       expected_quickshell_commit: str | None = None) -> Iterator[Snapshot]:
-    """Resolve production main by default, or an explicitly pinned PR #21 RC.
+    """Resolve production main by default, or an explicitly pinned PR #22 RC.
 
     The ordinary path remains deliberately main-only. The RC mode is opt-in,
-    requires a full commit SHA, verifies that PR #21 currently resolves to that
+    requires a full commit SHA, verifies that PR #22 currently resolves to that
     exact commit, and accepts only the RC's fixed Quickshell gitlink/lock pin.
     """
     source_root = (source_root or discover_source_root()).resolve()
@@ -518,7 +518,7 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
         raise SourceUpdateError("release-candidate install and known-good restore are mutually exclusive")
     if release_candidate:
         if not re.fullmatch(r"[0-9a-f]{40}", str(expected_system_commit or "")):
-            raise SourceUpdateError("release-candidate install requires the full 40-character PR #21 commit SHA")
+            raise SourceUpdateError("release-candidate install requires the full 40-character PR #22 commit SHA")
         if not include_quickshell:
             raise SourceUpdateError("release-candidate install requires the pinned Quickshell integration")
     elif known_good_restore:
@@ -574,7 +574,7 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
         )
         if release_candidate and qs_commit != RELEASE_CANDIDATE_QUICKSHELL_COMMIT:
             raise SourceUpdateError(
-                "PR #21 does not pin the approved Release Candidate Quickshell commit "
+                "PR #22 does not pin the approved Release Candidate Quickshell commit "
                 f"{RELEASE_CANDIDATE_QUICKSHELL_COMMIT}"
             )
         if known_good_restore and qs_commit != expected_quickshell_commit:

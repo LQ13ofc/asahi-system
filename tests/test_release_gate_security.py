@@ -121,7 +121,7 @@ class GitSnapshotTests(unittest.TestCase):
         candidate_commit = commit_all(self.asahi_seed, "complete candidate installation tree")
         git(["-C", str(self.asahi_seed), "push", "origin", "main"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/21/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         real_run_path = snapshot_install.runpy.run_path
@@ -385,7 +385,7 @@ class GitSnapshotTests(unittest.TestCase):
     def test_release_candidate_requires_exact_pr_head_and_ignores_mutable_worktree(self):
         self._write_system_tree("0.1.9-rc", self.qs_commit)
         candidate = commit_all(self.asahi_seed, "release candidate immutable source")
-        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:refs/pull/21/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:refs/pull/22/head"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         git(["-C", str(self.checkout), "switch", "-c", "worktree-experiment"])
         dirty_file = self.checkout / "niri_plus/install_command.py"
@@ -402,7 +402,7 @@ class GitSnapshotTests(unittest.TestCase):
                 self.assertEqual(snapshot.system_commit, candidate)
                 self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
                 self.assertEqual(manifest["channel"], "release-candidate")
-                self.assertEqual(manifest["system"]["branch"], "refs/pull/21/head")
+                self.assertEqual(manifest["system"]["branch"], "refs/pull/22/head")
                 self.assertNotIn("untracked-secret.txt", {item["path"] for item in manifest["system"]["files"]})
                 self.assertNotEqual((snapshot.root / "niri_plus/install_command.py").read_text(), dirty_file.read_text())
         self.assertEqual(dirty_file.read_text(), "# uncommitted code must never enter the privileged snapshot\n")
@@ -414,7 +414,7 @@ class GitSnapshotTests(unittest.TestCase):
     def test_release_candidate_rejects_quickshell_lock_divergence_and_unexpected_pin(self):
         self._write_system_tree("0.1.9-rc", self.qs_commit)
         candidate = commit_all(self.asahi_seed, "release candidate lock")
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/21/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", "0" * 40):
             with self.assertRaisesRegex(source_update.SourceUpdateError, "approved Release Candidate Quickshell"):
@@ -426,7 +426,7 @@ class GitSnapshotTests(unittest.TestCase):
         bootstrap = pathlib.Path(__file__).resolve().parents[1] / "scripts/bootstrap-niri-plus"
         shutil.copy2(bootstrap, self.asahi_seed / "scripts/bootstrap-niri-plus")
         candidate = commit_all(self.asahi_seed, "candidate bootstrap contract")
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/21/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit), \
              mock.patch.object(source_update, "EXPECTED_REPOSITORY", self.asahi_url), \
@@ -457,7 +457,7 @@ class GitSnapshotTests(unittest.TestCase):
     def test_production_install_path_still_requires_clean_main_and_reads_main_pin(self):
         self._write_system_tree("0.1.9-candidate-but-not-main", self.qs_commit)
         candidate = commit_all(self.asahi_seed, "non-production candidate")
-        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/21/head"],
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/22/head"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with self._snapshot() as snapshot:
             self.assertEqual(snapshot.system_commit, self.initial_system_commit)
@@ -505,7 +505,7 @@ class GitSnapshotTests(unittest.TestCase):
 
         def git_output(_source, _owner, _groups, *args, **_kwargs):
             if args[:2] == ("ls-remote", "--exit-code"):
-                return f"{system_commit}\trefs/pull/21/head"
+                return f"{system_commit}\trefs/pull/22/head"
             if args[0] == "rev-parse" and args[-1] == "FETCH_HEAD^{commit}":
                 return system_commit
             if args[0] == "rev-parse" and args[-1] == f"{system_commit}:niri_plus/source_update.py":
