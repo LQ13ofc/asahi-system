@@ -88,8 +88,9 @@ GitHub Actions runs were successful.
 ## Remaining release gate work
 
 1. Review the final staged diff and verify install/recovery scenario coverage.
-2. Commit the implementation and procedure updates separately; push the branch
-and open draft PR #24 against the PR #22 candidate branch.
+2. Commit the implementation and procedure updates separately; keep PR #24
+based on the PR #22 candidate commit but target `main` so the repository's
+current pull-request workflow actually runs. PR #22 remains unchanged.
 3. Confirm the exact Quickshell gitlink/lock, calculate the committed bootstrap
 blob SHA-256, and wait for PR #24 CI. Do not merge.
 5. `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
