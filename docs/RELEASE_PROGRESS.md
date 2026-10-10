@@ -348,10 +348,18 @@ Control Center agora têm nome/role acessíveis, entram na ordem de Tab e aceita
 setas; Efficiency/reduced motion pausa os indicadores animados de atividade e
 conexão sem esconder texto de estado. No Cloud passaram compileall, 43 testes,
 load de 59 QML, render completo e qmllint código 0 com 192 avisos classificados.
-O workflow do PR #15 está em andamento (run `38055105197`).
+O workflow do PR #15 passou (run `38055105197`).
 
-Próxima ação: confirmar o workflow do PR #15; se aprovado, incorporar esse
-incremento em uma nova branch candidata de integração e preparar um PR Asahi
-separado com o pin exato, sem mover PR #19/#21 nem o pin de produção. Em
-seguida continuar a matriz de requisitos implementáveis no Cloud; validação do
-compositor, teclado real e recursos físicos continuam `M1_REQUIRED`.
+O PR #22 é agora o candidato cumulativo draft sobre `main`, mantendo PRs #19–#21
+abertos e sem merge. Ele fixa o commit Quickshell acima; o bootstrap experimental
+confere PR #22 e o fluxo de produção continua em `main`. O procedimento
+`docs/release-candidate-m1-pr22.md` é separado e usa paths próprios. No commit de
+código `36d5aa0`, passaram compileall, 221 testes, baseline validator, 34 testes
+de segurança do release gate e 22 testes da sessão Niri. Nenhum teste foi feito
+no host. O PR foi retargetado para `main` para validar o diff cumulativo; o
+workflow Asahi para o novo head ainda precisa ser confirmado.
+
+Próxima ação: confirmar CI do PR #22 no head após este registro. Se passar,
+continuar verificando a matriz de requisitos implementáveis no Cloud, mantendo
+os pins anteriores imutáveis. Compositor, teclado físico, serviços e recursos
+reais continuam `M1_REQUIRED`.
