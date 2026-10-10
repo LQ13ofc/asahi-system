@@ -461,19 +461,19 @@ opt-in e reversível no M1, depois de CI aprovado nos novos heads; NO-GO para
 release de produção. RAM real, ciclo Wayland/Niri, GPU, áudio/rede, suspend,
 recovery Plasma e atribuição dos 4 GiB continuam `M1_REQUIRED`.
 
-Commits de auditoria já feitos: asahi-system `3c4797c` (Graphify), `adb4695`
-(exclusão do submodule), `0a3e117`/`b08759e` (pin candidato); Quickshell
-`f7fe3e5` (Graphify), `fadf99f` (rolagem Control Center), `d2fe6d5` (limites de
-cobertura Graphify). Commits da nota final desta auditoria ainda serão
-acrescentados no branch.
+Commits de auditoria: asahi-system `3c4797c` (Graphify), `adb4695` (exclusão do
+submodule do grafo), `0a3e117`/`b08759e` (pin candidato), `360d174` (relatório e
+progresso), `4c88fde` (resultado de CI); Quickshell `f7fe3e5` (Graphify),
+`fadf99f` (rolagem do Control Center), `d2fe6d5` (cobertura do grafo).
 
-CI dos candidatos passou após o push: Quickshell PR #15 em `d2fe6d57…`, runs
-`38060336073` e `38060333049`; asahi-system PR #22 em `360d174d…`, run
-`38060438358`. O PR #23 manteve seu head e CI `38058990232` aprovado; PR #16
-continua aberto sem checks configurados. As anotações de migração do Node 20 e
-da imagem ubuntu-latest não afetaram os resultados.
+CI dos candidatos passou: Quickshell PR #15 em `d2fe6d57…`, runs
+`38060336073` e `38060333049`; asahi-system PR #22, run `38060438358` no head
+`360d174d…` e run `38060502098` no head `4c88fdea…`. PR #23 manteve o head
+`9bc3b2c8…` com CI `38058990232` aprovado; PR #16 permanece aberto sem checks
+configurados. As anotações de migração do Node 20 e da imagem ubuntu-latest não
+afetaram os resultados.
 
-Próxima ação executável: confirmar o CI acionado pelo commit seguinte, que
-atualiza este registro de progresso; depois, se aprovado, o gate Cloud permite
-somente o experimento opt-in documentado no M1. Nenhum pedido de teste físico
-foi feito.
+Próxima ação: o único gate restante é `M1_REQUIRED` — o experimento opt-in e
+reversível descrito em `docs/release-candidate-m1-pr22.md`. Ele não foi
+executado nesta sessão; nenhum pedido de teste físico foi feito. Não houve
+merge em `main`/`master`, e o pin estável `55e92880…` permanece intacto.
