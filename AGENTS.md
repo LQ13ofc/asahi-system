@@ -26,6 +26,11 @@
 - Scripts de preparação devem explicar o que verificam e não alterar o sistema por padrão. Separe coleta, validação e aplicação de configuração.
 - Documente limites de cada teste: validação estática não prova funcionamento no kernel Asahi, na GPU, em Wayland/Niri real ou desempenho de RAM.
 
+## Graphify (opcional, somente desenvolvimento)
+
+- O pin está em `tools/graphify.lock.json`; use `scripts/graphify_project.py` para gerar grafo local em modo code-only. Não instale Graphify no sistema do usuário nem adicione-o como dependência do desktop.
+- Se `graphify-out/graph.json` já existir e Graphify estiver disponível, consultas estruturais podem começar com `graphify query`; confirme conclusões no código-fonte. Não gere grafos com conteúdo semântico, hardware ou credenciais.
+
 ## Benchmark e experimentos
 
 - A ordem de trabalho é: baseline → hipótese → uma mudança → benchmark A/B → comparação → decisão `KEEP`, `REVERT` ou `INCONCLUSIVE` → documentação → commit → PR.
