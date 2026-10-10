@@ -17,6 +17,7 @@ class GamingModeTests(unittest.TestCase):
         self.socket_path = pathlib.Path(self.temp.name) / "niri.sock"
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.bind(str(self.socket_path))
+        self.socket.listen(1)
         self.env = {
             "NIRI_SOCKET": str(self.socket_path),
             "WAYLAND_DISPLAY": "wayland-1",
@@ -37,6 +38,18 @@ class GamingModeTests(unittest.TestCase):
         self.assertFalse(gaming.niri_session_active({**self.env, "WAYLAND_DISPLAY": ""}))
         self.assertFalse(gaming.niri_session_active({**self.env, "NIRI_SOCKET": str(self.socket_path) + ".missing"}))
         self.assertFalse(gaming.niri_session_active(self.env, uid=os.getuid() + 1))
+
+    def test_stale_socket_file_is_not_a_live_niri_session(self):
+        stale = pathlib.Path(self.temp.name) / "stale.sock"
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(stale))
+        server.close()
+        self.assertFalse(gaming.niri_session_active({**self.env, "NIRI_SOCKET": str(stale)}))
+
+    def test_symlink_cannot_impersonate_the_niri_ipc_socket(self):
+        link = pathlib.Path(self.temp.name) / "niri-link.sock"
+        link.symlink_to(self.socket_path)
+        self.assertFalse(gaming.niri_session_active({**self.env, "NIRI_SOCKET": str(link)}))
 
     def test_status_reports_readiness_without_launching_a_process(self):
         with mock.patch.object(gaming.shutil, "which", side_effect=self._which), \
@@ -68,6 +81,22 @@ class GamingModeTests(unittest.TestCase):
         self.assertEqual(calls[0][0], ["/mock/bin/gamescope", "--", "/mock/bin/steam", "--game", "42"])
         self.assertEqual(calls[0][1]["env"], self.env)
         self.assertNotIn("shell", calls[0][1])
+
+    def test_launch_accepts_an_explicit_executable_path(self):
+        executable = pathlib.Path(self.temp.name) / "local-game"
+        executable.write_text("placeholder")
+        executable.chmod(0o700)
+        calls = []
+
+        def runner(argv, **kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0)
+
+        with mock.patch.object(gaming.os, "geteuid", return_value=1000), \
+             mock.patch.object(gaming.shutil, "which", side_effect=self._which):
+            result = gaming.launch([str(executable), "--windowed"], env=self.env, runner=runner)
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, [["/mock/bin/gamescope", "--", str(executable), "--windowed"]])
 
     def test_missing_gamescope_fails_without_direct_niri_fallback(self):
         runner = mock.Mock()

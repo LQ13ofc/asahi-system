@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
+import socket
 import stat
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -27,12 +28,33 @@ def niri_session_active(env: Mapping[str, str] | None = None, *, uid: int | None
     socket_path = values.get("NIRI_SOCKET", "")
     if not socket_path or not values.get("WAYLAND_DISPLAY") or "niri" not in desktops:
         return False
+    probe: socket.socket | None = None
     try:
-        details = pathlib.Path(socket_path).stat()
+        details = pathlib.Path(socket_path).lstat()
+        if not stat.S_ISSOCK(details.st_mode) or details.st_uid != (os.getuid() if uid is None else uid):
+            return False
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(0.2)
+        probe.connect(socket_path)
     except OSError:
         return False
-    expected_uid = os.getuid() if uid is None else uid
-    return stat.S_ISSOCK(details.st_mode) and details.st_uid == expected_uid
+    finally:
+        if probe is not None:
+            probe.close()
+    return True
+
+
+def _resolve_command(command: str, path: str | None) -> str | None:
+    candidate = pathlib.Path(command)
+    if candidate.is_absolute() or os.sep in command or (os.altsep and os.altsep in command):
+        try:
+            resolved = candidate.resolve(strict=True)
+            if resolved.is_file() and os.access(resolved, os.X_OK):
+                return str(resolved)
+        except OSError:
+            return None
+        return None
+    return shutil.which(command, path=path)
 
 
 def inspect(env: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -89,7 +111,7 @@ def launch(command: Sequence[str], *, env: Mapping[str, str] | None = None,
     gamescope = shutil.which("gamescope", path=values.get("PATH"))
     if gamescope is None:
         raise GamingError("Gamescope is unavailable; no fallback was started. Normal Niri use is unchanged")
-    target = shutil.which(argv[0], path=values.get("PATH"))
+    target = _resolve_command(argv[0], values.get("PATH"))
     if target is None:
         raise GamingError(f"game command not found: {argv[0]}")
 
