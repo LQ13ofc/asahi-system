@@ -51,18 +51,18 @@ DEFAULTS: dict[str, object] = {
     "focus_column_right_key": "Mod+L",
     "focus_window_up_key": "Mod+K",
     "focus_window_down_key": "Mod+J",
+    "move_column_left_key": "Mod+Shift+H",
+    "move_column_right_key": "Mod+Shift+L",
+    "toggle_floating_key": "Mod+V",
     "window_rules": [],
     "touchpad": TOUCHPAD_DEFAULTS,
 }
 
-_LEGACY_SETTING_KEYS = set(DEFAULTS) - {"window_rules", "touchpad"}
-_NAV_SHORTCUT_FIELDS = {
+_NIRI_ACTION_SHORTCUT_FIELDS = {
     "focus_column_left_key", "focus_column_right_key", "focus_window_up_key", "focus_window_down_key",
+    "move_column_left_key", "move_column_right_key", "toggle_floating_key",
 }
-_CLOSE_ONLY_SETTING_KEYS = set(DEFAULTS) - _NAV_SHORTCUT_FIELDS
-_PREVIOUS_SETTING_KEYS = set(DEFAULTS) - _NAV_SHORTCUT_FIELDS - {"close_window_key"}
-_LEGACY_CLOSE_SETTING_KEYS = _LEGACY_SETTING_KEYS - _NAV_SHORTCUT_FIELDS
-_LEGACY_PREVIOUS_SETTING_KEYS = _PREVIOUS_SETTING_KEYS - {"window_rules", "touchpad"}
+_COMPAT_OPTIONAL_FIELDS = {"window_rules", "touchpad", "close_window_key", *_NIRI_ACTION_SHORTCUT_FIELDS}
 _APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z", re.ASCII)
 _WORKSPACE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,31}\Z", re.ASCII)
 MAX_WINDOW_RULES = 12
@@ -74,6 +74,7 @@ SHORTCUT_KEYS = {
     "Super+Space", "Super+D", "Super+P", "Super+Return", "Super+T", "Super+Shift+Return",
     "Mod+Q", "Mod+W", "Mod+Shift+W", "Super+Q", "Super+W", "Super+Shift+W",
     "Mod+H", "Mod+J", "Mod+K", "Mod+L", "Mod+Left", "Mod+Right", "Mod+Up", "Mod+Down",
+    "Mod+Shift+H", "Mod+Shift+L", "Mod+Shift+Left", "Mod+Shift+Right", "Mod+V", "Mod+Shift+V",
     "Super+H", "Super+J", "Super+K", "Super+L",
 }
 _INCLUDE_LINE = re.compile(r'^\s*include(?:\s+optional=true)?\s+("(?:[^"\\]|\\.)*")')
@@ -107,17 +108,16 @@ def _has_touchpad_block(text: str) -> bool:
 
 
 def validate_settings(payload: object) -> dict[str, object]:
-    if not isinstance(payload, dict) or set(payload) not in (
-        set(DEFAULTS), _LEGACY_SETTING_KEYS, _CLOSE_ONLY_SETTING_KEYS, _PREVIOUS_SETTING_KEYS,
-        _LEGACY_CLOSE_SETTING_KEYS, _LEGACY_PREVIOUS_SETTING_KEYS,
-    ):
+    if (not isinstance(payload, dict) or not set(payload).issubset(DEFAULTS)
+            or not (set(DEFAULTS) - _COMPAT_OPTIONAL_FIELDS).issubset(payload)):
         raise NiriSettingsError("o documento precisa conter exatamente os campos de Niri+ suportados")
     payload = dict(payload)
     payload.setdefault("window_rules", [])
     payload.setdefault("touchpad", dict(TOUCHPAD_DEFAULTS))
     for key in (
         "close_window_key", "focus_column_left_key", "focus_column_right_key",
-        "focus_window_up_key", "focus_window_down_key",
+        "focus_window_up_key", "focus_window_down_key", "move_column_left_key",
+        "move_column_right_key", "toggle_floating_key",
     ):
         payload.setdefault(key, DEFAULTS[key])
     if payload.get("schema_version") != SCHEMA_VERSION or type(payload.get("schema_version")) is not int:
@@ -139,6 +139,7 @@ def validate_settings(payload: object) -> dict[str, object]:
     shortcut_fields = (
         "launcher_key", "terminal_key", "close_window_key", "focus_column_left_key",
         "focus_column_right_key", "focus_window_up_key", "focus_window_down_key",
+        "move_column_left_key", "move_column_right_key", "toggle_floating_key",
     )
     for key in shortcut_fields:
         if not _shortcut_is_safe(payload.get(key)):
@@ -204,6 +205,9 @@ def render_kdl(payload: object) -> str:
         f'    {settings["focus_column_right_key"]} {{ focus-column-right; }}',
         f'    {settings["focus_window_up_key"]} {{ focus-window-up; }}',
         f'    {settings["focus_window_down_key"]} {{ focus-window-down; }}',
+        f'    {settings["move_column_left_key"]} {{ move-column-left; }}',
+        f'    {settings["move_column_right_key"]} {{ move-column-right; }}',
+        f'    {settings["toggle_floating_key"]} {{ toggle-window-floating; }}',
         "}",
     ]
     touchpad = settings["touchpad"]

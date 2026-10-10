@@ -95,6 +95,9 @@ class NiriSettingsTests(unittest.TestCase):
         self.assertIn("Mod+L { focus-column-right; }", result)
         self.assertIn("Mod+K { focus-window-up; }", result)
         self.assertIn("Mod+J { focus-window-down; }", result)
+        self.assertIn("Mod+Shift+H { move-column-left; }", result)
+        self.assertIn("Mod+Shift+L { move-column-right; }", result)
+        self.assertIn("Mod+V { toggle-window-floating; }", result)
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(launcher_key='Mod+Space; exec "bad"'))
         with self.assertRaises(niri_settings.NiriSettingsError):
@@ -119,6 +122,16 @@ class NiriSettingsTests(unittest.TestCase):
             niri_settings.render_kdl(self.settings(focus_window_up_key="Mod+Space"))
         with self.assertRaises(niri_settings.NiriSettingsError):
             niri_settings.render_kdl(self.settings(focus_column_right_key="Ctrl+L"))
+
+    def test_move_and_floating_shortcuts_are_allowlisted(self):
+        rendered = niri_settings.render_kdl(self.settings(
+            move_column_left_key="Mod+Shift+Left", toggle_floating_key="Mod+Shift+V"
+        ))
+        self.assertIsNotNone(kdl.parse(rendered))
+        self.assertIn("Mod+Shift+Left { move-column-left; }", rendered)
+        self.assertIn("Mod+Shift+V { toggle-window-floating; }", rendered)
+        with self.assertRaises(niri_settings.NiriSettingsError):
+            niri_settings.render_kdl(self.settings(move_column_right_key="Mod+Space"))
 
     def test_touchpad_controls_emit_official_boolean_options_only_when_managed(self):
         touchpad = {
@@ -202,6 +215,9 @@ class NiriSettingsTests(unittest.TestCase):
         legacy.pop("focus_column_right_key")
         legacy.pop("focus_window_up_key")
         legacy.pop("focus_window_down_key")
+        legacy.pop("move_column_left_key")
+        legacy.pop("move_column_right_key")
+        legacy.pop("toggle_floating_key")
         self.manager.state_dir.mkdir(mode=0o700, parents=True)
         self.manager.state_path.write_text(json.dumps({
             "schema_version": niri_settings.SCHEMA_VERSION,
@@ -214,10 +230,11 @@ class NiriSettingsTests(unittest.TestCase):
         self.assertEqual(migrated["settings"]["close_window_key"], "Mod+Q")
         self.assertEqual(migrated["previous_settings"]["close_window_key"], "Mod+Q")
         self.assertEqual(migrated["settings"]["focus_column_left_key"], "Mod+H")
+        self.assertEqual(migrated["settings"]["move_column_left_key"], "Mod+Shift+H")
 
     def test_close_window_only_state_migrates_navigation_defaults(self):
         close_only = self.settings()
-        for key in niri_settings._NAV_SHORTCUT_FIELDS:
+        for key in niri_settings._NIRI_ACTION_SHORTCUT_FIELDS:
             close_only.pop(key)
         migrated = niri_settings.validate_settings(close_only)
         self.assertEqual(migrated["focus_column_left_key"], "Mod+H")
