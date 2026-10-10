@@ -13,8 +13,9 @@ recovery candidate based on PR #22 head
 The production Quickshell pin remains
 `55e92880d0aff75d235f283c839ec0990eaa9e17`.
 
-**Current decision: NO-GO until the cumulative PR #24 based on this candidate
-is targeted at `main` and its hosted CI passes.** After that gate, the intended decision is GO only for the
+**Current decision: NO-GO while cumulative PR #24 waits for a hosted CI run.**
+It now targets `main`; retargeting did not enqueue a run, so a candidate update
+will trigger `synchronize`. After that gate, the intended decision is GO only for the
 explicit, reversible experimental M1 procedure in
 [`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md); this remains NO-GO for
 production. No hardware result is inferred from Cloud.

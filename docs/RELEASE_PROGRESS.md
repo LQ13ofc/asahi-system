@@ -83,16 +83,17 @@ unresolved-type, 2 unused-imports). No Quickshell files were changed here.
 - Hosted CI for the new installer branch is pending PR creation. Existing PR #22
 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15 head
 `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` remain open/unchanged; their latest
-GitHub Actions runs were successful.
+GitHub Actions runs were successful. Draft PR #24 is now open against `main`
+as a cumulative candidate so the configured workflow applies; retargeting alone
+did not enqueue a run, so the next pushed commit will trigger `synchronize`.
 
 ## Remaining release gate work
 
 1. Review the final staged diff and verify install/recovery scenario coverage.
-2. Commit the implementation and procedure updates separately; keep PR #24
-based on the PR #22 candidate commit but target `main` so the repository's
-current pull-request workflow actually runs. PR #22 remains unchanged.
-3. Confirm the exact Quickshell gitlink/lock, calculate the committed bootstrap
-blob SHA-256, and wait for PR #24 CI. Do not merge.
+2. Push this progress/audit update to trigger PR #24 `synchronize` CI; PR #22
+remains unchanged.
+3. Confirm CI against the exact latest head, verify the Quickshell gitlink/lock
+and bootstrap blob SHA-256, then update the audit decision. Do not merge.
 5. `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
 SDDM/Niri/Quickshell lifecycle, audio/network/input, Plasma recovery, offline
 TTY restore, and hardware performance. No M1 interaction is requested now.
