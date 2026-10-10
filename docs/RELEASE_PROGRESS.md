@@ -231,10 +231,10 @@ pilha para evitar colisão visual dos grupos maiores. O qmllint segue exit 0 com
 feita. A sintaxe KDL passa no parser Cloud; validar as ações com `niri validate`
 Fedora e no runtime continua `M1_REQUIRED`.
 
-PR #20: `https://github.com/LQ13ofc/asahi-system/pull/20`, draft, head
-`b0248be803f5bcd4e9b07552c1bb63d2ada5a41e`; CI manual `38051488356` passou
-(workflow pull_request do repositório só observa base `main`, então PR de feature
-encadeado ao RC não recebe check automático). PR #9 do quickshell-:
+PR #20: `https://github.com/LQ13ofc/asahi-system/pull/20`, draft na branch
+`feature/niri-close-window-shortcut`; CI manual `38051488356` passou no código
+da feature (workflow pull_request do repositório só observa base `main`, então
+PR de feature encadeado ao RC não recebe check automático). PR #9 do quickshell-:
 `https://github.com/LQ13ofc/quickshell-/pull/9`, draft, head
 `7eba119f1dea6572c597246563f3794a68d986f0`; CI `38051456317` passou.
 Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
