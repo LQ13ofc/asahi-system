@@ -207,8 +207,10 @@ form. Keep PRs #19/#8 unmerged and retain `main`'s stable Quickshell pin.
 Trabalho em branches separadas, baseadas nos candidatos PR #19 (`002131b1…`)
 e PR #8 (`79b093e6…`); os heads candidatos e o pin estável não foram alterados.
 O backend e seus testes estão no branch `feature/niri-close-window-shortcut`,
-commit `672c70e`; a integração visual está no branch
-`feature/settings-close-window-shortcut` do quickshell-.
+commit `672c70e` (implementação) e `c3bda92` (progresso); PR #20 está aberto
+como draft sobre `integration/niri-plus-rc`. A integração visual está no branch
+`feature/settings-close-window-shortcut`, commit `7eba119`, com PR #9 draft
+sobre `integration/settings-center-rc`.
 O backend `niri-settings` agora gera atalhos configuráveis para fechar a janela
 focada e navegar foco horizontal/vertical. Os valores têm allowlist fechada,
 colisão entre as sete ações é rejeitada, KDL é validado antes da gravação e
@@ -229,6 +231,8 @@ classificados no relatório existente; nenhuma correção cega foi feita. A sint
 KDL passa no parser Cloud; validar as ações com `niri validate` Fedora e no
 runtime continua `M1_REQUIRED`.
 
-Próxima ação executável: revisar estados reais de disponibilidade do backend no
-Settings Center, abrir PRs de feature encadeados aos ramos RC sem mover os heads
-candidatos, e então continuar a próxima configuração funcional Cloud do Niri.
+Próxima ação executável: verificar CI de PRs #20/#9; em seguida continuar as
+opções funcionais pendentes de Settings Center (monitor mode/scale permanece
+dependente de descoberta segura, mas outras preferências sem hardware seguem
+implementáveis no Cloud). PRs #19/#8 permanecem exatamente nos commits RC e não
+houve merge nem mudança no pin de produção.
