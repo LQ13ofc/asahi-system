@@ -9,6 +9,11 @@ Niri base configuration, install, lifecycle, system package declarations,
 health checks, benchmark, rollback and later update behavior. No QML or helper
 implementation is copied into this repository.
 
+Both repositories remain independently usable. `asahi-system` installs and
+manages Niri without fetching Quickshell. The visual fork runs through its own
+`qs` engine without requiring the Niri+ CLI; controls that request system
+changes report the optional backend as unavailable when `niri+` is absent.
+
 The only Niri config snippet retained in Quickshell is visual or directly
 coupled to its controls (layer blur and optional brightness IPC keybindings).
 The generic `qs` autostart was removed; Niri+ owns process lifecycle.
@@ -22,17 +27,24 @@ The generic `qs` autostart was removed; Niri+ owns process lifecycle.
 | Quickshell RPM as integration | Useful for the engine, but does not version the user's QML fork. | Loses the independent config source. | Not a source integration mechanism. |
 
 `.gitmodules` declares `external/quickshell`; the gitlink and
-`integration/quickshell.lock.json` both pin
-`55e92880d0aff75d235f283c839ec0990eaa9e17`, the reviewed head of Quickshell
-PR #3 with the NetworkManager-backed Wi-Fi indicator. It includes PR #2's
-session-owned lifecycle and no visual startup snippet. The fork is private, so cloning
+`integration/quickshell.lock.json` both pin one exact commit on each branch.
+Production `main` remains at `55e92880d0aff75d235f283c839ec0990eaa9e17`;
+this integration candidate pins `ee0a9b8c7836b14485efaf7aca33849d0210570d`.
+The fork is private, so cloning
 `asahi-system` needs GitHub access that can read both repositories. The
 submodule may be initialized for development; installation does not trust its
-working tree. `sudo niri+ install` checks both Git URLs, resolves exact commit
-objects, and materializes a hash-verified snapshot from those objects. It
-installs that visual snapshot at `/usr/local/share/niri-plus/quickshell`, with a
+working tree. `sudo niri+ install` installs only the Niri system core and does
+not require access to the private Quickshell repository. To opt into visual
+integration, use `sudo niri+ install --with-quickshell`; that mode checks both
+Git URLs, resolves exact commit objects, and materializes a hash-verified
+snapshot from those objects. It installs that visual snapshot at
+`/usr/local/share/niri-plus/quickshell`, with a
 manifest recording repository, commit and blob hashes. This is outside the
 `asahi-system` source tree; no QML is copied into the system repository.
+When Quickshell is already installed, a core-only Niri+ upgrade preserves its
+runtime, lifecycle units and state without refreshing or contacting its repo.
+`status` and `doctor` still report a pin mismatch if the preserved runtime does
+not match the current system lock.
 `niri+ status` and `doctor` compare the installed snapshot manifest, files and
 commit with the lock. Missing, changed or divergent content is reported, not
 silently repaired.

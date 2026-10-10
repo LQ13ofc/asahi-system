@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+"""One-shot, opt-in RC bootstrap for a production Niri+ installation.
+
+This file must be SHA-256 checked against the value published with the RC
+instructions and executed through the documented in-memory verifier. It never
+imports Python from the source checkout. It extracts source_update.py only
+from the exact PR #22 Git commit, verifies its Git blob ID, and then uses that
+committed resolver to construct the closed root-owned install snapshot.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import hashlib
+import json
+import importlib.util
+import os
+import pathlib
+import platform
+import pwd
+import re
+import subprocess
+import sys
+import tempfile
+
+
+SYSTEM_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
+SYSTEM_REPOSITORY_SSH = "git@github.com:LQ13ofc/asahi-system.git"
+PR_REF = "refs/pull/22/head"
+SOURCE_MODULE = "niri_plus/source_update.py"
+BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
+VISUAL_DATA = pathlib.Path("/usr/local/share/niri-plus")
+KNOWN_GOOD = pathlib.Path("/var/lib/niri-plus/release-candidate/known-good.json")
+
+
+class BootstrapError(RuntimeError):
+    pass
+
+
+def _normalize_repo(value: str) -> str:
+    value = value.strip()
+    if value.lower() in {SYSTEM_REPOSITORY.lower(), SYSTEM_REPOSITORY_SSH.lower(),
+                         "ssh://git@github.com/LQ13ofc/asahi-system.git".lower()}:
+        return "https://github.com/lq13ofc/asahi-system"
+    return ""
+
+
+def _identity(source: pathlib.Path):
+    try:
+        owner = pwd.getpwuid(source.stat().st_uid)
+        groups = os.getgrouplist(owner.pw_name, owner.pw_gid)
+    except (OSError, KeyError) as exc:
+        raise BootstrapError(f"cannot determine the source checkout owner: {source}") from exc
+    requested_user = os.environ.get("SUDO_USER")
+    if requested_user and pwd.getpwnam(requested_user).pw_uid != owner.pw_uid:
+        raise BootstrapError("source checkout is not owned by the user who invoked sudo")
+    if owner.pw_uid == 0:
+        raise BootstrapError("the source checkout must be owned by a normal user")
+    return owner, groups
+
+
+def _owner_git(source: pathlib.Path, owner, groups, *args: str, timeout: int = 90) -> str:
+    env = os.environ.copy()
+    global_config = env.get("GIT_CONFIG_GLOBAL")
+    for key in tuple(env):
+        if key.startswith("GIT_"):
+            env.pop(key, None)
+    if global_config:
+        config_path = pathlib.Path(global_config)
+        if str(config_path).startswith("~/"):
+            config_path = pathlib.Path(owner.pw_dir) / str(config_path)[2:]
+        try:
+            if config_path.expanduser().stat().st_uid == owner.pw_uid:
+                env["GIT_CONFIG_GLOBAL"] = str(config_path.expanduser())
+        except OSError:
+            pass
+    env.update({
+        "HOME": owner.pw_dir,
+        "USER": owner.pw_name,
+        "LOGNAME": owner.pw_name,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GCM_INTERACTIVE": "never",
+        "GCM_MODAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "credential.interactive",
+        "GIT_CONFIG_VALUE_0": "false",
+        "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+    })
+
+    def drop_privileges() -> None:
+        os.setgroups(groups)
+        os.setgid(owner.pw_gid)
+        os.setuid(owner.pw_uid)
+
+    command = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+               "--no-pager", "-C", str(source), *args]
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                                 env=env, timeout=timeout,
+                                 preexec_fn=drop_privileges if os.geteuid() == 0 else None)
+    except (OSError, subprocess.SubprocessError) as exc:
+        detail = ""
+        if isinstance(exc, subprocess.CalledProcessError):
+            raw = exc.stderr or exc.stdout or b""
+            detail = raw.decode(errors="replace").strip() if isinstance(raw, bytes) else str(raw).strip()
+        if any(word in detail.lower() for word in ("authentication failed", "could not read username",
+                                                    "terminal prompts disabled", "repository not found",
+                                                    "permission denied (publickey)")):
+            detail = "GitHub credentials for the source owner are unavailable; Git did not prompt and no install was applied."
+        raise BootstrapError(f"non-interactive Git failed{': ' + detail if detail else ''}") from exc
+    return result.stdout.decode("utf-8", errors="strict").strip()
+
+
+def _remote(source: pathlib.Path, owner, groups) -> str:
+    configured = _owner_git(source, owner, groups, "config", "--local", "--get-all", "remote.origin.url")
+    values = [line.strip() for line in configured.splitlines() if line.strip()]
+    effective = _owner_git(source, owner, groups, "remote", "get-url", "--all", "origin")
+    urls = [line.strip() for line in effective.splitlines() if line.strip()]
+    if len(values) != 1 or len(urls) != 1 or _normalize_repo(values[0]) != _normalize_repo(SYSTEM_REPOSITORY) \
+            or _normalize_repo(urls[0]) != _normalize_repo(SYSTEM_REPOSITORY):
+        raise BootstrapError("source origin is not the approved LQ13ofc/asahi-system GitHub repository")
+    return urls[0]
+
+
+def _load_committed_resolver(source: pathlib.Path, owner, groups, expected_commit: str,
+                             temp_root: pathlib.Path, *, require_current_pr: bool):
+    if require_current_pr:
+        advertised = _owner_git(source, owner, groups, "ls-remote", "--exit-code", "--refs", "origin", PR_REF)
+        rows = [line.split() for line in advertised.splitlines() if line.split()]
+        if len(rows) != 1 or len(rows[0]) != 2 or rows[0][1] != PR_REF:
+            raise BootstrapError("GitHub did not advertise exactly one PR #22 head")
+        if rows[0][0] != expected_commit:
+            raise BootstrapError(f"PR #22 head differs from requested commit: {rows[0][0]}")
+        _owner_git(source, owner, groups, "fetch", "--no-tags", "origin", PR_REF)
+    else:
+        # Recovery remains pinned to the reviewed bootstrap commit even if PR #22
+        # advances or closes after the candidate has been installed.
+        _owner_git(source, owner, groups, "fetch", "--no-tags", "origin", expected_commit)
+    fetched = _owner_git(source, owner, groups, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+    if fetched != expected_commit:
+        raise BootstrapError("fetched PR #22 commit differs from the requested immutable SHA")
+    blob_oid = _owner_git(source, owner, groups, "rev-parse", f"{expected_commit}:{SOURCE_MODULE}")
+    if not re.fullmatch(r"[0-9a-f]{40}", blob_oid):
+        raise BootstrapError("committed source resolver has an invalid Git blob ID")
+    payload = _owner_git_bytes(source, owner, groups, "cat-file", "blob", blob_oid)
+    git_blob = hashlib.sha1(b"blob " + str(len(payload)).encode("ascii") + b"\0" + payload).hexdigest()
+    if git_blob != blob_oid:
+        raise BootstrapError("source resolver bytes do not match their Git object ID")
+    bootstrap_oid = _owner_git(source, owner, groups, "rev-parse",
+                               f"{expected_commit}:scripts/niri-plus-rc-bootstrap")
+    bootstrap_bytes = globals().get("__verified_script_bytes__")
+    if not isinstance(bootstrap_bytes, bytes):
+        raise BootstrapError("bootstrap must be run through the in-memory SHA-256 verifier")
+    bootstrap_blob = hashlib.sha1(
+        b"blob " + str(len(bootstrap_bytes)).encode("ascii") + b"\0" + bootstrap_bytes
+    ).hexdigest()
+    if bootstrap_blob != bootstrap_oid:
+        raise BootstrapError("verified bootstrap bytes do not belong to the pinned asahi-system commit")
+    module_path = temp_root / "source_update.py"
+    module_path.write_bytes(payload)
+    module_path.chmod(0o444)
+    name = "niri_plus_rc_verified_source_update"
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise BootstrapError("cannot load the verified source resolver")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _owner_git_bytes(source: pathlib.Path, owner, groups, *args: str) -> bytes:
+    env = os.environ.copy()
+    global_config = env.get("GIT_CONFIG_GLOBAL")
+    for key in tuple(env):
+        if key.startswith("GIT_"):
+            env.pop(key, None)
+    if global_config:
+        config_path = pathlib.Path(global_config)
+        if str(config_path).startswith("~/"):
+            config_path = pathlib.Path(owner.pw_dir) / str(config_path)[2:]
+        try:
+            if config_path.expanduser().stat().st_uid == owner.pw_uid:
+                env["GIT_CONFIG_GLOBAL"] = str(config_path.expanduser())
+        except OSError:
+            pass
+    env.update({"HOME": owner.pw_dir, "USER": owner.pw_name, "LOGNAME": owner.pw_name,
+                "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GCM_MODAL_PROMPT": "0"})
+
+    def drop_privileges() -> None:
+        os.setgroups(groups)
+        os.setgid(owner.pw_gid)
+        os.setuid(owner.pw_uid)
+
+    command = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+               "--no-pager", "-C", str(source), *args]
+    try:
+        return subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                              env=env, timeout=30,
+                              preexec_fn=drop_privileges if os.geteuid() == 0 else None).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BootstrapError(f"could not read verified Git object {args[-1]}") from exc
+
+
+def _prefixed(root: pathlib.Path, absolute: pathlib.Path) -> pathlib.Path:
+    return absolute if root == pathlib.Path("/") else root / absolute.as_posix().lstrip("/")
+
+
+def _regular_nofollow(root: pathlib.Path, absolute: pathlib.Path) -> pathlib.Path:
+    path = _prefixed(root, absolute)
+    relative = path.relative_to(root)
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise BootstrapError(f"refusing symlink in recovery path: {current}")
+    if not path.is_file():
+        raise BootstrapError(f"required recovery input is missing: {path}")
+    if root == pathlib.Path("/"):
+        for parent in path.parents:
+            if parent == pathlib.Path("/"):
+                break
+            if parent.exists() and parent.stat().st_uid != 0:
+                raise BootstrapError(f"recovery path is not root-owned: {parent}")
+    return path
+
+
+def _known_good_digest(record: dict) -> str:
+    canonical = {key: value for key, value in record.items() if key != "record_sha256"}
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_known_good(root: pathlib.Path = pathlib.Path("/")) -> dict:
+    path = _prefixed(root, KNOWN_GOOD)
+    if not path.exists() and not path.is_symlink():
+        raise BootstrapError("no saved known-good production installation exists")
+    path = _regular_nofollow(root, KNOWN_GOOD)
+    metadata = path.stat()
+    if root == pathlib.Path("/") and metadata.st_uid != 0:
+        raise BootstrapError("known-good recovery record is not root-owned")
+    if metadata.st_mode & 0o077:
+        raise BootstrapError("known-good recovery record permissions are too broad")
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BootstrapError("known-good recovery record is unreadable") from exc
+    if (record.get("schema_version") != 1 or record.get("record_sha256") != _known_good_digest(record)
+            or record.get("repository") != SYSTEM_REPOSITORY
+            or not re.fullmatch(r"[0-9a-f]{40}", str(record.get("system_commit", "")))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(record.get("quickshell_commit", "")))):
+        raise BootstrapError("known-good recovery record failed integrity validation")
+    return record
+
+
+def _current_known_good(root: pathlib.Path = pathlib.Path("/")) -> dict:
+    bootstrap = _regular_nofollow(root, BOOTSTRAP_STATE)
+    try:
+        state = json.loads(bootstrap.read_text(encoding="utf-8"))
+        lock_path = _regular_nofollow(root, VISUAL_DATA / "integration/quickshell.lock.json")
+        runtime_path = _regular_nofollow(root, VISUAL_DATA / "quickshell.snapshot.json")
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BootstrapError("cannot capture current production CLI, lock and Quickshell runtime state") from exc
+    system_commit = state.get("source_commit")
+    quickshell_commit = state.get("quickshell_expected_commit")
+    if (state.get("source_repository") != SYSTEM_REPOSITORY
+            or state.get("source_branch") != "main"
+            or state.get("source_channel", "production") != "production"
+            or not re.fullmatch(r"[0-9a-f]{40}", str(system_commit or ""))
+            or not re.fullmatch(r"[0-9a-f]{40}", str(quickshell_commit or ""))
+            or lock.get("commit") != quickshell_commit
+            or runtime.get("commit") != quickshell_commit):
+        raise BootstrapError("current install is not a coherent production main/lock/runtime known-good")
+    record = {
+        "schema_version": 1,
+        "repository": SYSTEM_REPOSITORY,
+        "system_commit": system_commit,
+        "quickshell_commit": quickshell_commit,
+        "version": state.get("version"),
+        "captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    record["record_sha256"] = _known_good_digest(record)
+    return record
+
+
+def _save_known_good(root: pathlib.Path = pathlib.Path("/")) -> dict:
+    destination = _prefixed(root, KNOWN_GOOD)
+    if destination.exists() or destination.is_symlink():
+        return _load_known_good(root)
+    record = _current_known_good(root)
+    for parent in destination.parent.parents:
+        if parent == root:
+            break
+        if parent.is_symlink():
+            raise BootstrapError(f"refusing symlink in recovery directory path: {parent}")
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if destination.parent.is_symlink():
+        raise BootstrapError("known-good recovery directory must not be a symlink")
+    directory_metadata = destination.parent.stat()
+    if root == pathlib.Path("/") and directory_metadata.st_uid != 0:
+        raise BootstrapError("known-good recovery directory is not root-owned")
+    if directory_metadata.st_mode & 0o077:
+        raise BootstrapError("known-good recovery directory permissions are too broad")
+    fd, temporary = tempfile.mkstemp(prefix=".known-good-", dir=destination.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(record, stream, sort_keys=True, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), 0o600)
+        os.replace(temporary, destination)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return record
+
+
+def _clear_known_good(root: pathlib.Path = pathlib.Path("/")) -> None:
+    path = _prefixed(root, KNOWN_GOOD)
+    if path.exists():
+        _regular_nofollow(root, KNOWN_GOOD)
+        path.unlink()
+
+
+def _target_check() -> None:
+    values = {}
+    try:
+        for line in pathlib.Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                values[key] = value.strip().strip('"')
+    except OSError as exc:
+        raise BootstrapError("cannot read /etc/os-release") from exc
+    if (values.get("ID") != "fedora-asahi-remix" or values.get("VERSION_ID") != "44"
+            or platform.machine() != "aarch64"):
+        raise BootstrapError("apply is limited to Fedora Asahi Remix 44 on aarch64")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Install or restore Niri+ using an immutable Release Candidate snapshot.")
+    parser.add_argument("--source-root", type=pathlib.Path, required=True,
+                        help="normal user's asahi-system checkout; its working-tree contents are never executed")
+    parser.add_argument("--bootstrap-commit", required=True,
+                        help="exact PR #22 commit containing this hash-pinned bootstrap")
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument("--candidate-commit", help="exact full PR #22 head SHA")
+    actions.add_argument("--restore-known-good", action="store_true",
+                         help="restore the exact production system and Quickshell commits saved before RC install")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--dry-run", action="store_true", help="verify and print both exact commits; do not apply")
+    modes.add_argument("--apply", action="store_true", help="apply the verified snapshot transaction")
+    args = parser.parse_args(argv)
+    if os.geteuid() != 0:
+        print("Run only through the documented sudo in-memory SHA-256 verifier.", file=sys.stderr)
+        return 2
+    if not re.fullmatch(r"[0-9a-f]{40}", args.bootstrap_commit):
+        print("--bootstrap-commit must be a full 40-character lowercase SHA-1.", file=sys.stderr)
+        return 2
+    if args.candidate_commit and (not re.fullmatch(r"[0-9a-f]{40}", args.candidate_commit)
+                                  or args.candidate_commit != args.bootstrap_commit):
+        print("--candidate-commit must equal the full bootstrap/PR #22 commit SHA.", file=sys.stderr)
+        return 2
+    if not args.dry_run and not args.apply:
+        parser.error("choose --dry-run or --apply")
+    try:
+        if args.source_root.is_symlink():
+            raise BootstrapError("source root must not be a symlink")
+        source = args.source_root.resolve(strict=True)
+        if not source.is_dir():
+            raise BootstrapError("source root must be a real Git checkout directory")
+        owner, groups = _identity(source)
+        _remote(source, owner, groups)
+        temporary = tempfile.TemporaryDirectory(prefix="niri-plus-rc-bootstrap-")
+        try:
+            temp_root = pathlib.Path(temporary.name)
+            os.chmod(temp_root, 0o700)
+            resolver = _load_committed_resolver(
+                source, owner, groups, args.bootstrap_commit, temp_root,
+                require_current_pr=not args.restore_known_good,
+            )
+            if args.restore_known_good:
+                saved = _load_known_good()
+                snapshot_context = resolver.resolved_snapshot(
+                    source,
+                    include_quickshell=True,
+                    known_good_restore=True,
+                    expected_system_commit=saved["system_commit"],
+                    expected_quickshell_commit=saved["quickshell_commit"],
+                )
+                label = "KNOWN-GOOD PRODUCTION RESTORE"
+            else:
+                marker = _prefixed(pathlib.Path("/"), KNOWN_GOOD)
+                saved = (_load_known_good() if marker.exists() or marker.is_symlink()
+                         else _current_known_good())
+                snapshot_context = resolver.resolved_snapshot(
+                    source, include_quickshell=True, release_candidate=True,
+                    expected_system_commit=args.candidate_commit,
+                )
+                label = "EXPERIMENTAL RELEASE CANDIDATE"
+            with snapshot_context as snapshot:
+                if args.apply:
+                    _target_check()
+                    if not args.restore_known_good:
+                        _save_known_good()
+                    resolver.install_from_snapshot(snapshot)
+                    if args.restore_known_good:
+                        _clear_known_good()
+                    print("Installation transaction completed.")
+                else:
+                    print(label + " — dry-run; host unchanged")
+                    print(f"asahi-system: {snapshot.system_commit}")
+                    print(f"Quickshell:   {snapshot.quickshell_commit}")
+                    if not args.restore_known_good:
+                        print(f"known-good asahi-system: {saved['system_commit']}")
+                        print(f"known-good Quickshell:   {saved['quickshell_commit']}")
+                    print("The verified install plan was not applied.")
+        finally:
+            temporary.cleanup()
+    except Exception as exc:
+        print(f"Niri+ RC bootstrap failed: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

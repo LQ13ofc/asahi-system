@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from niri_plus import benchmark, cli, doctor, host, install, install_command, quickshell, rollback, source_update, status, wayland_ready
+from niri_plus import benchmark, brightness, cli, doctor, host, install, install_command, niri_settings, quickshell, rollback, source_update, status, wayland_ready
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -29,11 +29,65 @@ class NiriPlusCliTests(unittest.TestCase):
         self.assertEqual(version_exit.exception.code, 0)
         self.assertIn((ROOT / "VERSION").read_text().strip(), output.getvalue())
 
+    def test_quickshell_candidate_compare_dispatches_without_host_mutation(self):
+        with mock.patch.object(benchmark, "compare_quickshell_candidate_benchmarks", return_value=0) as compare_candidate:
+            result = cli.main([
+                "benchmark", "compare-quickshell",
+                "--known-good", "c0.json",
+                "--candidate", "c1.json",
+                "--output", "report.md",
+                "--allow-asahi-system-commit-change",
+            ])
+        self.assertEqual(result, 0)
+        compare_candidate.assert_called_once_with(
+            "c0.json", "c1.json", "report.md", None,
+            allow_asahi_system_commit_change=True,
+        )
+
     def test_status_command_dispatches(self):
         with mock.patch.object(cli.status, "render_status", return_value="simulated status") as render, contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(["status"]), 0)
         render.assert_called_once()
         self.assertIn("simulated status", output.getvalue())
+
+    def test_brightness_command_uses_logind_without_root(self):
+        with mock.patch.object(brightness, "set_percent", return_value=("apple-panel-bl", 50)) as set_percent, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["brightness", "set", "50", "--device", "apple-panel-bl"]), 0)
+        set_percent.assert_called_once_with(50, "apple-panel-bl")
+        self.assertIn("Brilho alterado para 50%", output.getvalue())
+
+    def test_brightness_cli_rejects_invalid_range_before_dbus(self):
+        with mock.patch.object(brightness, "set_percent") as set_percent, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as exit_info:
+                cli.main(["brightness", "set", "101"])
+        self.assertEqual(exit_info.exception.code, 2)
+        set_percent.assert_not_called()
+
+    def test_niri_settings_cli_exposes_status_apply_rollback_and_uses_stdin(self):
+        manager = mock.Mock()
+        manager.status.return_value = {"status": "NOT_CONFIGURED", "configured": False}
+        manager.rollback.return_value = {"status": "OK"}
+        with mock.patch.object(niri_settings, "NiriSettingsManager", return_value=manager), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["niri-settings", "status"]), 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "NOT_CONFIGURED")
+        manager.status.assert_called_once_with()
+        with mock.patch.object(niri_settings, "NiriSettingsManager", return_value=manager), \
+             mock.patch.object(niri_settings, "apply_from_stdin", return_value=0) as apply_stdin:
+            self.assertEqual(cli.main(["niri-settings", "apply"]), 0)
+        apply_stdin.assert_called_once_with(manager)
+        with mock.patch.object(niri_settings, "NiriSettingsManager", return_value=manager), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(["niri-settings", "rollback"]), 0)
+        self.assertEqual(json.loads(output.getvalue())["status"], "OK")
+
+    def test_niri_settings_cli_help_lists_only_supported_actions(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit) as exit_info:
+            cli.main(["niri-settings", "--help"])
+        self.assertEqual(exit_info.exception.code, 0)
+        for action in ("status", "apply", "rollback"):
+            self.assertIn(action, output.getvalue())
 
     def test_status_on_simulated_host_is_read_only(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -59,6 +113,9 @@ class NiriPlusCliTests(unittest.TestCase):
             "managed_file_checksums": {}, "kde_isolation": ("OK", []),
             "wayland_readiness": host.OK, "wayland_clients_runtime": ("OK", []),
         }
+        self.assertEqual(status.overall_state(report, niri_active=True), "M1_REQUIRED")
+        report["quickshell"].update(status=host.NOT_CONFIGURED, state_pin_status=host.NOT_CONFIGURED,
+                                    processes={"count": 0, "managed_count": 0})
         self.assertEqual(status.overall_state(report, niri_active=True), "M1_REQUIRED")
         report["configuration_validation"] = host.WARNING
         self.assertEqual(status.overall_state(report, niri_active=True), "WARNING")
@@ -203,9 +260,11 @@ class NiriPlusCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             before = list(root.rglob("*"))
-            report = doctor.render_doctor(root=root, machine="x86_64", runner=missing_runner)
+            with mock.patch.object(doctor.gaming, "render_status", return_value="Niri+ Gaming Mode\nGaming Mode   UNAVAILABLE\nFallback      disabled"):
+                report = doctor.render_doctor(root=root, machine="x86_64", runner=missing_runner)
             self.assertIn("read-only", report)
             self.assertIn("M1_REQUIRED", report)
+            self.assertIn("Fallback      disabled", report)
             self.assertEqual(before, list(root.rglob("*")))
 
     def test_status_includes_quickshell_pin_and_lifecycle_without_mutations(self):
@@ -214,10 +273,13 @@ class NiriPlusCliTests(unittest.TestCase):
             (root / "etc").mkdir()
             (root / "etc/os-release").write_text('ID=fedora\nVERSION_ID="44"\nPRETTY_NAME="Fedora Cloud"\n')
             before = sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
-            output = status.render_status("0.1.0", root=root, machine="x86_64", runner=missing_runner)
+            with mock.patch.object(status.gaming, "render_status", return_value="Niri+ Gaming Mode\nGaming Mode   UNAVAILABLE\nFallback      disabled"):
+                output = status.render_status("0.1.0", root=root, machine="x86_64", runner=missing_runner)
             after = sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
             self.assertIn("Quickshell", output)
             self.assertIn("Expected commit", output)
+            self.assertIn("Gaming Mode", output)
+            self.assertIn("Fallback      disabled", output)
             self.assertIn("M1_REQUIRED", output)
             self.assertNotIn("Overall: HEALTHY", output)
             self.assertEqual(before, after)
@@ -229,6 +291,56 @@ class NiriPlusCliTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(install_command.install, "parse_os_release", return_value={"ID": "fedora", "VERSION_ID": "44"}), mock.patch.object(install_command.platform, "machine", return_value="x86_64"):
                 self.assertEqual(install_command.run_install(dry_run=True), 0)
             self.assertEqual(before, list(root.rglob("*")))
+
+    def test_default_install_cli_is_independent_of_visual_runtime(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(cli.main(["install", "--dry-run"]), 0)
+        self.assertIn("Quickshell visual runtime: omitted", output.getvalue())
+        self.assertNotIn("Quickshell visual pin:", output.getvalue())
+        self.assertNotIn("asahi-quickshell.service", output.getvalue())
+
+    def test_default_apply_does_not_request_the_visual_repository(self):
+        with mock.patch.object(cli.install_command, "run_install", return_value=0) as run:
+            self.assertEqual(cli.main(["install"]), 0)
+        run.assert_called_once_with(False, include_quickshell=False)
+
+    def test_optional_visual_integration_is_explicit_in_dry_run(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(cli.main(["install", "--dry-run", "--with-quickshell"]), 0)
+        self.assertIn("Quickshell visual pin:", output.getvalue())
+        self.assertIn("asahi-quickshell.service", output.getvalue())
+
+    def test_niri_only_package_transaction_does_not_enable_visual_repository(self):
+        with mock.patch.object(install.shutil, "which", return_value="/usr/bin/dnf"), \
+             mock.patch.object(install.subprocess, "run") as run:
+            install.install_locked_packages(None)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ["dnf", "install", "-y", "--setopt=install_weak_deps=False"])
+        self.assertNotIn("quickshell", command)
+        self.assertFalse(any(value.startswith("--repofrompath=") for value in command))
+
+    def test_unconfigured_visual_integration_is_not_a_doctor_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = quickshell.doctor_report(pathlib.Path(temp), runner=missing_runner, enabled=False)
+        self.assertEqual(report["status"], host.NOT_CONFIGURED)
+        self.assertEqual(report["lifecycle"], host.NOT_CONFIGURED)
+        self.assertEqual(report["duplicate_processes"]["status"], host.NOT_CONFIGURED)
+
+    def test_niri_only_install_status_does_not_require_visual_units(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            install.install_files(root, include_quickshell=False)
+            state = install.load_state(root)
+            state["applied_version"] = "0.1.10"
+            state["quickshell"] = {"expected_commit": None, "known_good_commit": None}
+            install.write_state(root, state)
+            report = host.host_report(root, machine="aarch64", runner=missing_runner)
+        self.assertEqual(report["quickshell"]["status"], host.NOT_CONFIGURED)
+        self.assertEqual(report["wayland_readiness"], host.OK)
+        self.assertNotIn("/usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service",
+                         report["managed_links"])
 
     def test_incompatible_host_is_rejected(self):
         self.assertEqual(install_command.install.target_mismatches({"ID": "fedora", "VERSION_ID": "44"}, "x86_64"),
@@ -474,6 +586,7 @@ class NiriPlusCliTests(unittest.TestCase):
                 "schema_version": 1,
                 "applied_version": "0.1.1",
                 "entries": {},
+                "quickshell": {"expected_commit": "55e92880d0aff75d235f283c839ec0990eaa9e17"},
             })
             report = host.host_report(root, machine="x86_64", runner=missing_runner)
             self.assertEqual(report["managed_file_checksums"]["/etc/niri/config.kdl"], host.WARNING)

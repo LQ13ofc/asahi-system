@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import subprocess
-from . import host
+from . import gaming, host
 from .host import host_report
 
 
@@ -28,6 +28,7 @@ def render_status(version: str, root: pathlib.Path = pathlib.Path("/"),
     lines.extend(f"  {name:22} {value}" for name, value in report["system"].items())
     lines.append("\nOptional")
     lines.extend(f"  {name:22} {value}" for name, value in report["optional"].items())
+    lines.extend(["\nGaming Mode", *[f"  {line}" for line in gaming.render_status().splitlines()[1:]]])
     qs = report["quickshell"]
     lines.extend(["\nQuickshell", f"  {'Status':22} {qs['status']}",
                   f"  {'Binary/version':22} {qs['version_status']} {qs['version']}",
@@ -68,16 +69,22 @@ def overall_state(report: dict, niri_active: bool = False) -> str:
                 report["session_package"], report["configuration"], report["launcher"],
                 report["configuration_validation"], report["launcher_binary"],
                 report["install_state"], report["rollback_state"], report.get("wayland_readiness", host.NOT_CONFIGURED),
-                report["source_checkout"]["status"], report["quickshell"]["status"],
+                report["source_checkout"]["status"],
                 *report["core"].values(), *report["system"].values()]
+    quickshell_configured = report["quickshell"].get("state_pin_status") != host.NOT_CONFIGURED
+    if quickshell_configured:
+        required.append(report["quickshell"]["status"])
     required.extend(report["managed_file_checksums"].values())
     required.extend(report.get("managed_links", {}).values())
     if niri_active:
         required.append(report["wayland_clients_runtime"][0])
     qs_process_count = report["quickshell"]["processes"]["count"]
     if niri_active:
-        managed_count = report["quickshell"]["processes"].get("managed_count")
-        required.append("OK" if qs_process_count == managed_count == 1 else "WARNING")
+        if quickshell_configured:
+            managed_count = report["quickshell"]["processes"].get("managed_count")
+            required.append("OK" if qs_process_count == managed_count == 1 else "WARNING")
+        elif qs_process_count not in (0, None):
+            required.append("WARNING")
     elif qs_process_count not in (0, None):
         required.append("WARNING")
     if all(state == "OK" for state in required) and report["kde_isolation"][0] in ("OK", "NOT_APPLICABLE"):
