@@ -25,7 +25,9 @@ def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, insta
     bootstrap_path = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
     bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
     qs_commit = bootstrap.get("quickshell_expected_commit")
+    channel = manifest.get("channel", "production")
     if (bootstrap.get("version") != version or bootstrap.get("source_commit") != manifest["system"]["commit"]
+            or bootstrap.get("source_channel", "production") != channel
             or (include_quickshell and qs_commit != manifest["quickshell"]["commit"])):
         raise RuntimeError("CLI/assets/pin state do not describe the resolved snapshot")
     state = install_module.load_state(pathlib.Path("/"))

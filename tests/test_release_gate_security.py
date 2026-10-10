@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -117,8 +118,10 @@ class GitSnapshotTests(unittest.TestCase):
         shutil.copy2(bootstrap_source, self.asahi_seed / "scripts/bootstrap-niri-plus")
         (self.asahi_seed / "scripts/collect-performance-baseline").chmod(0o755)
         self._write_system_tree("0.1.2", self.qs_commit)
-        commit_all(self.asahi_seed, "complete candidate installation tree")
+        candidate_commit = commit_all(self.asahi_seed, "complete candidate installation tree")
         git(["-C", str(self.asahi_seed), "push", "origin", "main"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/19/head"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         real_run_path = snapshot_install.runpy.run_path
@@ -233,6 +236,19 @@ class GitSnapshotTests(unittest.TestCase):
                 host_root = pathlib.Path(temp)
                 exercise(host_root, snapshot)
 
+        # Exercise the new opt-in channel through the same snapshot bootstrap,
+        # asset staging, post-install verification and injected rollback path.
+        with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit):
+            with self._snapshot(release_candidate=True, expected_system_commit=candidate_commit) as snapshot:
+                self.assertEqual(snapshot.system_commit, candidate_commit)
+                for failure in ("bootstrap", "apply", "verify"):
+                    with self.subTest(candidate_failure=failure), tempfile.TemporaryDirectory() as temp:
+                        host_root = pathlib.Path(temp)
+                        with self.assertRaisesRegex(RuntimeError, f"injected {failure} failure"):
+                            exercise(host_root, snapshot, failure)
+                with tempfile.TemporaryDirectory() as temp:
+                    exercise(pathlib.Path(temp), snapshot)
+
     def test_temporary_bare_store_is_created_by_git_as_checkout_owner(self):
         parent = self.root / "owner-temp"
         parent.mkdir()
@@ -338,7 +354,12 @@ class GitSnapshotTests(unittest.TestCase):
             return subprocess.run(args, **kwargs)
 
         with self._snapshot(runner=record_runner, include_quickshell=False) as snapshot:
-            manifest = source_update.validate_snapshot(snapshot.root, snapshot.manifest)
+            manifest = source_update.validate_snapshot(
+                snapshot.root, snapshot.manifest,
+                expected_repository=snapshot.expected_repository,
+                expected_quickshell_repository=snapshot.expected_quickshell_repository,
+                allow_test_file_sources=snapshot.allow_test_file_sources,
+            )
             self.assertFalse(snapshot.include_quickshell)
             self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
             self.assertFalse((snapshot.root / "external/quickshell").exists())
@@ -360,6 +381,277 @@ class GitSnapshotTests(unittest.TestCase):
         with self._snapshot() as second:
             self.assertEqual(second.system_commit, first_sha)
             self.assertEqual(second.quickshell_commit, self.qs_commit)
+
+    def test_release_candidate_requires_exact_pr_head_and_ignores_mutable_worktree(self):
+        self._write_system_tree("0.1.9-rc", self.qs_commit)
+        candidate = commit_all(self.asahi_seed, "release candidate immutable source")
+        git(["-C", str(self.asahi_seed), "push", "origin", f"HEAD:refs/pull/19/head"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        git(["-C", str(self.checkout), "switch", "-c", "worktree-experiment"])
+        dirty_file = self.checkout / "niri_plus/install_command.py"
+        dirty_file.write_text("# uncommitted code must never enter the privileged snapshot\n")
+        (self.checkout / "untracked-secret.txt").write_text("never include\n")
+        with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit):
+            with self._snapshot(release_candidate=True, expected_system_commit=candidate) as snapshot:
+                manifest = source_update.validate_snapshot(
+                    snapshot.root, snapshot.manifest,
+                    expected_repository=self.asahi_url,
+                    expected_quickshell_repository=self.qs_url,
+                    allow_test_file_sources=True,
+                )
+                self.assertEqual(snapshot.system_commit, candidate)
+                self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
+                self.assertEqual(manifest["channel"], "release-candidate")
+                self.assertEqual(manifest["system"]["branch"], "refs/pull/19/head")
+                self.assertNotIn("untracked-secret.txt", {item["path"] for item in manifest["system"]["files"]})
+                self.assertNotEqual((snapshot.root / "niri_plus/install_command.py").read_text(), dirty_file.read_text())
+        self.assertEqual(dirty_file.read_text(), "# uncommitted code must never enter the privileged snapshot\n")
+        with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit):
+            with self.assertRaisesRegex(source_update.SourceUpdateError, "head changed"):
+                with self._snapshot(release_candidate=True, expected_system_commit="0" * 40):
+                    pass
+
+    def test_release_candidate_rejects_quickshell_lock_divergence_and_unexpected_pin(self):
+        self._write_system_tree("0.1.9-rc", self.qs_commit)
+        candidate = commit_all(self.asahi_seed, "release candidate lock")
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/19/head"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", "0" * 40):
+            with self.assertRaisesRegex(source_update.SourceUpdateError, "approved Release Candidate Quickshell"):
+                with self._snapshot(release_candidate=True, expected_system_commit=candidate):
+                    pass
+
+    def test_committed_bootstrap_accepts_only_the_explicit_candidate_channel(self):
+        self._write_system_tree("0.1.9-rc", self.qs_commit)
+        bootstrap = pathlib.Path(__file__).resolve().parents[1] / "scripts/bootstrap-niri-plus"
+        shutil.copy2(bootstrap, self.asahi_seed / "scripts/bootstrap-niri-plus")
+        candidate = commit_all(self.asahi_seed, "candidate bootstrap contract")
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/19/head"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit), \
+             mock.patch.object(source_update, "EXPECTED_REPOSITORY", self.asahi_url), \
+             mock.patch.object(source_update, "EXPECTED_QUICKSHELL_REPOSITORY", self.qs_url), \
+             self._snapshot(release_candidate=True, expected_system_commit=candidate) as snapshot:
+            namespace = runpy.run_path(str(snapshot.root / "scripts/bootstrap-niri-plus"),
+                                       run_name="niri_plus_rc_bootstrap_contract")
+            marker = RuntimeError("candidate metadata passed; staging reached")
+            with mock.patch.object(os, "geteuid", return_value=0), \
+                 mock.patch.dict(namespace, {"_validate_ownership": lambda: ({}, False)}), \
+                 mock.patch("tempfile.mkdtemp", side_effect=marker):
+                with self.assertRaisesRegex(RuntimeError, "staging reached"):
+                    namespace["install_snapshot"](snapshot.root, snapshot.manifest)
+
+    def test_known_good_restore_uses_saved_exact_system_and_visual_commits(self):
+        with self._snapshot(known_good_restore=True, expected_system_commit=self.initial_system_commit,
+                            expected_quickshell_commit=self.qs_commit) as snapshot:
+            manifest = source_update.validate_snapshot(
+                snapshot.root, snapshot.manifest,
+                expected_repository=self.asahi_url,
+                expected_quickshell_repository=self.qs_url,
+                allow_test_file_sources=True,
+            )
+            self.assertEqual(manifest["channel"], "known-good-restore")
+            self.assertEqual(manifest["system"]["commit"], self.initial_system_commit)
+            self.assertEqual(manifest["quickshell"]["commit"], self.qs_commit)
+
+    def test_production_install_path_still_requires_clean_main_and_reads_main_pin(self):
+        self._write_system_tree("0.1.9-candidate-but-not-main", self.qs_commit)
+        candidate = commit_all(self.asahi_seed, "non-production candidate")
+        git(["-C", str(self.asahi_seed), "push", "origin", "HEAD:refs/pull/19/head"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with self._snapshot() as snapshot:
+            self.assertEqual(snapshot.system_commit, self.initial_system_commit)
+            self.assertNotEqual(snapshot.system_commit, candidate)
+            self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
+
+    def test_rc_known_good_record_is_atomic_validated_and_not_replaced_by_candidate_state(self):
+        helper_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/niri-plus-rc-bootstrap"
+        helper = runpy.run_path(str(helper_path), run_name="niri_plus_rc_test_helper")
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            bootstrap = root / "var/lib/niri-plus/bootstrap.json"
+            data = root / "usr/local/share/niri-plus"
+            bootstrap.parent.mkdir(parents=True)
+            data.joinpath("integration").mkdir(parents=True)
+            bootstrap.write_text(json.dumps({
+                "source_repository": source_update.EXPECTED_REPOSITORY,
+                "source_branch": "main", "source_channel": "production",
+                "source_commit": self.initial_system_commit, "quickshell_expected_commit": self.qs_commit,
+                "version": "0.1.8",
+            }))
+            (data / "integration/quickshell.lock.json").write_text(json.dumps({"commit": self.qs_commit}))
+            (data / "quickshell.snapshot.json").write_text(json.dumps({"commit": self.qs_commit}))
+            record = helper["_save_known_good"](root)
+            self.assertEqual(record["system_commit"], self.initial_system_commit)
+            self.assertEqual(helper["_load_known_good"](root)["quickshell_commit"], self.qs_commit)
+            bootstrap.write_text(json.dumps({"source_channel": "release-candidate"}))
+            self.assertEqual(helper["_save_known_good"](root), record)
+            path = root / "var/lib/niri-plus/release-candidate/known-good.json"
+            contents = json.loads(path.read_text())
+            contents["system_commit"] = "0" * 40
+            path.write_text(json.dumps(contents))
+            with self.assertRaisesRegex(helper["BootstrapError"], "integrity"):
+                helper["_load_known_good"](root)
+
+    def test_rc_bootstrap_loads_only_source_resolver_blob_from_exact_committed_tree(self):
+        helper_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/niri-plus-rc-bootstrap"
+        helper = runpy.run_path(str(helper_path), run_name="niri_plus_rc_loader_test")
+        system_commit = "a" * 40
+        source_bytes = b"VERIFIED_FROM_GIT = 'candidate resolver'\n"
+        helper_bytes = b"exact bootstrap blob\n"
+        blob_oid = hashlib.sha1(b"blob " + str(len(source_bytes)).encode() + b"\0" + source_bytes).hexdigest()
+        helper_oid = hashlib.sha1(b"blob " + str(len(helper_bytes)).encode() + b"\0" + helper_bytes).hexdigest()
+        helper_globals = helper["_load_committed_resolver"].__globals__
+
+        def git_output(_source, _owner, _groups, *args, **_kwargs):
+            if args[:2] == ("ls-remote", "--exit-code"):
+                return f"{system_commit}\trefs/pull/19/head"
+            if args[0] == "rev-parse" and args[-1] == "FETCH_HEAD^{commit}":
+                return system_commit
+            if args[0] == "rev-parse" and args[-1] == f"{system_commit}:niri_plus/source_update.py":
+                return blob_oid
+            if args[0] == "rev-parse" and args[-1] == f"{system_commit}:scripts/niri-plus-rc-bootstrap":
+                return helper_oid
+            return ""
+
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.dict(helper_globals, {"__verified_script_bytes__": helper_bytes,
+                                                  "_owner_git": git_output,
+                                                  "_owner_git_bytes": lambda *_args: source_bytes}):
+                resolver = helper["_load_committed_resolver"](
+                    pathlib.Path(temp), None, [], system_commit, pathlib.Path(temp), require_current_pr=True,
+                )
+                self.assertEqual(resolver.VERIFIED_FROM_GIT, "candidate resolver")
+            with mock.patch.dict(helper_globals, {"__verified_script_bytes__": b"tampered helper",
+                                                  "_owner_git": git_output,
+                                                  "_owner_git_bytes": lambda *_args: source_bytes}):
+                with self.assertRaisesRegex(helper["BootstrapError"], "do not belong"):
+                    helper["_load_committed_resolver"](
+                        pathlib.Path(temp), None, [], system_commit, pathlib.Path(temp), require_current_pr=True,
+                    )
+
+    def test_rc_bootstrap_git_uses_checkout_owner_and_never_prompts(self):
+        from types import SimpleNamespace
+
+        helper_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/niri-plus-rc-bootstrap"
+        helper = runpy.run_path(str(helper_path), run_name="niri_plus_rc_git_owner_test")
+        namespace = helper["_owner_git"].__globals__
+        with tempfile.TemporaryDirectory() as temp:
+            config_path = pathlib.Path(temp) / "gitconfig"
+            config_path.write_text("[credential]\nhelper = safe-helper\n")
+            owner = SimpleNamespace(pw_dir="/home/checkout-owner", pw_name="checkout-owner", pw_gid=1001,
+                                    pw_uid=config_path.stat().st_uid)
+            runner = mock.MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout=b"ok\n", stderr=b""))
+            with mock.patch.object(namespace["subprocess"], "run", runner), \
+                 mock.patch.object(namespace["os"], "geteuid", return_value=0), \
+                 mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(config_path)}):
+                self.assertEqual(helper["_owner_git"](pathlib.Path("/home/checkout-owner/source"), owner, [1001],
+                                                        "status", "--short"), "ok")
+        _command, options = runner.call_args
+        environment = options["env"]
+        self.assertEqual(environment["HOME"], owner.pw_dir)
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], str(config_path))
+        self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(environment["GCM_INTERACTIVE"], "never")
+        self.assertEqual(environment["GCM_MODAL_PROMPT"], "0")
+        self.assertEqual(environment["GIT_CONFIG_VALUE_0"], "false")
+        self.assertNotIn("GIT_ASKPASS", environment)
+        self.assertTrue(environment["GIT_SSH_COMMAND"].endswith("BatchMode=yes"))
+        self.assertEqual(options["stdin"], subprocess.DEVNULL)
+        self.assertIsNotNone(options["preexec_fn"])
+
+    def test_rc_bootstrap_dry_run_reports_candidate_and_known_good_exact_commits(self):
+        from types import SimpleNamespace
+
+        system_sha = "c" * 40
+        quickshell_sha = source_update.RELEASE_CANDIDATE_QUICKSHELL_COMMIT
+        good_system_sha = "d" * 40
+        good_quickshell_sha = "e" * 40
+
+        class FakeResolver:
+            def resolved_snapshot(self, *_args, **kwargs):
+                self.asserted_candidate = kwargs
+                return FakeSnapshotContext(
+                    self.asserted_candidate.get("expected_system_commit", good_system_sha),
+                    self.asserted_candidate.get("expected_quickshell_commit", quickshell_sha),
+                )
+
+            def install_from_snapshot(self, snapshot):
+                self.installed_snapshot = snapshot
+
+        class FakeSnapshotContext:
+            def __init__(self, system_commit, quickshell_commit):
+                self.snapshot = SimpleNamespace(system_commit=system_commit, quickshell_commit=quickshell_commit)
+            def __enter__(self):
+                return self.snapshot
+            def __exit__(self, *_args):
+                return False
+
+        with tempfile.TemporaryDirectory() as temp:
+            helper_path = pathlib.Path(__file__).resolve().parents[1] / "scripts/niri-plus-rc-bootstrap"
+            helper = runpy.run_path(str(helper_path), run_name="niri_plus_rc_main_test")
+            namespace = helper["main"].__globals__
+            resolver = FakeResolver()
+            with mock.patch.dict(namespace, {
+                "_identity": lambda _source: (SimpleNamespace(pw_dir=temp, pw_name="owner"), []),
+                "_remote": lambda *_args: "https://github.com/LQ13ofc/asahi-system.git",
+                "_load_committed_resolver": lambda *_args, **_kwargs: resolver,
+                "_current_known_good": lambda: {"system_commit": good_system_sha,
+                                                 "quickshell_commit": good_quickshell_sha},
+                "_prefixed": lambda _root, _path: pathlib.Path(temp) / "no-known-good-record",
+                "_save_known_good": mock.MagicMock(),
+            }), mock.patch.object(namespace["os"], "geteuid", return_value=0), \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(helper["main"]([
+                    "--source-root", temp, "--bootstrap-commit", system_sha,
+                    "--candidate-commit", system_sha, "--dry-run",
+                ]), 0)
+            self.assertEqual(resolver.asserted_candidate, {
+                "include_quickshell": True, "release_candidate": True,
+                "expected_system_commit": system_sha,
+            })
+            for value in (system_sha, quickshell_sha, good_system_sha, good_quickshell_sha):
+                self.assertIn(value, output.getvalue())
+
+            save_good = mock.MagicMock()
+            with mock.patch.dict(namespace, {
+                "_identity": lambda _source: (SimpleNamespace(pw_dir=temp, pw_name="owner"), []),
+                "_remote": lambda *_args: "https://github.com/LQ13ofc/asahi-system.git",
+                "_load_committed_resolver": lambda *_args, **_kwargs: resolver,
+                "_current_known_good": lambda: {"system_commit": good_system_sha,
+                                                 "quickshell_commit": good_quickshell_sha},
+                "_prefixed": lambda _root, _path: pathlib.Path(temp) / "no-known-good-record",
+                "_save_known_good": save_good,
+                "_target_check": lambda: None,
+            }), mock.patch.object(namespace["os"], "geteuid", return_value=0):
+                self.assertEqual(helper["main"]([
+                    "--source-root", temp, "--bootstrap-commit", system_sha,
+                    "--candidate-commit", system_sha, "--apply",
+                ]), 0)
+            save_good.assert_called_once_with()
+            self.assertEqual(resolver.installed_snapshot.system_commit, system_sha)
+
+            saved = {"system_commit": good_system_sha, "quickshell_commit": good_quickshell_sha}
+            clear_good = mock.MagicMock()
+            with mock.patch.dict(namespace, {
+                "_identity": lambda _source: (SimpleNamespace(pw_dir=temp, pw_name="owner"), []),
+                "_remote": lambda *_args: "https://github.com/LQ13ofc/asahi-system.git",
+                "_load_committed_resolver": lambda *_args, **_kwargs: resolver,
+                "_load_known_good": lambda: saved,
+                "_clear_known_good": clear_good,
+                "_target_check": lambda: None,
+            }), mock.patch.object(namespace["os"], "geteuid", return_value=0):
+                self.assertEqual(helper["main"]([
+                    "--source-root", temp, "--bootstrap-commit", system_sha,
+                    "--restore-known-good", "--apply",
+                ]), 0)
+            self.assertEqual(resolver.asserted_candidate, {
+                "include_quickshell": True, "known_good_restore": True,
+                "expected_system_commit": good_system_sha,
+                "expected_quickshell_commit": good_quickshell_sha,
+            })
+            self.assertEqual(resolver.installed_snapshot.system_commit, good_system_sha)
+            clear_good.assert_called_once_with()
 
     def test_wrong_origin_branch_and_dirty_source_are_rejected_before_fetch(self):
         git(["-C", str(self.checkout), "remote", "set-url", "origin", "https://example.invalid/wrong.git"])
@@ -521,6 +813,28 @@ class InstallationTransactionTests(unittest.TestCase):
                     state.write_text('{"applied_version":"0.1.2"}')
                     raise RuntimeError("staging failure")
             self.assertEqual((cli.read_bytes(), (assets / "VERSION").read_bytes(), state.read_bytes()), before)
+
+    def test_transaction_failure_restores_file_permissions_and_protected_paths_are_not_managed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            config = root / "etc/niri/config.kdl"
+            config.parent.mkdir(parents=True)
+            config.write_text("personal niri config\n")
+            config.chmod(0o640)
+            with self.assertRaisesRegex(RuntimeError, "injected failure"):
+                with install_transaction.FilesystemTransaction([pathlib.Path("/etc/niri/config.kdl")], root=root):
+                    config.write_text("candidate config\n")
+                    config.chmod(0o600)
+                    raise RuntimeError("injected failure")
+            self.assertEqual(config.read_text(), "personal niri config\n")
+            self.assertEqual(config.stat().st_mode & 0o777, 0o640)
+
+        managed = {path.as_posix() for path in snapshot_install._managed_paths(install_command.install)}
+        protected = {
+            "/etc/sddm.conf", "/etc/sddm.conf.d", "/etc/selinux", "/boot",
+            "/usr/lib/modules", "/usr/lib/firmware", "/usr/share/plasma",
+        }
+        self.assertFalse(managed & protected)
 
     def test_second_noop_transaction_preserves_install_state_and_assets(self):
         with tempfile.TemporaryDirectory() as temp:

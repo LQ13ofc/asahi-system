@@ -115,8 +115,25 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
     system = manifest["system"]
     quickshell = manifest["quickshell"]
     include_quickshell = quickshell.get("included", True)
-    if system.get("branch") != "main" or system.get("repository") != source_update.EXPECTED_REPOSITORY:
-        raise RuntimeError("snapshot is not from the approved asahi-system main source")
+    channel = manifest.get("channel", "production")
+    if system.get("repository") != source_update.EXPECTED_REPOSITORY:
+        raise RuntimeError("snapshot is not from the approved asahi-system repository")
+    if channel == "production":
+        if system.get("branch") != "main":
+            raise RuntimeError("production snapshot is not from the approved asahi-system main source")
+    elif channel == "release-candidate":
+        if (manifest.get("pull_request") != source_update.RELEASE_CANDIDATE_PULL_REQUEST
+                or system.get("branch") != source_update.RELEASE_CANDIDATE_REF
+                or manifest.get("expected_system_commit") != system.get("commit")
+                or quickshell.get("commit") != source_update.RELEASE_CANDIDATE_QUICKSHELL_COMMIT):
+            raise RuntimeError("release-candidate snapshot identity or Quickshell pin is invalid")
+    elif channel == "known-good-restore":
+        if (system.get("branch") != f"commit:{system.get('commit')}"
+                or manifest.get("expected_system_commit") != system.get("commit")
+                or manifest.get("expected_quickshell_commit") != quickshell.get("commit")):
+            raise RuntimeError("known-good restore snapshot does not match its saved immutable commits")
+    else:
+        raise RuntimeError("snapshot channel is not supported")
     if quickshell.get("repository") != source_update.EXPECTED_QUICKSHELL_REPOSITORY:
         raise RuntimeError("snapshot Quickshell origin is not approved")
     version = (snapshot_root / "VERSION").read_text(encoding="utf-8").strip()
@@ -191,6 +208,7 @@ def install_snapshot(snapshot_root: pathlib.Path, manifest_path: pathlib.Path) -
             "source_root": source_root,
             "source_repository": system["repository"],
             "source_branch": system["branch"],
+            "source_channel": channel,
             "source_commit": system["commit"],
             "snapshot_sha256": manifest["snapshot_sha256"],
             "quickshell_repository": quickshell["repository"],
