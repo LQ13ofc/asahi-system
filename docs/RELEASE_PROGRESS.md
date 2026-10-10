@@ -242,9 +242,22 @@ encadeado ao RC não recebe check automático. PR #9 do quickshell-:
 Os heads dos pais continuam PR #19 `002131b1e86c4da58eeca226d817b68305ca5c5b`
 e PR #8 `79b093e60f72a2e31f29f819ca2e13d3a1f296e5`.
 
-Próxima ação executável: iniciar um branch de otimização dos perfis visuais e
-verificar como Efficiency/Balanced/Visual controlam a quantidade e o ciclo de
-vida do visualizador, usando o harness para comprovar o efeito. Depois, seguir
-com outras preferências do Settings Center. Descoberta de nome/mode/scale de
-outputs e validação de backlight permanecem `M1_REQUIRED`; PRs #19/#8 continuam
-nos commits RC, sem merge ou mudança no pin de produção.
+Quickshell agora também tem o PR #10 draft, branch
+`feature/interface-profile-visualizer`, commit
+`bdb74fe76b6895d2ed06611deb8f0bd57fe2d058`, encadeado em
+`integration/settings-center-rc`. Efficiency espera a restauração das
+preferências, não instancia o visualizador nem mantém Cava; Balanced aplica
+16 barras/15 fps e Visual 32/30. Mudanças de perfil recriam o componente sob
+demanda e atualizam as informações em Settings/Control Center. Isso controla
+somente recursos da interface e não declara economia medida de RAM/CPU.
+Validação posterior ao commit: compileall, 40 testes `unittest`, load de 59 QML
+sem erros/avisos tardios, render completo de todas as cenas (incluindo os três
+perfis) e qmllint exit 0 com 192 avisos ainda classificados.
+
+Próxima ação executável: revisar as ações de aparência/performance persistidas
+para encontrar preferências que ainda só alteram rótulos ou animações sem
+efeito operacional; implementar o próximo controle real com teste de runtime
+offscreen e migração se o schema mudar. Manter o diff visual restrito ao repo
+Quickshell. Descoberta de output/backlight e custo real de Cava continuam
+`M1_REQUIRED`. PRs #19/#8 seguem nos commits RC, sem merge ou mudança no pin;
+PR #10 tem CI Cloud em execução no head informado acima.
