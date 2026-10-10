@@ -21,6 +21,13 @@ No production branch, PR #22/#15, Graphify PR #23/#16, or known-good pin was
 modified. Quickshell source remains a separate repository and optional runtime;
 the system CLI does not copy QML into asahi-system.
 
+## Candidate commits
+
+- `713e6e2` — plugin lifecycle, joint update, preflight and offline recovery.
+- `eb6c79b` — final M1, plugin/update and offline recovery procedures.
+- `f241898`, `b975807`, `7137c1b` — CI targeting and release-gate records.
+- PR #24 remains a draft against `main`; no merge was performed.
+
 ## Completed in this continuation
 
 - Added `niri+ plugin list|status|install|remove quickshell`; install/remove use
@@ -80,8 +87,9 @@ loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
 unresolved-type, 2 unused-imports). No Quickshell files were changed here.
 - Draft PR #24 targets `main` cumulatively so the configured workflow applies;
-GitHub Actions run `38081223316` passed compileall, baseline validation, and the
-complete unittest suite on head `b9758073469ed8d1437cc26781e9e40a116b60ea`.
+GitHub Actions run `38081337554` passed compileall, baseline validation, and the
+complete unittest suite on head `7137c1b40a3f7aa355cc4077519b2dace9d4521f`.
+Earlier run `38081223316` also passed on the preceding candidate head.
 PR #22 head `0f2774d750dad31ac7ad9e841754a0b96c1376dc` and Quickshell PR #15
 head `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` are unchanged; their latest
 Actions runs are successful.
