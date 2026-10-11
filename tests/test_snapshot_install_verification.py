@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import contextlib
+import hashlib
 import io
 import json
 import pathlib
@@ -12,7 +12,6 @@ import unittest
 from unittest import mock
 
 from niri_plus import install, recovery_core, snapshot_install
-
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 

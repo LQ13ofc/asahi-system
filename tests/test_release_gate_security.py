@@ -8,18 +8,25 @@ import os
 import pathlib
 import pwd
 import runpy
+import shutil
 import socket
+import stat
 import struct
 import subprocess
 import sys
-import shutil
-import stat
 import tempfile
 import threading
 import unittest
 from unittest import mock
 
-from niri_plus import install_command, install_transaction, plugins, snapshot_install, source_update, wayland_ready
+from niri_plus import (
+    install_command,
+    install_transaction,
+    plugins,
+    snapshot_install,
+    source_update,
+    wayland_ready,
+)
 
 
 def git(args, **kwargs):
