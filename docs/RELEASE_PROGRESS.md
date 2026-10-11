@@ -4,13 +4,15 @@ Updated: 2026-10-11
 
 ## Current release gate status
 
-`M1_APPLY_NO_GO / CLOUD_VALIDATED / FINAL_CI_PENDING`. The clean 0.1.14 apply exposed
+`CLOUD_VALIDATED / M1_APPLY_GATE_CONDITIONAL`. The clean 0.1.14 apply exposed
 another post-install mismatch: root-frozen snapshot modes were compared against
 the explicit 0755 modes assigned to installed collectors. A 0.1.15 candidate on
 PR #27 now has a protected-snapshot install test and explicit installed-mode
 checks. CI run `38097400042` passed on code head
-  `9a7a0f4485d5b64dcdfa69a723ec5aad2698679a`. This progress-file update will
-  advance the PR head, so wait for that new head's CI before any M1 apply.
+`9a7a0f4485d5b64dcdfa69a723ec5aad2698679a`; run `38097464723` passed on
+progress head `30a725207e44aa6f65495d6974ed3ccc72a26ebf`. This status-only
+commit advances the PR head again: keep `--apply` NO-GO until CI succeeds on
+that exact latest head. A green result opens only a controlled M1 retest.
 No M1 files or quarantine backups were accessed or modified.
 
 ## Candidate references and preserved state
