@@ -53,7 +53,7 @@ No output name, resolution, refresh rate, scale or Asahi-specific environment va
 
 ## Safe installer and rollback
 
-The public interface is the `niri+` CLI. `scripts/bootstrap-niri-plus` remains the one executable bootstrap entrypoint and defaults to a read-only dry-run. The normal apply/update path is `sudo niri+ install`. It checks Fedora Asahi Remix 44/aarch64 before network access; Git runs as the source checkout owner with their HOME and credentials, non-interactive HTTP/GCM and SSH; it verifies the actual configured origin and `origin/main`, fetches exact commit objects, and validates the Quickshell gitlink against the lock. It then builds a root-owned, read-only snapshot from hash-checked Git objects. No privileged code or input is copied from the mutable working tree. The snapshot is removed after the transaction. `status`, `doctor` and `install --dry-run` remain read-only. The installer backs up managed files/state, stages the CLI and pinned Quickshell runtime, applies session migrations and verifies the filesystem state; the exact locked DNF transaction runs last, immediately before filesystem commit. Exceptions before commit restore the prior managed files and state. It reuses Fedora's session entry and leaves SDDM configuration, Plasma, boot/kernel/driver files, global services, and existing audio/network configuration alone.
+The public interface is the `niri+` CLI. `scripts/bootstrap-niri-plus` remains the bootstrap entrypoint. On this candidate, `sudo niri+ install` installs/repairs the Niri core and includes Quickshell only if its root-owned plugin manifest is valid or a validated 0.1.9 integration is being migrated. First-time visual installation uses `sudo niri+ plugin install quickshell`; `niri+ install` never opts into an absent plugin. Both paths check Fedora Asahi Remix 44/aarch64 before network access. Git runs as the source checkout owner with that user's HOME and credentials, with non-interactive HTTP/GCM/SSH. The system snapshot is built from hash-checked Git objects; integrated mode verifies the actual Quickshell origin and exact gitlink/lock commit. No privileged code or input is copied from the mutable working tree. `status`, `doctor`, `preflight` and `install --dry-run` are read-only. Before mutation, the installer prepares a protected offline recovery point and preflights the exact package plan; it then stages CLI/assets/config, applies session migrations, verifies the state, and applies the locked DNF transaction last. Failure before commit restores managed files and state. SDDM configuration, Plasma, boot/kernel/driver files, global services, and existing audio/network configuration are outside the managed set. See [`plugin-management-and-updates.md`](plugin-management-and-updates.md) and [`offline-recovery.md`](offline-recovery.md) for migration and recovery limits.
 
 The installed `/usr/local/bin/niri+` entrypoint uses Python isolated mode (`-I`) so caller `PYTHONPATH` or startup hooks cannot replace the trusted installed CLI. The child process that runs the verified snapshot receives a fresh Python environment with only that snapshot on `PYTHONPATH`.
 
@@ -65,13 +65,21 @@ Rollback restores backed-up files and removes only files created by this install
 
 `VERSION` is the single tracked source for the Niri+ application version. The bootstrap installs the Python CLI under `/usr/local/lib/niri-plus`, its data/collector under `/usr/local/share/niri-plus`, and the public executable at `/usr/local/bin/niri+`. It defaults to dry-run and backs up a previously bootstrapped copy before replacing it. It refuses unmanaged destinations.
 
-- `niri+ status`: read-only host/session/package/service summary; Quickshell is part of the B2 setup. Gamescope and Steam remain optional/unavailable until separately validated.
-- `niri+ install [--dry-run]`: dry-run is read-only; apply requires `sudo niri+ install` and uses the verified snapshot transaction described above.
+- `niri+ status`: read-only host/session/package/service summary; Quickshell is optional and may be `NOT_CONFIGURED`. Gamescope and Steam remain optional/unavailable until separately validated.
+- `niri+ install [--dry-run]`: dry-run is read-only; apply requires `sudo`. Updates an already registered Quickshell plugin jointly, but never installs an absent plugin.
+- `niri+ plugin list|status quickshell|install quickshell|remove quickshell`: closed registry for the optional visual plugin. First install requires `sudo`; removal preserves the shared RPM engine and independent `qs` installs.
+- `niri+ preflight`: read-only checks for Fedora/architecture, install state, plugin pins, protected paths, Plasma entry, disk space, and offline recovery.
+- `niri+ recovery prepare|status|restore`: `prepare` writes `/var/lib/niri-plus/recovery`; `status` is read-only; `restore` requires root and works from Plasma or a TTY without network.
 - `niri+ rollback`: restores only files recorded by the installer; package removal is opt-in with `--remove-packages`.
 - `niri+ uninstall`: removes tracked session files and only packages recorded as newly installed; it does not remove shared dependencies or protected system components.
 - `niri+ doctor`: read-only diagnostics, including managed-file checksums and M1-required hardware checks.
 - `niri+ benchmark [--runs N] [--output FILE]`: forwards arguments to the existing Phase A collector.
+- `niri+ memory [--series]`: read-only global/process/cgroup/optional DRM memory report; JSON includes sensitive process metadata and warns before writing.
 - `niri+ update`: safe unavailable stub; use `sudo niri+ install` for refresh and repair.
+
+`--with-quickshell` is no longer accepted by this candidate. The Niri+ 0.1.9
+CLI on the current M1 does not have plugin commands; only use the exact,
+separately pinned RC preparation procedure in [`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md).
 
 ## Cloud checks and M1-required validation
 

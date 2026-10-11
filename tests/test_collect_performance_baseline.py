@@ -71,7 +71,7 @@ class CollectorTests(unittest.TestCase):
             source_package = SCRIPT.parents[1] / "niri_plus"
             shutil.copytree(source_package, package_dir)
             data_dir = local / "share/niri-plus"
-            (data_dir / "VERSION").write_text("0.1.9\n")
+            (data_dir / "VERSION").write_text("0.1.10\n")
             installed_cli = bin_dir / "niri+"
             bootstrap = runpy.run_path(
                 str(SCRIPT.parents[1] / "scripts/bootstrap-niri-plus"), run_name="bootstrap-test",
@@ -89,7 +89,14 @@ class CollectorTests(unittest.TestCase):
                 text=True, capture_output=True, check=False, timeout=15,
             )
             self.assertEqual(version.returncode, 0, version.stderr)
-            self.assertIn("Niri+ 0.1.9", version.stdout)
+            self.assertIn("Niri+ 0.1.10", version.stdout)
+
+            brightness_help = subprocess.run(
+                [sys.executable, "-I", str(installed_cli), "brightness", "set", "--help"],
+                cwd=temp, env=env, text=True, capture_output=True, check=False, timeout=15,
+            )
+            self.assertEqual(brightness_help.returncode, 0, brightness_help.stderr)
+            self.assertIn("--device", brightness_help.stdout)
 
             output = root / "memory.json"
             completed = subprocess.run(
@@ -186,8 +193,14 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(malformed["malformed_keys"], ["drm-resident-memory"])
 
     def test_drm_fdinfo_deduplicates_same_client_across_pids_and_marks_unaccounted(self):
-        rows = [{"pid": 101, "name": "niri"}, {"pid": 102, "name": "qs"}]
-        for pid in (101, 102):
+        rows = [{"pid": 101, "name": "niri", "start_time_ticks": 1010},
+                {"pid": 102, "name": "qs", "start_time_ticks": 1020}]
+        for pid, start_time in ((101, 1010), (102, 1020)):
+            proc = self.root / f"proc/{pid}"
+            proc.mkdir(parents=True)
+            tail = ["S"] + ["0"] * 19
+            tail[19] = str(start_time)
+            (proc / "stat").write_text(f"{pid} (gpu client) " + " ".join(tail) + "\n")
             fdinfo = self.root / f"proc/{pid}/fdinfo"
             fdinfo.mkdir(parents=True)
             (fdinfo / "3").write_text(
@@ -201,6 +214,57 @@ class CollectorTests(unittest.TestCase):
         result = collector_module.benchmark_metrics.drm_fdinfo_snapshot(self.root, rows)
         self.assertEqual(result["status"], collector_module.NOT_ACCOUNTED)
         self.assertIsNone(result["value"])
+
+    def test_drm_fdinfo_discards_observations_if_pid_is_reused_during_scan(self):
+        pid = 101
+        start_time = 1010
+        proc = self.root / f"proc/{pid}"
+        proc.mkdir(parents=True)
+        stat = proc / "stat"
+
+        def write_stat(value):
+            tail = ["S"] + ["0"] * 19
+            tail[19] = str(value)
+            stat.write_text(f"{pid} (gpu client) " + " ".join(tail) + "\n")
+
+        write_stat(start_time)
+        fdinfo = proc / "fdinfo"
+        fdinfo.mkdir()
+        fd = fdinfo / "3"
+        fd.write_text("drm-driver: asahi\ndrm-client-id: 7\ndrm-resident-memory: 2 MiB\n")
+        real_read_text = collector_module.benchmark_metrics.read_text
+
+        def reuse_pid_after_fdinfo_read(path):
+            result = real_read_text(path)
+            if path == fd:
+                write_stat(start_time + 1)
+            return result
+
+        with mock.patch.object(
+            collector_module.benchmark_metrics, "read_text", side_effect=reuse_pid_after_fdinfo_read,
+        ):
+            result = collector_module.benchmark_metrics.drm_fdinfo_snapshot(
+                self.root, [{"pid": pid, "name": "niri", "start_time_ticks": start_time}],
+            )
+        self.assertEqual(result["status"], collector_module.UNAVAILABLE)
+        self.assertIsNone(result["value"])
+        self.assertEqual(result["clients"], [])
+        self.assertEqual(result["coverage"]["identity_changed"], 1)
+
+    def test_drm_fdinfo_is_unavailable_when_process_identity_is_missing(self):
+        pid = 101
+        fdinfo = self.root / f"proc/{pid}/fdinfo"
+        fdinfo.mkdir(parents=True)
+        (fdinfo / "3").write_text(
+            "drm-driver: asahi\ndrm-client-id: 7\ndrm-resident-memory: 2 MiB\n"
+        )
+        result = collector_module.benchmark_metrics.drm_fdinfo_snapshot(
+            self.root, [{"pid": pid, "name": "niri"}],
+        )
+        self.assertEqual(result["status"], collector_module.UNAVAILABLE)
+        self.assertIsNone(result["value"])
+        self.assertEqual(result["coverage"]["identity_unavailable"], 1)
+        self.assertEqual(result["clients"], [])
 
     def test_process_smaps_rollup_and_faults_use_live_metrics_path(self):
         proc = self.root / "proc/101"

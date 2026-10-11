@@ -463,3 +463,35 @@ def compare_benchmarks(
     if json_output:
         print(f"Wrote machine-readable comparison to {json_output}")
     return 0
+
+
+def compare_quickshell_candidate_benchmarks(
+    known_good: str,
+    candidate: str,
+    output: str,
+    json_output: str | None = None,
+    *,
+    allow_asahi_system_commit_change: bool = False,
+) -> int:
+    from . import benchmark_compare
+
+    try:
+        result = benchmark_compare.compare_quickshell_candidate_files(
+            pathlib.Path(known_good),
+            pathlib.Path(candidate),
+            allow_asahi_system_commit_change=allow_asahi_system_commit_change,
+        )
+        markdown = benchmark_compare.render_quickshell_candidate_markdown(result)
+        benchmark_compare.write_atomic(pathlib.Path(output), markdown)
+        if json_output:
+            benchmark_compare.write_atomic(
+                pathlib.Path(json_output),
+                json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            )
+    except (benchmark_compare.ComparisonError, OSError) as exc:
+        print(f"Quickshell candidate comparison failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"Wrote Quickshell C0/C1 comparison to {output}")
+    if json_output:
+        print(f"Wrote machine-readable comparison to {json_output}")
+    return 0
