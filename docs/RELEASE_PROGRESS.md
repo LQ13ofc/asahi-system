@@ -8,11 +8,10 @@ Updated: 2026-10-11
 another post-install mismatch: root-frozen snapshot modes were compared against
 the explicit 0755 modes assigned to installed collectors. A 0.1.15 candidate on
 PR #27 now has a protected-snapshot install test and explicit installed-mode
-checks. CI run `38097400042` passed on code head
-`9a7a0f4485d5b64dcdfa69a723ec5aad2698679a`; run `38097464723` passed on
-progress head `30a725207e44aa6f65495d6974ed3ccc72a26ebf`. This status-only
-commit advances the PR head again: keep `--apply` NO-GO until CI succeeds on
-that exact latest head. A green result opens only a controlled M1 retest.
+checks. GitHub Actions `Validate baseline` run `38097620641` passed on
+`20cd33672191da48d20c38c375240917bdc615d9`. Before an M1 apply, require CI
+green on the exact current PR #27 head; every new commit must be checked again.
+A green result permits only a controlled M1 retest.
 No M1 files or quarantine backups were accessed or modified.
 
 ## Candidate references and preserved state
@@ -154,8 +153,8 @@ Actions runs are successful.
 ## Remaining release gate work
 
 The clean-install mode blocker is fixed and the Cloud suite passes. This
-candidate remains **NO-GO for another M1 apply until CI passes on PR #27's
-latest head**. Hardware-only checks remain `M1_REQUIRED`: real Fedora Asahi
+candidate remains **NO-GO for another M1 apply unless CI is green on PR #27's
+exact current head**. Hardware-only checks remain `M1_REQUIRED`: real Fedora Asahi
 44/aarch64 DNF/COPR/RPM availability, SDDM/Niri/Quickshell lifecycle,
 audio/network/input, Plasma recovery, offline TTY restore, and hardware
 performance. No M1 command was run.
