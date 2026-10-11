@@ -4,11 +4,13 @@ Updated: 2026-10-11
 
 ## Current release gate status
 
-`M1_APPLY_NO_GO / IMPLEMENTATION_IN_PROGRESS`. The clean 0.1.14 apply exposed
+`M1_APPLY_NO_GO / CLOUD_VALIDATED / FINAL_CI_PENDING`. The clean 0.1.14 apply exposed
 another post-install mismatch: root-frozen snapshot modes were compared against
 the explicit 0755 modes assigned to installed collectors. A 0.1.15 candidate on
 PR #27 now has a protected-snapshot install test and explicit installed-mode
-checks. Do not retry the M1 apply until CI passes on PR #27's current head.
+checks. CI run `38097400042` passed on code head
+  `9a7a0f4485d5b64dcdfa69a723ec5aad2698679a`. This progress-file update will
+  advance the PR head, so wait for that new head's CI before any M1 apply.
 No M1 files or quarantine backups were accessed or modified.
 
 ## Candidate references and preserved state
@@ -150,8 +152,8 @@ Actions runs are successful.
 ## Remaining release gate work
 
 The clean-install mode blocker is fixed and the Cloud suite passes. This
-candidate remains **NO-GO for another M1 apply until CI passes on PR #27's final
-head**. Hardware-only checks remain `M1_REQUIRED`: real Fedora Asahi
+candidate remains **NO-GO for another M1 apply until CI passes on PR #27's
+latest head**. Hardware-only checks remain `M1_REQUIRED`: real Fedora Asahi
 44/aarch64 DNF/COPR/RPM availability, SDDM/Niri/Quickshell lifecycle,
 audio/network/input, Plasma recovery, offline TTY restore, and hardware
 performance. No M1 command was run.
