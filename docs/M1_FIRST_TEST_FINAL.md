@@ -41,9 +41,11 @@ O PR #25 corrigiu o bloqueio observado na migração 0.1.9. O recovery não
 percorre, empacota nem restaura `/var/lib/niri-plus/bootstrap-backups`; mantém
 esse histórico no host sem alterações. Um link antigo para o submódulo dentro
 desse diretório não é seguido nem recriado pela recuperação. Symlinks ativos
-fora desse histórico continuam sujeitos às validações estritas. O novo PR #26
-corrige a verificação pós-instalação 0.1.13 e só mostra sucesso após validar e
-confirmar a transação.
+fora desse histórico continuam sujeitos às validações estritas. O PR #26
+corrigiu a normalização de caminhos da verificação pós-instalação. A falha
+posterior em instalação limpa mostrou que os coletores instalados recebem modo
+0755 enquanto o snapshot protegido é somente leitura; o PR #27 compara o modo
+de instalação esperado e mantém validações de tipo, conteúdo e execução.
 
 ```sh
 niri+ preflight
@@ -62,13 +64,17 @@ instalação independente de `qs` não ativa o plugin.
 
 ## D. Commits e hashes
 
+**NO-GO para `--apply` no M1 até o CI do head atual do PR #27 passar.**
+Depois de qualquer avanço do PR, repita a comparação do SHA do head remoto com
+o objeto fixado e derive novamente o checksum do helper desse commit.
+
 Use um clone novo e pertencente ao usuário normal. Os comandos abaixo obtêm a
-head aberta do PR #26 sem trocar de branch e conferem o gitlink e lockfile com
+head aberta do PR #27 sem trocar de branch e conferem o gitlink e lockfile com
 o pin aprovado do Quickshell. `git fetch` não executa arquivos do checkout como
 root:
 
 ```sh
-export RC_PR=26
+export RC_PR=27
 export RC_QUICKSHELL_COMMIT=d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3
 export RC_SOURCE="$HOME/Projects/niri-plus-release-source"
 export RC_DIR="$HOME/.cache/niri-plus-release"
@@ -96,14 +102,19 @@ printf '%s  %s\n' "$RC_BOOTSTRAP_SHA256" "$RC_DIR/niri-plus-rc-bootstrap" | sha2
 ```
 
 O canal normal continua em `main` e o pin de produção em
-`55e92880d0aff75d235f283c839ec0990eaa9e17`. O candidato do PR #26 é Niri+
-`0.1.14`; somente o helper opt-in abaixo instala o head RC exato e o Quickshell
+`55e92880d0aff75d235f283c839ec0990eaa9e17`. O candidato do PR #27 é Niri+
+`0.1.15`; somente o helper opt-in abaixo instala o head RC exato e o Quickshell
 `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`.
 
-Para o head `a9e19bb1a66e3251b01e741b93095e862286fceb`, o SHA-256 do helper é
-`eee5ce4bca55ee2d709539f6c9e330923794be0e63ef96a55cc97f0576e762fe`. O bloco
-acima calcula e verifica novamente o hash do head remoto; se o PR avançar,
-use somente o valor derivado do novo head.
+Use apenas o SHA-256 derivado do helper no head exato do PR #27. O bloco acima
+calcula o hash do blob e compara com o download por HTTPS; não reutilize o hash
+do PR #26 nem de outro head se o PR avançar.
+
+Para o conteúdo atual deste candidato, o SHA-256 esperado de
+`scripts/niri-plus-rc-bootstrap` é
+`6bb5429517786e47c73a881c3c36fb823ac24cc9bc86566c1a12b94a12c31324`.
+Confirme-o novamente contra o head remoto antes de executar; qualquer novo
+commit no helper invalida esse valor.
 
 ## E. Dry-run experimental
 

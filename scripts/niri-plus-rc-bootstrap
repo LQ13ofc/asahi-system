@@ -28,7 +28,7 @@ import tempfile
 
 SYSTEM_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
 SYSTEM_REPOSITORY_SSH = "git@github.com:LQ13ofc/asahi-system.git"
-PR_REF = "refs/pull/26/head"
+PR_REF = "refs/pull/27/head"
 SOURCE_MODULE = "niri_plus/source_update.py"
 BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 VISUAL_DATA = pathlib.Path("/usr/local/share/niri-plus")

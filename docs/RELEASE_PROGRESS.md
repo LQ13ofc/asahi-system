@@ -1,24 +1,25 @@
 # Niri+ Release Progress
 
-Updated: 2026-10-10
+Updated: 2026-10-11
 
 ## Current release gate status
 
-`M1_RETEST_GO / CLOUD_VALIDATED / M1_REQUIRED`. The 0.1.13 apply reached
-post-install verification and exposed string/Path mismatches in the real-root
-path branch. A new 0.1.14 candidate on PR #26 fixes normalization, narrows the
-preflight catch to known state mismatches, and delays success output until the
-transaction commits. No M1 files were accessed or modified by this work.
+`M1_APPLY_NO_GO / IMPLEMENTATION_IN_PROGRESS`. The clean 0.1.14 apply exposed
+another post-install mismatch: root-frozen snapshot modes were compared against
+the explicit 0755 modes assigned to installed collectors. A 0.1.15 candidate on
+PR #27 now has a protected-snapshot install test and explicit installed-mode
+checks. Do not retry the M1 apply until CI passes on PR #27's current head.
+No M1 files or quarantine backups were accessed or modified.
 
 ## Candidate references and preserved state
 
 | Component | Ref | Current policy |
 |---|---|---|
-| `asahi-system` | PR #26 draft, branch `fix/snapshot-postinstall-paths-0.1.14`; cumulative on PR #25 | candidate version `0.1.14`; RC helper verifies the exact open PR head |
+| `asahi-system` | new PR #27, branch `fix/snapshot-install-modes-0.1.15`; cumulative on PR #26 | candidate version `0.1.15`; RC helper verifies the exact open PR head |
 | `quickshell-` | PR #15 exact commit `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3` | candidate visual pin, unchanged |
 | production | `origin/main` commit `5339e34811763c6169f64d15aaae738982fa1738` | Niri+ `0.1.9`, Quickshell pin `55e92880d0aff75d235f283c839ec0990eaa9e17` |
 
-Production `main`, PR #25, PR #24, PR #22/#15, Graphify PR #23/#16, and the
+Production `main`, PRs #25/#26, PR #24, PR #22/#15, Graphify PR #23/#16, and the
 known-good Quickshell pin were not modified. Quickshell source remains a separate
 repository and optional runtime; the system CLI does not copy QML into
 asahi-system.
@@ -30,7 +31,8 @@ asahi-system.
 - `1bbefa5` — prior candidate version 0.1.13 and recovery-history correction.
 - `8f27c75` — fixes post-install path normalization and success-message timing;
   tests actual managed maps and transaction rollback.
-- This follow-up is based on PR #25 and will create PR #26; no merge is planned.
+- This follow-up is based on PR #26; it preserves the earlier candidates and
+  does not merge them or alter production.
 
 ## Completed in this continuation
 
@@ -55,12 +57,9 @@ with `NOKEY` is rejected). Newly owned RPMs are removed only when the previous
 inventory proves they were absent, using offline DNF and `--noautoremove`; if
 cached DNF cannot prove optional cleanup, managed-file restoration still
 completes and the remaining RPMs are reported.
-- RC bootstrap is now pinned to PR #26 and exact Quickshell commit
-`d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`; production resolver remains
-main-only. RC Quickshell install requires `--with-quickshell` when no managed
-plugin exists and updates an existing plugin as a pair. Dry-run now rejects an
-incompatible host before Git/network access. The current M1 guide uses this
-explicit RC flow; prior PR #19/#21/#22 procedures are visibly archived.
+- Prior 0.1.14 RC bootstrap was pinned to PR #26 and exact Quickshell commit
+  `d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3`; production resolver remains
+  main-only. This branch advances only the explicit RC reference to PR #27.
 - The M1 instructions no longer tell the installed 0.1.9 CLI to run commands
 it does not have. That version can provide `status`/`doctor`; the explicit RC
 dry-run is read-only, and candidate apply builds/verifies recovery before its
@@ -88,9 +87,27 @@ first host mutation.
 - The bootstrap no longer emits “Installed Niri+ CLI …” while files are only
   staged. The CLI's committed-success message remains after post-install
   verification, package finalization, and the filesystem transaction commit.
-- Added full first-test procedure, collector installer, plugin/update and offline
-recovery documentation. The RC bootstrap checksum and exact system commit must
-be derived from the final PR head; no stale checksum is published here.
+- The third M1 blocker was reproduced with a snapshot materialized and protected
+  by the same `_protect_snapshot` routine as the privileged flow: source modes
+  were 0555 for the executable Python collector and 0444 for the shell collector
+  tracked as Git mode 100644, while bootstrap intentionally installs both at
+  0755. Type and contents matched; only the installed mode contract differed.
+- Earlier e2e fixtures did not run the root-only snapshot freeze pass. Their
+  source checkout remained writable and retained its original modes, so the
+  collector signatures matched accidentally. The strengthened test uses a
+  protected Git snapshot and calls the real verifier during a first install
+  with `plugin_action=install` and an empty simulated host.
+- `_tree_signature` remains mode-sensitive for copied trees. Collector checks
+  separately validate regular-file type, bytes and exact installed mode 0755;
+  the verifier also checks generated `niri+` launcher bytes/mode and the
+  standalone recovery helper bytes/mode.
+- Fault injection after the real verifier succeeds exercises the real
+  transaction rollback. The clean-root integration test checks that the plugin
+  manifest is removed, verifies the offline bundle as READY, restores an
+  interrupted managed path offline, and confirms the bundle digest is unchanged.
+- The current RC bootstrap helper SHA-256 is
+  `6bb5429517786e47c73a881c3c36fb823ac24cc9bc86566c1a12b94a12c31324`;
+  rederive it from the final PR head if the helper changes.
 
 ## Cloud evidence so far
 
@@ -106,21 +123,19 @@ Quickshell fetch, and incompatible-host rejection before network access.
 running-process probe.
 - `python3 -m unittest discover -s tests -p 'test_release_candidate_docs.py' -v`:
 1 passed.
-- Previous full `python3 -m unittest discover -s tests -v`: 292 passed, but did
-  not cover the concrete real-root post-install verifier bug described above.
-- New targeted verifier suite: 5 passed, including complete real `MANAGED_FILES`,
-  `MANAGED_LINKS`, state entries, `/` and temporary-root normalization,
-  programming-error propagation, post-apply verification/finalization failure,
-  transaction rollback, and offline bundle verification/restoration.
-- Final full `python3 -m unittest discover -s tests -v`: 297 passed.
+- Earlier full runs (292/297 tests) did not exercise a root-protected snapshot
+  in first-install plugin mode, so the chmod mismatch was not represented.
+- Current `python3 -m unittest discover -s tests -v`: 299 passed. This includes
+  all 7 targeted post-install verifier tests and the end-to-end protected
+  snapshot first-install test with actual verifier and `plugin_action=install`.
 - `python3 -m compileall -q niri_plus scripts tests`,
   `python3 scripts/validate_baseline.py`, and `git diff --check`: passed.
-- Snapshot security/integration suite: 36 passed with the actual post-install
-  verifier enabled in the resolved-snapshot transaction path; bootstrap/apply/
-  verify fault injection restores staged paths, and no interim success message
-  appears on failure.
-- `scripts/validate_baseline.py`, `compileall`, both bootstrap `py_compile`
-checks, collector `bash -n`, and `git diff --check`: passed.
+- Full security/integration coverage passed in the current 299-test suite. Fault
+  injection after verification restored the clean simulated host and preserved
+  the verified offline recovery bundle.
+- Current `scripts/validate_baseline.py`, `compileall`, collector/bootstrap
+  `bash -n`, and `git diff --check`: passed. `ruff` and `shellcheck` are not
+  installed in this Cloud image; no project lint configuration declares them.
 - Quickshell PR #15 exact head: compileall and 45 tests passed; 59 QML files
 loaded without errors/late warnings; all scenes rendered; qmllint exited 0 with
 193 classified warnings (162 unqualified, 20 missing-property, 6 import, 3
@@ -134,12 +149,12 @@ Actions runs are successful.
 
 ## Remaining release gate work
 
-The blocker is clear for a controlled M1 retest: all Cloud tests and PR #26 CI
-passed. Do not treat this as physical validation. Remaining hardware-only
-checks are `M1_REQUIRED`: real Fedora Asahi 44/aarch64 DNF/COPR/RPM availability,
-SDDM/Niri/Quickshell lifecycle, audio/network/input, Plasma recovery, offline
-TTY restore, and hardware performance. No M1 command was run or requested in
-this Cloud session.
+The clean-install mode blocker is fixed and the Cloud suite passes. This
+candidate remains **NO-GO for another M1 apply until CI passes on PR #27's final
+head**. Hardware-only checks remain `M1_REQUIRED`: real Fedora Asahi
+44/aarch64 DNF/COPR/RPM availability, SDDM/Niri/Quickshell lifecycle,
+audio/network/input, Plasma recovery, offline TTY restore, and hardware
+performance. No M1 command was run.
 
 The exact operator procedure is [`M1_FIRST_TEST_FINAL.md`](M1_FIRST_TEST_FINAL.md).
 It verifies the live PR head and derives the bootstrap SHA-256 from that
