@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import runpy
+import stat
 import sys
 
 from . import install_transaction, source_update
@@ -55,16 +56,57 @@ def _tree_signature(path: pathlib.Path) -> tuple:
     return ("directory", tuple(children))
 
 
+def _verify_regular_file_mode(path: pathlib.Path, label: str, expected_mode: int) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise InstallVerificationError(f"managed file is unavailable: {label}: {exc}") from exc
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != expected_mode:
+        raise InstallVerificationError(f"managed file has unexpected type or mode: {label}")
+    return metadata
+
+
+def _verify_installed_executable(source: pathlib.Path, target: pathlib.Path, label: str,
+                                *, expected_bytes: bytes | None = None) -> None:
+    """Compare executable payloads while checking their installed mode policy.
+
+    Root-owned snapshots intentionally lose write bits after Git modes are
+    validated. Installation may set a different, explicit executable mode.
+    """
+    try:
+        source_stat = source.lstat()
+        target_stat = target.lstat()
+    except OSError as exc:
+        raise InstallVerificationError(f"executable payload is unavailable: {label}: {exc}") from exc
+    if not stat.S_ISREG(source_stat.st_mode):
+        raise InstallVerificationError(f"executable payload is not a regular file: {label}")
+    if not stat.S_ISREG(target_stat.st_mode):
+        raise InstallVerificationError(f"installed executable is not a regular file: {label}")
+    if stat.S_IMODE(target_stat.st_mode) != 0o755:
+        raise InstallVerificationError(f"installed executable has unexpected mode: {label}")
+    source_bytes = source.read_bytes()
+    target_bytes = target.read_bytes()
+    if source_bytes != target_bytes or (expected_bytes is not None and target_bytes != expected_bytes):
+        raise InstallVerificationError(f"installed executable content differs from snapshot: {label}")
+
+
+def _verify_generated_executable(target: pathlib.Path, expected_bytes: bytes | None,
+                                 label: str) -> None:
+    _verify_regular_file_mode(target, label, 0o755)
+    if expected_bytes is not None and target.read_bytes() != expected_bytes:
+        raise InstallVerificationError(f"generated executable differs from the verified snapshot: {label}")
+
+
 def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, install_module,
-                              root: pathlib.Path = pathlib.Path("/")) -> None:
+                              root: pathlib.Path = pathlib.Path("/"), *,
+                              expected_launcher: bytes | None = None) -> None:
     version = (snapshot_root / "VERSION").read_text(encoding="utf-8").strip()
     include_quickshell = manifest["quickshell"].get("included", True)
     bootstrap_path = _rooted_install_path(root, "/var/lib/niri-plus/bootstrap.json")
     install_module.ensure_no_symlink_parents(root, bootstrap_path)
     if bootstrap_path.is_symlink():
         raise InstallVerificationError("bootstrap state is a symlink")
-    if not bootstrap_path.is_file():
-        raise InstallVerificationError("bootstrap state is missing or not a regular file")
+    _verify_regular_file_mode(bootstrap_path, "bootstrap state", 0o644)
     bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
     qs_commit = bootstrap.get("quickshell_expected_commit")
     channel = manifest.get("channel", "production")
@@ -72,7 +114,12 @@ def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, insta
             or bootstrap.get("source_channel", "production") != channel
             or (include_quickshell and qs_commit != manifest["quickshell"]["commit"])):
         raise InstallVerificationError("CLI/assets/pin state do not describe the resolved snapshot")
+    launcher_path = _rooted_install_path(root, "/usr/local/bin/niri+")
+    install_module.ensure_no_symlink_parents(root, launcher_path)
+    _verify_generated_executable(launcher_path, expected_launcher, "/usr/local/bin/niri+")
     state = install_module.load_state(root)
+    state_path = _rooted_install_path(root, install_module.STATE_PATH)
+    _verify_regular_file_mode(state_path, "Niri+ session state", 0o644)
     if state.get("applied_version") != version or state.get("quickshell", {}).get("expected_commit") != qs_commit:
         raise InstallVerificationError("session state and CLI/Quickshell snapshot do not describe the same install")
     for absolute, source in install_module.MANAGED_FILES.items():
@@ -80,7 +127,9 @@ def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, insta
             continue
         target = _rooted_install_path(root, absolute)
         install_module.ensure_no_symlink_parents(root, target)
-        if target.is_symlink() or not target.is_file() or target.read_bytes() != source.read_bytes():
+        if (target.is_symlink() or not target.is_file()
+                or target.stat().st_mode & 0o111
+                or target.read_bytes() != source.read_bytes()):
             raise InstallVerificationError(f"managed file failed post-install verification: {absolute}")
     for absolute, link_target in install_module.MANAGED_LINKS.items():
         if not include_quickshell and absolute in install_module.QUICKSHELL_MANAGED_LINKS:
@@ -94,6 +143,8 @@ def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, insta
         if not qml_root.is_dir() or not (qml_root / "shell.qml").is_file():
             raise InstallVerificationError("pinned Quickshell runtime files were not committed")
         plugin_state_path = _rooted_install_path(root, "/var/lib/niri-plus/plugins.json")
+        if plugin_state_path.exists() or plugin_state_path.is_symlink():
+            _verify_regular_file_mode(plugin_state_path, "plugin state", 0o644)
         plugin_action = manifest.get("plugin_action", "none")
         if plugin_action != "none":
             from . import plugins
@@ -118,24 +169,26 @@ def _verify_committed_install(snapshot_root: pathlib.Path, manifest: dict, insta
     if _tree_signature(source_data) != _tree_signature(installed_data):
         raise InstallVerificationError("installed Niri+ CLI modules differ from the verified snapshot")
     data_base = _rooted_install_path(root, "/usr/local/share/niri-plus")
-    for name in ("niri", "sessions", "integration", "scripts/collect-performance-baseline",
-                 "scripts/collect-m1-release-gate.sh"):
+    for name in ("niri", "sessions", "integration"):
         source = snapshot_root / name
         installed = data_base / name
         if _tree_signature(source) != _tree_signature(installed):
             raise InstallVerificationError(f"installed Niri+ data differs from verified snapshot: {name}")
+    for name in ("scripts/collect-performance-baseline", "scripts/collect-m1-release-gate.sh"):
+        _verify_installed_executable(snapshot_root / name, data_base / name, name)
     recovery_helper = _rooted_install_path(root, "/usr/local/libexec/niri-plus-recover")
     install_module.ensure_no_symlink_parents(root, recovery_helper)
-    if recovery_helper.is_symlink() or not recovery_helper.is_file():
-        raise InstallVerificationError("standalone offline recovery helper is missing or not a regular file")
-    if recovery_helper.read_bytes() != (snapshot_root / "niri_plus/recovery_core.py").read_bytes():
-        raise InstallVerificationError("standalone offline recovery helper differs from the verified snapshot")
+    _verify_installed_executable(
+        snapshot_root / "niri_plus/recovery_core.py", recovery_helper,
+        "/usr/local/libexec/niri-plus-recover",
+    )
 
 
 def _installed_snapshot_matches(snapshot_root: pathlib.Path, manifest: dict, install_module,
-                                root: pathlib.Path) -> bool:
+                                root: pathlib.Path, *, expected_launcher: bytes | None = None) -> bool:
     try:
-        _verify_committed_install(snapshot_root, manifest, install_module, root)
+        _verify_committed_install(snapshot_root, manifest, install_module, root,
+                                  expected_launcher=expected_launcher)
     except InstallVerificationError:
         return False
     return True
@@ -185,10 +238,12 @@ def _apply_snapshot_locked(snapshot_root: pathlib.Path, manifest_path: pathlib.P
     bootstrap_namespace = runpy.run_path(
         str(snapshot_root / "scripts/bootstrap-niri-plus"), run_name="niri_plus_snapshot_bootstrap",
     )
+    expected_launcher = bootstrap_namespace["launcher"]().encode("utf-8")
     from . import install as install_module
 
     already_current = False
-    if _installed_snapshot_matches(snapshot_root, manifest, install_module, root):
+    if _installed_snapshot_matches(snapshot_root, manifest, install_module, root,
+                                   expected_launcher=expected_launcher):
         package_names = (*install_module.PACKAGES,
                          *((install_module.QUICKSHELL_PACKAGE,) if include_quickshell else ()))
         if root == pathlib.Path("/"):
@@ -249,7 +304,10 @@ def _apply_snapshot_locked(snapshot_root: pathlib.Path, manifest_path: pathlib.P
                 install_module, snapshot_root, manifest, include_quickshell, plugin_action,
                 prior_plugin_state, root, recovery_bundle,
             ),
-            lambda: _verify_committed_install(snapshot_root, manifest, install_module, root),
+            lambda: _verify_committed_install(
+                snapshot_root, manifest, install_module, root,
+                expected_launcher=expected_launcher,
+            ),
             finalize_packages,
             root=root,
         )

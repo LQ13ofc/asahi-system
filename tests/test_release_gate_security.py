@@ -13,12 +13,13 @@ import struct
 import subprocess
 import sys
 import shutil
+import stat
 import tempfile
 import threading
 import unittest
 from unittest import mock
 
-from niri_plus import install_command, install_transaction, snapshot_install, source_update, wayland_ready
+from niri_plus import install_command, install_transaction, plugins, snapshot_install, source_update, wayland_ready
 
 
 def git(args, **kwargs):
@@ -101,6 +102,13 @@ class GitSnapshotTests(unittest.TestCase):
             **kwargs,
         )
 
+    @contextlib.contextmanager
+    def _protected_snapshot(self, **kwargs):
+        with self._snapshot(**kwargs) as snapshot:
+            root = snapshot.manifest.parent
+            source_update._protect_snapshot(root, snapshot.root, snapshot.manifest)
+            yield snapshot
+
     def test_resolved_visual_commit_installs_as_one_reversible_host_transaction(self):
         # Build a complete, isolated candidate from real Git objects, then run
         # the actual snapshot bootstrap and system-file installer against a
@@ -119,7 +127,8 @@ class GitSnapshotTests(unittest.TestCase):
         bootstrap_source = pathlib.Path(__file__).resolve().parents[1] / "scripts/bootstrap-niri-plus"
         shutil.copy2(bootstrap_source, self.asahi_seed / "scripts/bootstrap-niri-plus")
         (self.asahi_seed / "scripts/collect-performance-baseline").chmod(0o755)
-        (self.asahi_seed / "scripts/collect-m1-release-gate.sh").chmod(0o755)
+        # Keep the repository's real 100644 mode; install_snapshot promotes
+        # this helper to 0755 for its installed execution contract.
         self._write_system_tree("0.1.2", self.qs_commit)
         candidate_commit = commit_all(self.asahi_seed, "complete candidate installation tree")
         git(["-C", str(self.asahi_seed), "push", "origin", "main"],
@@ -130,16 +139,10 @@ class GitSnapshotTests(unittest.TestCase):
         real_run_path = snapshot_install.runpy.run_path
         real_mkdtemp = tempfile.mkdtemp
         original_transaction = snapshot_install.run_install_transaction
-        original_verify = snapshot_install._verify_committed_install
+        original_rollback = install_transaction.FilesystemTransaction.rollback
 
         def exercise(host_root: pathlib.Path, snapshot, failure: str | None = None) -> None:
             version = (snapshot.root / "VERSION").read_text(encoding="utf-8").strip()
-            snapshot_manifest = source_update.validate_snapshot(
-                snapshot.root, snapshot.manifest,
-                expected_repository=snapshot.expected_repository,
-                expected_quickshell_repository=snapshot.expected_quickshell_repository,
-                allow_test_file_sources=snapshot.allow_test_file_sources,
-            )
             qs_commit = snapshot.quickshell_commit
             staged_roots = {
                 "lib": host_root / "usr/local/lib/niri-plus",
@@ -149,6 +152,11 @@ class GitSnapshotTests(unittest.TestCase):
                 "backups": host_root / "var/lib/niri-plus/bootstrap-backups",
                 "recovery": host_root / "usr/local/libexec/niri-plus-recover",
             }
+            self.assertFalse(staged_roots["state"].exists(), "first install must not inherit bootstrap state")
+            self.assertFalse((host_root / "var/lib/niri-plus/plugins.json").exists(),
+                             "first install must not inherit a plugin manifest")
+            self.assertFalse((host_root / "var/lib/rpm").exists(),
+                             "isolated first-install root has no preinstalled RPM database")
             (host_root / "usr/local").mkdir(parents=True, exist_ok=True)
 
             def run_snapshot_script(path, *args, **kwargs):
@@ -174,20 +182,27 @@ class GitSnapshotTests(unittest.TestCase):
                 install_command.install.install_files(host_root, include_quickshell=include_quickshell)
                 state = install_command.install.load_state(host_root)
                 state["applied_version"] = version
-                state["packages_installed_by_us"] = ["niri", "foot"]
+                state["packages_installed_by_us"] = sorted(
+                    set(install_command.install.PACKAGES)
+                    | {install_command.install.QUICKSHELL_PACKAGE}
+                )
                 install_command.install.update_quickshell_state(state, qs_commit, included=include_quickshell)
                 install_command.install.write_state(host_root, state)
                 if failure == "apply":
                     raise RuntimeError("injected apply failure")
 
-            verify_calls = 0
-
-            def verify_candidate(*_args) -> None:
-                nonlocal verify_calls
-                verify_calls += 1
-                original_verify(snapshot.root, snapshot_manifest, install_command.install, host_root)
-                if failure == "verify" and verify_calls > 1:
-                    raise RuntimeError("injected verify failure")
+            def emulate_root_removal(transaction_object) -> None:
+                # A real root installer can unlink inside snapshot-mode 0555
+                # directories. Give this user-owned fixture equivalent
+                # directory mutation capability before invoking real rollback.
+                for absolute in transaction_object.paths:
+                    target = host_root / absolute.as_posix().lstrip("/")
+                    if target.is_dir() and not target.is_symlink():
+                        for current, _dirs, _files in os.walk(target, topdown=False, followlinks=False):
+                            directory = pathlib.Path(current)
+                            if not directory.is_symlink():
+                                directory.chmod(directory.stat().st_mode | 0o700)
+                original_rollback(transaction_object)
 
             def transaction(paths, bootstrap, apply, verify, finalize=lambda: None, *, root=pathlib.Path("/")):
                 if failure == "bootstrap":
@@ -196,6 +211,12 @@ class GitSnapshotTests(unittest.TestCase):
                         resolved_bootstrap()
                         raise RuntimeError("injected bootstrap failure")
                     bootstrap = fail_after_bootstrap
+                if failure == "verify":
+                    resolved_verify = verify
+                    def fail_after_verified_apply():
+                        resolved_verify()
+                        raise RuntimeError("injected verify failure")
+                    verify = fail_after_verified_apply
                 return original_transaction(paths, bootstrap, apply, verify, finalize, root=host_root)
 
             def patched_bootstrap(path, *args, **kwargs):
@@ -204,18 +225,24 @@ class GitSnapshotTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {}), \
                  mock.patch.object(snapshot_install.source_update, "EXPECTED_REPOSITORY", self.asahi_url), \
                  mock.patch.object(snapshot_install.source_update, "EXPECTED_QUICKSHELL_REPOSITORY", self.qs_url), \
+                 mock.patch.dict(plugins.REGISTRY, {
+                     "quickshell": {**plugins.REGISTRY["quickshell"], "repository": self.qs_url},
+                 }), \
                  mock.patch("os.geteuid", return_value=0), \
                  mock.patch("tempfile.mkdtemp", side_effect=staged_mkdtemp), \
                  mock.patch.object(snapshot_install.runpy, "run_path", side_effect=patched_bootstrap), \
                  mock.patch.object(snapshot_install, "run_install_transaction", side_effect=transaction), \
-                 mock.patch.object(snapshot_install, "_verify_committed_install", side_effect=verify_candidate), \
+                 mock.patch.object(install_transaction.FilesystemTransaction,
+                                   "rollback", new=emulate_root_removal), \
                  mock.patch.object(install_command.install, "apply_install", side_effect=apply_candidate), \
                  mock.patch.object(install_command.install, "install_locked_packages") as package_install, \
                  mock.patch.object(install_command.install, "reload_invoking_user_manager"):
                 old_path = list(sys.path)
                 try:
                     with contextlib.redirect_stdout(io.StringIO()) as transaction_output:
-                        snapshot_install.apply_snapshot(snapshot.root, snapshot.manifest, root=host_root)
+                        snapshot_install.apply_snapshot(
+                            snapshot.root, snapshot.manifest, plugin_action="install", root=host_root,
+                        )
                 finally:
                     sys.path[:] = old_path
                 if failure is None:
@@ -225,6 +252,22 @@ class GitSnapshotTests(unittest.TestCase):
                     marker = json.loads((staged_roots["data"] / "quickshell.snapshot.json").read_text())
                     self.assertEqual(marker["commit"], qs_commit)
                     self.assertEqual(install_command.install.load_state(host_root)["quickshell"]["expected_commit"], qs_commit)
+                    plugin_state, plugin_record = plugins.quickshell_state(host_root)
+                    self.assertEqual(plugin_state, "installed")
+                    self.assertEqual(plugin_record["commit"], qs_commit)
+                    for rel, expected_snapshot_mode in (
+                        ("scripts/collect-performance-baseline", 0o555),
+                        ("scripts/collect-m1-release-gate.sh", 0o444),
+                    ):
+                        source = snapshot.root / rel
+                        installed = staged_roots["data"] / rel
+                        source_meta = source.lstat()
+                        installed_meta = installed.lstat()
+                        self.assertTrue(stat.S_ISREG(source_meta.st_mode))
+                        self.assertTrue(stat.S_ISREG(installed_meta.st_mode))
+                        self.assertEqual(stat.S_IMODE(source_meta.st_mode), expected_snapshot_mode)
+                        self.assertEqual(stat.S_IMODE(installed_meta.st_mode), 0o755)
+                        self.assertEqual(source.read_bytes(), installed.read_bytes())
                     self.assertTrue((host_root / "usr/lib/systemd/user/asahi-quickshell.service").is_file())
                     self.assertEqual(os.readlink(host_root / "usr/lib/systemd/user/graphical-session.target.wants/asahi-quickshell.service"),
                                      "../asahi-quickshell.service")
@@ -237,8 +280,22 @@ class GitSnapshotTests(unittest.TestCase):
                     self.assertFalse(staged_roots["state"].exists())
                     self.assertFalse((host_root / "etc/niri/config.kdl").exists())
                     self.assertFalse((host_root / "usr/lib/systemd/user/asahi-quickshell.service").exists())
+                    self.assertFalse((host_root / "var/lib/niri-plus/plugins.json").exists())
+                    bundle = install_command.recovery.latest_bundle(host_root)
+                    self.assertIsNotNone(bundle)
+                    bundle_digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+                    install_command.recovery._verify_bundle(bundle, host_root)
+                    self.assertIn("READY", install_command.recovery.status(host_root))
+                    interrupted = host_root / "etc/niri/config.kdl"
+                    interrupted.parent.mkdir(parents=True, exist_ok=True)
+                    interrupted.write_text("candidate was interrupted\n", encoding="utf-8")
+                    install_command.recovery.restore(bundle, host_root)
+                    self.assertFalse(interrupted.exists())
+                    self.assertEqual(hashlib.sha256(bundle.read_bytes()).hexdigest(), bundle_digest)
+                    install_command.recovery._verify_bundle(bundle, host_root)
+                    self.assertIn("READY", install_command.recovery.status(host_root))
 
-        with self._snapshot() as snapshot:
+        with self._protected_snapshot() as snapshot:
             self.assertEqual(snapshot.quickshell_commit, self.qs_commit)
             for failure in ("bootstrap", "apply", "verify"):
                 with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temp:
@@ -252,7 +309,8 @@ class GitSnapshotTests(unittest.TestCase):
         # Exercise the new opt-in channel through the same snapshot bootstrap,
         # asset staging, post-install verification and injected rollback path.
         with mock.patch.object(source_update, "RELEASE_CANDIDATE_QUICKSHELL_COMMIT", self.qs_commit):
-            with self._snapshot(release_candidate=True, expected_system_commit=candidate_commit) as snapshot:
+            with self._protected_snapshot(release_candidate=True,
+                                          expected_system_commit=candidate_commit) as snapshot:
                 self.assertEqual(snapshot.system_commit, candidate_commit)
                 for failure in ("bootstrap", "apply", "verify"):
                     with self.subTest(candidate_failure=failure), tempfile.TemporaryDirectory() as temp:

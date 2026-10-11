@@ -60,6 +60,7 @@ def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str,
     scripts.mkdir(parents=True, exist_ok=True)
     for name in ("collect-performance-baseline", "collect-m1-release-gate.sh"):
         _copy_or_replace(ROOT / "scripts" / name, scripts / name)
+        (scripts / name).chmod(0o755)
     quickshell = data / "quickshell"
     quickshell.mkdir(parents=True, exist_ok=True)
     (quickshell / "shell.qml").write_text("// fixture visual runtime\n", encoding="utf-8")
@@ -70,6 +71,7 @@ def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str,
     recovery_helper = root / "usr/local/libexec/niri-plus-recover"
     recovery_helper.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "niri_plus/recovery_core.py", recovery_helper)
+    recovery_helper.chmod(0o755)
     bootstrap = root / "var/lib/niri-plus/bootstrap.json"
     bootstrap.parent.mkdir(parents=True, exist_ok=True)
     bootstrap.write_text(json.dumps({
@@ -78,6 +80,8 @@ def _seed_managed_host(root: pathlib.Path, *, version: str, system_commit: str,
         "source_channel": "production",
         "quickshell_expected_commit": quickshell_commit,
     }) + "\n", encoding="utf-8")
+    # The real bootstrap writer sets this explicitly, independent of umask.
+    bootstrap.chmod(0o644)
 
     entries = {}
     for absolute, source in install.MANAGED_FILES.items():
@@ -110,6 +114,54 @@ def _candidate_manifest(version_commit: str) -> dict:
 
 
 class SnapshotInstallVerificationTests(unittest.TestCase):
+    def test_install_mode_check_accepts_frozen_source_but_requires_executable_target(self):
+        payload = b"#!/bin/sh\nexit 0\n"
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source = root / "snapshot-helper"
+            target = root / "installed-helper"
+            source.write_bytes(payload)
+            source.chmod(0o444)
+            shutil.copy2(source, target)
+            target.chmod(0o755)
+
+            self.assertNotEqual(source.stat().st_mode & 0o777, target.stat().st_mode & 0o777)
+            self.assertNotEqual(snapshot_install._tree_signature(source),
+                                snapshot_install._tree_signature(target))
+            snapshot_install._verify_installed_executable(source, target, "fixture")
+            self.assertEqual(snapshot_install._tree_signature(source)[0], "file")
+            self.assertEqual(snapshot_install._tree_signature(target)[0], "file")
+
+            target.write_bytes(payload + b"# changed\n")
+            with self.assertRaisesRegex(snapshot_install.InstallVerificationError, "content differs"):
+                snapshot_install._verify_installed_executable(source, target, "fixture")
+
+            target.write_bytes(payload)
+            target.chmod(0o744)
+            with self.assertRaisesRegex(snapshot_install.InstallVerificationError, "unexpected mode"):
+                snapshot_install._verify_installed_executable(source, target, "fixture")
+
+            target.unlink()
+            target.symlink_to(source)
+            with self.assertRaisesRegex(snapshot_install.InstallVerificationError, "not a regular file"):
+                snapshot_install._verify_installed_executable(source, target, "fixture")
+
+    def test_generated_launcher_check_validates_exact_mode_and_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = pathlib.Path(temp) / "niri+"
+            expected = b"#!/usr/bin/python3 -I\nprint('candidate')\n"
+            target.write_bytes(expected)
+            target.chmod(0o755)
+            snapshot_install._verify_generated_executable(target, expected, "niri+")
+
+            target.chmod(0o744)
+            with self.assertRaisesRegex(snapshot_install.InstallVerificationError, "unexpected type or mode"):
+                snapshot_install._verify_generated_executable(target, expected, "niri+")
+            target.chmod(0o755)
+            target.write_bytes(expected + b"# changed\n")
+            with self.assertRaisesRegex(snapshot_install.InstallVerificationError, "differs"):
+                snapshot_install._verify_generated_executable(target, expected, "niri+")
+
     def test_root_normalization_always_returns_path_and_rejects_traversal(self):
         real_root_path = snapshot_install._rooted_install_path(
             pathlib.Path("/"), "/etc/niri/config.kdl",

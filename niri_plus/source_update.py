@@ -26,7 +26,7 @@ BOOTSTRAP_STATE = pathlib.Path("/var/lib/niri-plus/bootstrap.json")
 EXPECTED_REPOSITORY = "https://github.com/LQ13ofc/asahi-system.git"
 EXPECTED_QUICKSHELL_REPOSITORY = "https://github.com/LQ13ofc/quickshell-.git"
 EXPECTED_BRANCH = "main"
-RELEASE_CANDIDATE_PULL_REQUEST = 26
+RELEASE_CANDIDATE_PULL_REQUEST = 27
 RELEASE_CANDIDATE_QUICKSHELL_COMMIT = "d2fe6d57dc2b86e5f433a0f6282732b8d03ca7f3"
 RELEASE_CANDIDATE_REF = f"refs/pull/{RELEASE_CANDIDATE_PULL_REQUEST}/head"
 QUICKSHELL_PATH = "external/quickshell"
@@ -435,6 +435,29 @@ def _snapshot_entries(files: dict[str, tuple[int, str, bytes]]) -> list[dict[str
     return [{"path": path, "mode": mode, "oid": oid} for path, (mode, oid, _) in sorted(files.items())]
 
 
+def _protect_snapshot(root: pathlib.Path, snapshot_root: pathlib.Path,
+                      manifest_path: pathlib.Path, *,
+                      owner: tuple[int, int] | None = None) -> None:
+    """Remove write access and optionally assign the verified snapshot to root."""
+    for directory, dirs, files in os.walk(root, topdown=False, followlinks=False):
+        for name in files:
+            path = pathlib.Path(directory) / name
+            if not path.is_symlink():
+                if owner is not None:
+                    os.chown(path, *owner)
+                path.chmod(path.stat().st_mode & ~0o222)
+        for name in dirs:
+            path = pathlib.Path(directory) / name
+            if not path.is_symlink():
+                if owner is not None:
+                    os.chown(path, *owner)
+                path.chmod(0o555)
+    if owner is not None:
+        for path in (root, snapshot_root, manifest_path):
+            os.chown(path, *owner)
+    root.chmod(0o555)
+
+
 def _write_snapshot_files(destination: pathlib.Path, files: dict[str, tuple[int, str, bytes]]) -> None:
     _materialize(destination, files)
 
@@ -649,21 +672,7 @@ def resolved_snapshot(source_root: pathlib.Path | None = None,
         )
         # Switch ownership only after all inputs have been created and verified.
         if os.geteuid() == 0:
-            for directory, dirs, files in os.walk(root, topdown=False, followlinks=False):
-                for name in files:
-                    path = pathlib.Path(directory) / name
-                    if not path.is_symlink():
-                        os.chown(path, 0, 0)
-                        path.chmod(path.stat().st_mode & ~0o222)
-                for name in dirs:
-                    path = pathlib.Path(directory) / name
-                    if not path.is_symlink():
-                        os.chown(path, 0, 0)
-                        path.chmod(0o555)
-            os.chown(root, 0, 0)
-            os.chown(snapshot_root, 0, 0)
-            os.chown(manifest_path, 0, 0)
-            os.chmod(root, 0o555)
+            _protect_snapshot(root, snapshot_root, manifest_path, owner=(0, 0))
         yield Snapshot(snapshot_root, manifest_path, system_commit, quickshell_commit, include_quickshell,
                        expected_repository, expected_quickshell_repository, allow_test_file_sources)
 
